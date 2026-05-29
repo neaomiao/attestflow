@@ -233,6 +233,7 @@ python -m attestflow start TASK
 python -m attestflow block TASK --reason REASON
 python -m attestflow evidence TASK
 python -m attestflow verify
+python -m attestflow verify --task TASK
 python -m attestflow close TASK
 python -m attestflow resume
 python -m attestflow secret-scan
@@ -249,8 +250,9 @@ python -m attestflow secret-scan
 - `start`：原子地把 `ready` 任务变成 `in_progress`，创建 task lock、file locks 和 run ledger。
 - `block`：记录阻塞原因并移动到 `blocked`。
 - `evidence`：写入或验证 evidence packet。
-- `verify`：执行配置的质量门禁并记录结果。
-- `close`：验证 DoD、释放锁、写最终证据并移动到 `done`。
+- `verify`：执行配置的质量门禁，用于临时或 CI 验证。
+- `verify --task`：执行配置的质量门禁，并把命令结果写入当前 task run。
+- `close`：校验当前 run 的 DoD evidence，释放锁，写最终证据并移动到 `done`。
 - `resume`：读取未完成 run，输出下一步动作。
 - `secret-scan`：扫描已跟踪或项目文件中的明显密钥。
 
@@ -269,8 +271,8 @@ harness/runs/
       unit.log
       lint.log
       typecheck.log
-      verify.log
-      secret-scan.log
+      secret_scan.log
+      project_verify.log
 ```
 
 `ledger.jsonl` 只追加，不重写。`resume` 必须能回答：
@@ -349,9 +351,11 @@ python -m attestflow verify
 5. 收敛到 `ready`。
 6. 运行 `python -m attestflow start TASK-*`。
 7. 按 BDD -> unit -> implementation 执行。
-8. 运行 `python -m attestflow verify`。
-9. 运行 `python -m attestflow close TASK-*`。
-10. 用 `python -m attestflow next` 选择下一个任务。
+8. 运行 `python -m attestflow transition TASK-* review`。
+9. 运行 `python -m attestflow verify --task TASK-*`，把验证结果绑定到当前 run。
+10. 运行 `python -m attestflow transition TASK-* verified` 和 `python -m attestflow transition TASK-* accepted`。
+11. 运行 `python -m attestflow close TASK-*`。
+12. 用 `python -m attestflow next` 选择下一个任务。
 
 ## 验收标准
 

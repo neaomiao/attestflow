@@ -1,7 +1,7 @@
 # Evidence Schema 契约
 
 日期：2026-05-29
-状态：待实现
+状态：核心本地门禁已实现
 
 ## 目标
 
@@ -23,8 +23,8 @@ harness/runs/<timestamp>-<task-id>/
     unit.log
     lint.log
     typecheck.log
-    verify.log
-    secret-scan.log
+    secret_scan.log
+    project_verify.log
 ```
 
 如果某个 gate 按项目策略不适用，可以没有对应 log，但 evidence packet 必须说明不适用原因。
@@ -60,8 +60,8 @@ commands:
   unit: null
   lint: null
   typecheck: null
-  verify: null
   secret_scan: null
+  project_verify: null
 
 result:
   dor_passed: false
@@ -195,14 +195,15 @@ ci_url: null
 `close TASK` 只有在以下条件满足时才能把任务移到 `done`：
 
 - task state 是 `accepted`
-- DoD gates 通过
 - evidence packet 存在
-- run metadata 有 `ended_at`
-- command logs 存在，或标记为不适用
-- locks 已释放
-- linked issues 已处理
-- secret scan 通过
-- final ledger event 是 `closed`
+- run metadata 的 `task_id` 匹配当前 task
+- `harness.yml` 中启用的 verification commands 都有当前 run 的记录
+- 启用命令的 `exit_code` 都是 `0`
+- 启用命令的 `command` 和当前配置一致
+- 启用命令的 `fresh` 是 `true`
+- 启用命令引用的 command log 存在
+- close 成功后写入 `ended_at`、`status: closed` 和 final ledger event `closed`
+- close 成功后释放 task/file locks 并把 task 移到 `done`
 
 ## 恢复规则
 

@@ -36,6 +36,7 @@ python3 -m attestflow tasks
 python3 -m attestflow next
 python3 -m attestflow start TASK-0001
 python3 -m attestflow transition TASK-0001 review
+python3 -m attestflow verify --task TASK-0001
 python3 -m attestflow transition TASK-0001 verified
 python3 -m attestflow transition TASK-0001 accepted
 python3 -m attestflow close TASK-0001
@@ -58,10 +59,11 @@ python3 -m attestflow secret-scan
 - `start` 状态推进、锁和 run evidence
 - `block` 阻塞任务
 - `transition` 按状态机推进任务
-- `close` 关闭 accepted 任务、释放锁、写关闭 ledger
+- `verify --task` 执行配置命令，并把结果写入当前 run 的 metadata 和 ledger
+- `close` 校验当前 run 的 DoD evidence 后关闭 accepted 任务、释放锁、写关闭 ledger
 - `resume` 未完成 run 摘要
-- `verify` 按 `harness.yml` 执行配置命令
+- `verify` 按 `harness.yml` 执行临时验证，不绑定任务
 - 保守 secret scan
 - 可安装包内置 base 模板
 
-后续重点是更严格的 DoD evidence 校验、CI provider 抽象和更完整的多 Agent 调度。
+后续重点是 CI provider 抽象、任务生成向导和更完整的多 Agent 调度。

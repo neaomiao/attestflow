@@ -19,6 +19,7 @@ from .tasks import (
     start_task,
     transition_task,
     validate_task,
+    verify_task,
 )
 
 
@@ -158,12 +159,16 @@ def cmd_secret_scan(_: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_verify(_: argparse.Namespace) -> int:
-    result = run_verification(
-        ROOT,
-        load_config(ROOT),
-        ROOT / "harness" / "runs" / "adhoc-verify" / "commands",
-    )
+def cmd_verify(args: argparse.Namespace) -> int:
+    config = load_config(ROOT)
+    if args.task:
+        result = verify_task(ROOT, config, args.task)
+    else:
+        result = run_verification(
+            ROOT,
+            config,
+            ROOT / "harness" / "runs" / "adhoc-verify" / "commands",
+        )
     if result.failed:
         print("verification failed: " + ", ".join(result.failed), file=sys.stderr)
         return 1
@@ -215,7 +220,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("resume").set_defaults(func=cmd_resume)
     subparsers.add_parser("secret-scan").set_defaults(func=cmd_secret_scan)
-    subparsers.add_parser("verify").set_defaults(func=cmd_verify)
+    verify = subparsers.add_parser("verify")
+    verify.add_argument("--task")
+    verify.set_defaults(func=cmd_verify)
     return parser
 
 

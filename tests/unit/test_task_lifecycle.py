@@ -3,9 +3,19 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from attestflow.config import DEFAULT_CONFIG
+from attestflow.evidence import record_verification_results
 from attestflow.io import dump_data, load_data
+from attestflow.runner import CommandResult, VerificationResult
 from attestflow.resume import resume_summary
-from attestflow.tasks import block_task, close_task, select_next_task, start_task, transition_task, validate_task
+from attestflow.tasks import (
+    block_task,
+    close_task,
+    select_next_task,
+    start_task,
+    transition_task,
+    validate_task,
+    verify_task,
+)
 
 
 def write_task(root: Path, state: str, task_id: str, data: dict) -> Path:
@@ -130,6 +140,13 @@ class TaskLifecycleTests(unittest.TestCase):
             transition_task(root, config, "TASK-0001", "verified")
             transition_task(root, config, "TASK-0001", "accepted")
 
+            with self.assertRaisesRegex(ValueError, "missing passing evidence for bdd"):
+                close_task(root, config, "TASK-0001")
+
+            self.assertTrue((root / "harness" / "tasks" / "accepted" / "TASK-0001.yml").exists())
+            self.assertTrue((root / "harness" / "locks" / "tasks" / "TASK-0001.lock").exists())
+            record_passing_evidence(config, run.path)
+
             closed = close_task(root, config, "TASK-0001")
 
             self.assertEqual(closed.task["state"], "done")
@@ -139,6 +156,49 @@ class TaskLifecycleTests(unittest.TestCase):
             metadata = load_data(run.path / "metadata.yml")
             self.assertIsNotNone(metadata["ended_at"])
             self.assertTrue(metadata["result"]["dod_passed"])
+
+    def test_verify_task_records_current_run_command_evidence(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = DEFAULT_CONFIG.copy()
+            config["root"] = root
+            config["commands"] = {
+                "bdd": "python3 -c 'print(\"bdd ok\")'",
+                "unit": "python3 -c 'print(\"unit ok\")'",
+                "lint": None,
+                "typecheck": None,
+                "secret_scan": "python3 -c 'print(\"scan ok\")'",
+                "project_verify": None,
+            }
+            write_task(root, "ready", "TASK-0001", ready_task("TASK-0001"))
+            run = start_task(root, config, "TASK-0001", actor_role="orchestrator")
+
+            result = verify_task(root, config, "TASK-0001")
+
+            self.assertEqual(result.failed, [])
+            metadata = load_data(run.path / "metadata.yml")
+            self.assertEqual(metadata["commands"]["bdd"]["exit_code"], 0)
+            self.assertEqual(metadata["commands"]["bdd"]["log"], "commands/bdd.log")
+            self.assertTrue(metadata["commands"]["bdd"]["fresh"])
+            self.assertEqual(metadata["commands"]["secret_scan"]["exit_code"], 0)
+            active = load_data(root / "harness" / "tasks" / "in_progress" / "TASK-0001.yml")
+            self.assertEqual(active["evidence"]["verify"], str((run.path / "metadata.yml").relative_to(root)))
+
+
+def record_passing_evidence(config: dict, run_path: Path) -> None:
+    results = []
+    for name in ("bdd", "unit", "secret_scan"):
+        log = run_path / "commands" / f"{name}.log"
+        log.write_text(f"{name} ok\n", encoding="utf-8")
+        results.append(
+            CommandResult(
+                name=name,
+                command=str(config["commands"][name]),
+                exit_code=0,
+                log=log,
+            )
+        )
+    record_verification_results(run_path, VerificationResult(results=results, failed=[]))
 
 
 if __name__ == "__main__":

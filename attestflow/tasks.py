@@ -4,9 +4,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .evidence import RunRecord, close_run, create_run
+from .evidence import RunRecord, close_run, create_run, record_verification_results, validate_close_evidence
 from .io import dump_data, load_data
 from .locks import acquire_file_locks, acquire_task_lock, release_locks_for_task, write_scope_locked
+from .runner import VerificationResult, run_verification
 
 
 TASK_STATES = {
@@ -174,10 +175,33 @@ def close_task(root: Path, config: dict[str, Any], task_id: str) -> TaskRecord:
     if not packet_path.exists():
         raise ValueError("evidence.packet does not exist")
     run_path = root / config.get("paths", {}).get("runs", "harness/runs") / str(evidence["run_id"])
+    evidence_errors = validate_close_evidence(run_path, config, task_id)
+    if evidence_errors:
+        raise ValueError("; ".join(evidence_errors))
     close_run(run_path, task_id)
     release_locks_for_task(root, config, task_id)
     updated = dict(record.task)
     return _move_task(root, config, record, updated, "done")
+
+
+def verify_task(root: Path, config: dict[str, Any], task_id: str) -> VerificationResult:
+    record = _find_task(root, config, task_id, expected_state=None)
+    evidence = record.task.get("evidence", {})
+    if not isinstance(evidence, dict) or not evidence.get("run_id"):
+        raise ValueError("task requires evidence.run_id before verify")
+    run_path = root / config.get("paths", {}).get("runs", "harness/runs") / str(evidence["run_id"])
+    if not run_path.exists():
+        raise ValueError("task evidence.run_id does not reference an existing run")
+
+    result = run_verification(root, config, run_path / "commands")
+    record_verification_results(run_path, result)
+
+    updated = dict(record.task)
+    updated_evidence = dict(evidence)
+    updated_evidence["verify"] = str((run_path / "metadata.yml").relative_to(root))
+    updated["evidence"] = updated_evidence
+    dump_data(updated, record.path)
+    return result
 
 
 def _find_task(root: Path, config: dict[str, Any], task_id: str, expected_state: str | None) -> TaskRecord:
