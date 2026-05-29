@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "goal": "Replace this with the user goal the AI planner is decomposing.",
+  "tasks": [
+    {
+      "key": "example_task",
+      "title": "Replace with an AI-generated task title",
+      "priority": 10,
+      "type": "feature",
+      "purpose": "Explain why this task exists.",
+      "context": ["Relevant repository context the AI used."],
+      "scope": ["Concrete work this task will do."],
+      "out_of_scope": ["Work this task must not do."],
+      "requirements": {
+        "confirmed": ["Known requirement."],
+        "unresolved": [],
+        "assumptions": ["Assumption the agent should verify when needed."]
+      },
+      "bdd_scenarios": ["User-visible behavior or workflow to prove."],
+      "unit_tests": ["Expected test file or test target."],
+      "acceptance": ["Machine-checkable acceptance criterion."],
+      "dependencies": [],
+      "files": {
+        "read": ["README.md"],
+        "write": ["path/to/file.py"]
+      }
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 # 通用开发 Harness 设计
 
 日期：2026-05-29
-状态：待实现
+状态：核心本地闭环已实现，AI-first 任务导入已纳入主路径
 来源会话：019e7244-0bad-7970-81c4-af4c4323486c
 
 ## 目标
@@ -11,13 +11,13 @@
 Harness 不是测试框架。它是开发流程控制系统，把下面这条链路变成明确、可重复、可恢复、可审计的工作流：
 
 ```text
-intent -> requirement boundary -> BDD scenario -> unit test -> implementation
+intent -> AI planning -> task import -> requirement boundary -> BDD scenario -> unit test -> implementation
 -> verification -> evidence -> task state transition -> next executable task
 ```
 
 原 `sport-pred` harness 验证了正确方向：任务状态机、Definition of Ready、Definition of Done、BDD/TDD 顺序、Docker 验证、证据包和 Agent 文件所有权。但它的问题是把 Python 包结构、项目专用文档、`gstack ship`、Postgres、Redis 和业务红线混进了核心。
 
-本设计的核心原则是：协议内核和项目适配分离。
+本设计的核心原则是：AI 能完成的工作不进入人工主路径，协议内核和项目适配分离。大模型负责目标拆解、任务草案、BDD 和验收标准；Attestflow 负责确定性校验、ID 分配、状态、锁、验证和证据。
 
 ## 非目标
 
@@ -26,16 +26,19 @@ intent -> requirement boundary -> BDD scenario -> unit test -> implementation
 - 不强制依赖 `gstack`、Superpowers、GitHub、Docker 或某个 CI 平台。
 - 不允许 Agent 编排绕过任务状态、文件所有权或验证证据。
 - 不依赖对话记忆作为任务状态或断点恢复的事实来源。
+- 不把手写任务 YAML 设计成主路径；任务 YAML 是机器落盘格式，不是人工编辑界面。
 
 ## 设计原则
 
 1. 协议优先：`task schema`、状态流转、门禁、证据、锁和 run ledger 是稳定接口。
-2. 适配其次：语言栈、测试命令、CI 平台、Issue 系统、Docker 和 skill routing 都由项目配置。
-3. 没有可执行证明就不实现：新功能必须先有 BDD，再有 unit test，再写 implementation。
-4. 没有新鲜证据就不完成：`done` 必须引用当前 run 的命令、时间戳和结果。
-5. 从文件恢复，不从记忆恢复：`resume` 读取 task state、lock file 和 append-only ledger。
-6. 并行必须有所有权：多个 Agent 只能在写入范围不重叠时并行。
-7. 默认保守：需求不清进入 `needs_clarification`，外部输入缺失进入 `blocked`。
+2. AI 优先：目标拆解、任务草案、BDD、验收标准和文件范围默认由大模型生成。
+3. 确定性落盘：大模型输出 JSON，Attestflow 分配 ID、补默认值、校验 schema，再写 YAML。
+4. 适配其次：语言栈、测试命令、CI 平台、Issue 系统、Docker 和 skill routing 都由项目配置。
+5. 没有可执行证明就不实现：新功能必须先有 BDD，再有 unit test，再写 implementation。
+6. 没有新鲜证据就不完成：`done` 必须引用当前 run 的命令、时间戳和结果。
+7. 从文件恢复，不从记忆恢复：`resume` 读取 task state、lock file 和 append-only ledger。
+8. 并行必须有所有权：多个 Agent 只能在写入范围不重叠时并行。
+9. 默认保守：需求不清进入 `needs_clarification`，外部输入缺失进入 `blocked`。
 
 ## 推荐仓库结构
 
@@ -56,6 +59,7 @@ harness/
     config.py
     io.py
     tasks.py
+    planner.py
     gates.py
     evidence.py
     runner.py
@@ -78,7 +82,7 @@ harness/
     bdd/
 ```
 
-本轮实现先做一个可运行的标准库 MVP：配置读取、任务校验、任务选择、任务启动、证据目录、断点恢复、secret scan、基础模板和测试。
+本轮实现先做一个可运行的标准库 MVP：配置读取、AI planner JSON 导入、任务校验、任务选择、任务启动、证据目录、断点恢复、secret scan、基础模板和测试。
 
 ## `harness.yml`
 
@@ -127,6 +131,25 @@ integrations:
 ```
 
 核心代码只读取配置，不从 `sport-pred`、`gstack`、`pytest` 等名称推断行为。
+
+## AI Planning 和任务落盘
+
+任务产生分两层：
+
+```text
+LLM / planning agent -> planner JSON -> attestflow task import -> task YAML
+```
+
+大模型负责判断和拆解，不直接写 `harness/tasks/**/*.yml`。Attestflow 接收 planner JSON 后执行确定性处理：
+
+- 分配递增的 `TASK-*` ID
+- 解析 planner 内部 `key` 依赖
+- 补齐默认字段
+- 校验 task schema 和 ready 门禁
+- 拒绝缺少 BDD、unit tests、acceptance 或写文件范围的任务
+- 只在全部任务可通过校验后写入 YAML
+
+任务 YAML 是 runtime 的事实来源，不是人工主编辑界面。人工只负责不可自动判断的目标取舍、凭证授权和外部业务决策。
 
 ## 任务存储
 
@@ -227,6 +250,7 @@ python -m attestflow init
 python -m attestflow doctor
 python -m attestflow validate-config
 python -m attestflow validate-task TASK
+python -m attestflow task import --from-json PLAN.json
 python -m attestflow tasks
 python -m attestflow next
 python -m attestflow start TASK
@@ -245,6 +269,7 @@ python -m attestflow secret-scan
 - `doctor`：检查工具、配置和目录一致性。
 - `validate-config`：验证 `harness.yml`。
 - `validate-task`：验证 schema、状态、目录、依赖和门禁。
+- `task import --from-json`：导入大模型输出的 planner JSON，校验后写入 task YAML。
 - `tasks`：按状态和优先级列出任务。
 - `next`：返回最高优先级、依赖已完成、文件未锁定的 `ready` 任务。
 - `start`：原子地把 `ready` 任务变成 `in_progress`，创建 task lock、file locks 和 run ledger。
@@ -345,17 +370,17 @@ python -m attestflow verify
 ## 新项目接入流程
 
 1. 运行 `python -m attestflow init --adapter generic`。
-2. 审核生成的 `harness.yml`。
-3. 增加项目专用 DoR/DoD 条款。
-4. 创建第一个 `TASK-*`，状态为 `proposed`。
-5. 收敛到 `ready`。
+2. 让 Agent 审核生成的 `harness.yml` 和项目命令，只有凭证或业务取舍需要人工确认。
+3. 让大模型根据目标和仓库上下文输出 planner JSON。
+4. 运行 `python -m attestflow task import --from-json plan.json`。
+5. 用 `python -m attestflow next` 选择下一个 ready 任务。
 6. 运行 `python -m attestflow start TASK-*`。
-7. 按 BDD -> unit -> implementation 执行。
+7. Agent 按 BDD -> unit -> implementation 执行。
 8. 运行 `python -m attestflow transition TASK-* review`。
 9. 运行 `python -m attestflow verify --task TASK-*`，把验证结果绑定到当前 run。
 10. 运行 `python -m attestflow transition TASK-* verified` 和 `python -m attestflow transition TASK-* accepted`。
 11. 运行 `python -m attestflow close TASK-*`。
-12. 用 `python -m attestflow next` 选择下一个任务。
+12. 重复 `next -> start -> verify --task -> close`。
 
 ## 验收标准
 

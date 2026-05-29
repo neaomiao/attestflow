@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import sys
 from pathlib import Path
 
 from .config import load_config, validate_config
 from .io import load_data
+from .planner import import_planner_tasks
 from .resume import resume_summary
 from .runner import run_verification
 from .secrets import secret_scan
@@ -176,6 +178,18 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_task_import(args: argparse.Namespace) -> int:
+    if args.from_json == "-":
+        plan = json.load(sys.stdin)
+    else:
+        with Path(args.from_json).open(encoding="utf-8") as handle:
+            plan = json.load(handle)
+    records = import_planner_tasks(ROOT, load_config(ROOT), plan)
+    task_ids = ", ".join(str(record.task["id"]) for record in records)
+    print(f"imported {len(records)} task(s): {task_ids}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m attestflow")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -223,6 +237,12 @@ def build_parser() -> argparse.ArgumentParser:
     verify = subparsers.add_parser("verify")
     verify.add_argument("--task")
     verify.set_defaults(func=cmd_verify)
+
+    task = subparsers.add_parser("task")
+    task_subparsers = task.add_subparsers(dest="task_command", required=True)
+    task_import = task_subparsers.add_parser("import")
+    task_import.add_argument("--from-json", required=True)
+    task_import.set_defaults(func=cmd_task_import)
     return parser
 
 

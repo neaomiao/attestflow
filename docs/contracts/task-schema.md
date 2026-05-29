@@ -1,13 +1,15 @@
 # Task Schema 契约
 
 日期：2026-05-29
-状态：待实现
+状态：核心本地校验已实现
 
 ## 目标
 
-`task schema` 是人、Agent、CI 和 harness runtime 之间的稳定协议。任务没有满足 Definition of Ready 前不能执行；任务没有满足 Definition of Done 且没有 evidence 前不能完成。
+`task schema` 是 LLM planner、Agent、CI 和 harness runtime 之间的稳定协议。任务内容默认由大模型生成，Attestflow 负责校验并落盘。任务没有满足 Definition of Ready 前不能执行；任务没有满足 Definition of Done 且没有 evidence 前不能完成。
 
 字段名、状态名和命令名保留英文，原因是它们会被代码、CI 和脚本解析。解释文字使用中文。
+
+任务 YAML 是 runtime 的持久格式，不是人工主编辑入口。主路径是 planner JSON 通过 `attestflow task import --from-json` 导入。
 
 ## 文件位置
 
