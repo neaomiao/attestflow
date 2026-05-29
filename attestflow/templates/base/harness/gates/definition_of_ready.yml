@@ -1,0 +1,15 @@
+required:
+  - purpose
+  - scope
+  - out_of_scope
+  - bdd_scenarios
+  - unit_tests
+  - acceptance
+  - dependencies
+  - files.write
+rules:
+  - state must be ready before implementation starts
+  - requirements.unresolved must be empty unless task type is spike
+  - files.write must be disjoint from active locks
+  - required external inputs must exist or task must be blocked
+

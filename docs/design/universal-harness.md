@@ -1,0 +1,362 @@
+# 通用开发 Harness 设计
+
+日期：2026-05-29
+状态：待实现
+来源会话：019e7244-0bad-7970-81c4-af4c4323486c
+
+## 目标
+
+本项目要沉淀一个可复用的开发 harness，让其他项目可以直接采用同一套开发控制流程，而不是复制某个业务项目的临时脚手架。
+
+Harness 不是测试框架。它是开发流程控制系统，把下面这条链路变成明确、可重复、可恢复、可审计的工作流：
+
+```text
+intent -> requirement boundary -> BDD scenario -> unit test -> implementation
+-> verification -> evidence -> task state transition -> next executable task
+```
+
+原 `sport-pred` harness 验证了正确方向：任务状态机、Definition of Ready、Definition of Done、BDD/TDD 顺序、Docker 验证、证据包和 Agent 文件所有权。但它的问题是把 Python 包结构、项目专用文档、`gstack ship`、Postgres、Redis 和业务红线混进了核心。
+
+本设计的核心原则是：协议内核和项目适配分离。
+
+## 非目标
+
+- 不在本仓库实现任何业务产品。
+- 不把 Python、Node、Go、Rust 等语言栈写死进核心协议。
+- 不强制依赖 `gstack`、Superpowers、GitHub、Docker 或某个 CI 平台。
+- 不允许 Agent 编排绕过任务状态、文件所有权或验证证据。
+- 不依赖对话记忆作为任务状态或断点恢复的事实来源。
+
+## 设计原则
+
+1. 协议优先：`task schema`、状态流转、门禁、证据、锁和 run ledger 是稳定接口。
+2. 适配其次：语言栈、测试命令、CI 平台、Issue 系统、Docker 和 skill routing 都由项目配置。
+3. 没有可执行证明就不实现：新功能必须先有 BDD，再有 unit test，再写 implementation。
+4. 没有新鲜证据就不完成：`done` 必须引用当前 run 的命令、时间戳和结果。
+5. 从文件恢复，不从记忆恢复：`resume` 读取 task state、lock file 和 append-only ledger。
+6. 并行必须有所有权：多个 Agent 只能在写入范围不重叠时并行。
+7. 默认保守：需求不清进入 `needs_clarification`，外部输入缺失进入 `blocked`。
+
+## 推荐仓库结构
+
+```text
+harness/
+  pyproject.toml
+  README.md
+  docs/
+    design/
+      universal-harness.md
+    contracts/
+      task-schema.md
+      evidence-schema.md
+  attestflow/
+    __init__.py
+    __main__.py
+    cli.py
+    config.py
+    io.py
+    tasks.py
+    gates.py
+    evidence.py
+    runner.py
+    locks.py
+    resume.py
+    secrets.py
+  templates/
+    base/
+      harness.yml
+      tasks/
+      gates/
+      agents/
+      .github/workflows/ci.yml
+    adapters/
+      generic/
+      python/
+      node/
+  tests/
+    unit/
+    bdd/
+```
+
+本轮实现先做一个可运行的标准库 MVP：配置读取、任务校验、任务选择、任务启动、证据目录、断点恢复、secret scan、基础模板和测试。
+
+## `harness.yml`
+
+每个接入项目有一个 `harness.yml`：
+
+```yaml
+schema_version: 1
+project:
+  name: example-project
+  default_branch: main
+
+paths:
+  tasks: harness/tasks
+  runs: harness/runs
+  gates: harness/gates
+  docs: docs
+
+commands:
+  bdd: python -m unittest discover tests/bdd
+  unit: python -m unittest discover tests/unit
+  lint: null
+  typecheck: null
+  secret_scan: python -m attestflow secret-scan
+  project_verify: null
+
+policies:
+  require_bdd_before_unit: true
+  require_unit_before_implementation: true
+  require_fresh_verify_for_done: true
+  require_disjoint_agent_write_scopes: true
+  require_issue_triage_for_linked_issues: true
+  docker_required: false
+
+execution:
+  docker:
+    enabled: false
+    compose_service: app
+
+integrations:
+  git_provider: optional
+  ci_provider: optional
+  skills:
+    ship: optional
+    context_save: optional
+    context_restore: optional
+```
+
+核心代码只读取配置，不从 `sport-pred`、`gstack`、`pytest` 等名称推断行为。
+
+## 任务存储
+
+任务是 YAML 文件，放在配置指定的任务目录下：
+
+```text
+harness/tasks/
+  proposed/
+  needs_clarification/
+  ready/
+  in_progress/
+  blocked/
+  review/
+  verified/
+  accepted/
+  done/
+  archived/
+```
+
+目录状态和文件内 `state` 必须一致。不一致时 `validate-task` 失败。
+
+## 状态机
+
+合法状态：
+
+```text
+proposed
+needs_clarification
+ready
+in_progress
+blocked
+review
+verified
+accepted
+done
+archived
+```
+
+合法流转：
+
+```text
+proposed -> needs_clarification
+proposed -> ready
+needs_clarification -> ready
+needs_clarification -> blocked
+ready -> in_progress
+in_progress -> blocked
+in_progress -> review
+review -> in_progress
+review -> verified
+verified -> accepted
+accepted -> done
+done -> archived
+blocked -> needs_clarification
+blocked -> ready
+```
+
+禁止流转：
+
+- `proposed -> in_progress`：绕过 DoR。
+- `ready -> done`：绕过实现和证据。
+- `in_progress -> done`：绕过 review、verification 和 acceptance。
+- 非 `done` 状态进入 `archived`：隐藏未完成工作。
+
+## 门禁
+
+Definition of Ready 判断任务能否开始：
+
+- 有明确 `purpose`
+- 有 `scope`
+- 有 `out_of_scope`
+- 可执行范围内没有未解决占位
+- 已声明 `bdd_scenarios`
+- 已声明 `unit_tests`
+- 已声明 `acceptance`
+- `dependencies` 已满足
+- 已声明 `files.write`
+- 所需凭证和外部输入存在，否则任务必须是 `blocked`
+
+Definition of Done 判断任务能否关闭：
+
+- BDD 命令通过
+- Unit 命令通过
+- Project verify 命令通过或按策略不适用
+- lint/typecheck 通过或按策略不适用
+- docs/changelog 已更新或说明不适用
+- linked issues 已处理
+- secret scan 通过
+- evidence packet 存在且引用当前 task/run
+- 最终状态流转合法
+
+## CLI
+
+稳定 CLI 表面：
+
+```bash
+python -m attestflow init
+python -m attestflow doctor
+python -m attestflow validate-config
+python -m attestflow validate-task TASK
+python -m attestflow tasks
+python -m attestflow next
+python -m attestflow start TASK
+python -m attestflow block TASK --reason REASON
+python -m attestflow evidence TASK
+python -m attestflow verify
+python -m attestflow close TASK
+python -m attestflow resume
+python -m attestflow secret-scan
+```
+
+命令职责：
+
+- `init`：在目标项目生成模板文件。
+- `doctor`：检查工具、配置和目录一致性。
+- `validate-config`：验证 `harness.yml`。
+- `validate-task`：验证 schema、状态、目录、依赖和门禁。
+- `tasks`：按状态和优先级列出任务。
+- `next`：返回最高优先级、依赖已完成、文件未锁定的 `ready` 任务。
+- `start`：原子地把 `ready` 任务变成 `in_progress`，创建 task lock、file locks 和 run ledger。
+- `block`：记录阻塞原因并移动到 `blocked`。
+- `evidence`：写入或验证 evidence packet。
+- `verify`：执行配置的质量门禁并记录结果。
+- `close`：验证 DoD、释放锁、写最终证据并移动到 `done`。
+- `resume`：读取未完成 run，输出下一步动作。
+- `secret-scan`：扫描已跟踪或项目文件中的明显密钥。
+
+## Run Ledger
+
+每次任务执行写入一个 run 目录：
+
+```text
+harness/runs/
+  2026-05-29T20-00-00Z-TASK-0001/
+    metadata.yml
+    ledger.jsonl
+    evidence.md
+    commands/
+      bdd.log
+      unit.log
+      lint.log
+      typecheck.log
+      verify.log
+      secret-scan.log
+```
+
+`ledger.jsonl` 只追加，不重写。`resume` 必须能回答：
+
+- 当前 task
+- 当前 state
+- owner agent
+- branch/worktree
+- locked files
+- 最近通过的 gate
+- 最近失败的 gate
+- 下一步动作
+- 是否可以继续
+
+## 多 Agent 模型
+
+Agent 角色是协议角色，不是业务身份：
+
+```text
+orchestrator        owns task state, locks, final integration
+requirements_agent  owns requirement intake and BDD scenario drafts
+test_agent          owns unit/regression tests
+worker_agent        owns assigned implementation files only
+review_agent        owns spec and quality review
+ci_agent            owns CI logs and failing check diagnosis
+research_agent      owns external research notes, not production code
+```
+
+并行执行条件：
+
+- 每个 Agent 有明确 `task_id`
+- 每个 Agent 有明确 `files.write`
+- 写入范围不重叠
+- 共享文件由 orchestrator 锁定
+- 每个 Agent 写自己的 evidence
+- orchestrator 做最终集成和验证
+
+不满足这些条件时，任务必须串行。
+
+## 项目适配器
+
+Adapter 提供默认文件，不改变核心协议：
+
+- `generic`：只提供 shell 命令和标准目录。
+- `python`：提供 `unittest`/可选 pytest、lint/typecheck 默认项。
+- `node`：提供 package manager 检测和 test/lint/typecheck 默认项。
+
+Adapter 生成的文件可以被项目修改；最终事实来源仍然是 `harness.yml`。
+
+## CI
+
+CI 应调用和本地一致的入口：
+
+```bash
+python -m attestflow verify
+```
+
+如果项目策略要求 Docker，则 CI 在 Docker 中运行；否则直接运行配置命令。GitHub Actions 只是模板，不是核心依赖。
+
+## Secrets
+
+内置 secret scan 是最低防线，不替代专用扫描器。它应该：
+
+- 默认扫描项目文件
+- 忽略 `.env.example` 等模板路径
+- 拒绝高置信度的 key、token、password、private key
+- 不打印密钥值
+- 支持项目级 allow/deny 规则
+
+## 新项目接入流程
+
+1. 运行 `python -m attestflow init --adapter generic`。
+2. 审核生成的 `harness.yml`。
+3. 增加项目专用 DoR/DoD 条款。
+4. 创建第一个 `TASK-*`，状态为 `proposed`。
+5. 收敛到 `ready`。
+6. 运行 `python -m attestflow start TASK-*`。
+7. 按 BDD -> unit -> implementation 执行。
+8. 运行 `python -m attestflow verify`。
+9. 运行 `python -m attestflow close TASK-*`。
+10. 用 `python -m attestflow next` 选择下一个任务。
+
+## 验收标准
+
+- 核心协议和项目适配层分离。
+- 保留来源会话中 harness 的本质：需求收敛、BDD/TDD、状态推进、证据和恢复。
+- 明确定义状态流转、门禁、证据、恢复和多 Agent 所有权。
+- 不硬依赖 `sport-pred`、`gstack`、Docker、GitHub 或 Python-only 工作流。
+- 可从本设计直接推导出实现计划，不需要再猜主要行为。

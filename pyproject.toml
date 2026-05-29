@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "attestflow"
+version = "0.1.0"
+description = "Reusable development harness for task gates, evidence, and resumable agent workflows."
+requires-python = ">=3.11"
+dependencies = []
+readme = "README.md"
+license = {text = "MIT"}
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Software Development :: Build Tools",
+]
+
+[project.scripts]
+attestflow = "attestflow.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["attestflow*"]
+
+[tool.setuptools.package-data]
+attestflow = ["templates/**/*"]

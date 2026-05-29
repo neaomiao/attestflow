@@ -1,0 +1,35 @@
+schema_version: 1
+project:
+  name: example-project
+  default_branch: main
+paths:
+  tasks: harness/tasks
+  runs: harness/runs
+  gates: harness/gates
+  locks: harness/locks
+  docs: docs
+commands:
+  bdd: python -m unittest discover -s tests/bdd
+  unit: python -m unittest discover -s tests/unit
+  lint: null
+  typecheck: null
+  secret_scan: python -m attestflow secret-scan
+  project_verify: null
+policies:
+  require_bdd_before_unit: true
+  require_unit_before_implementation: true
+  require_fresh_verify_for_done: true
+  require_disjoint_agent_write_scopes: true
+  require_issue_triage_for_linked_issues: true
+  docker_required: false
+execution:
+  docker:
+    enabled: false
+    compose_service: app
+integrations:
+  git_provider: optional
+  ci_provider: optional
+  skills:
+    ship: optional
+    context_save: optional
+    context_restore: optional

@@ -1,0 +1,225 @@
+from __future__ import annotations
+
+import argparse
+import shutil
+import sys
+from pathlib import Path
+
+from .config import load_config, validate_config
+from .io import load_data
+from .resume import resume_summary
+from .runner import run_verification
+from .secrets import secret_scan
+from .tasks import (
+    TASK_STATES,
+    block_task,
+    close_task,
+    iter_tasks,
+    select_next_task,
+    start_task,
+    transition_task,
+    validate_task,
+)
+
+
+ROOT = Path.cwd()
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    package_source = Path(__file__).resolve().parent / "templates" / "base"
+    source_source = Path(__file__).resolve().parents[1] / "templates" / "base"
+    source = package_source if package_source.exists() else source_source
+    target = Path(args.path).resolve()
+    if not source.exists():
+        print("ERROR: templates/base does not exist", file=sys.stderr)
+        return 1
+    shutil.copytree(source, target, dirs_exist_ok=True)
+    for state in TASK_STATES:
+        (target / "harness" / "tasks" / state).mkdir(parents=True, exist_ok=True)
+    (target / "harness" / "runs").mkdir(parents=True, exist_ok=True)
+    (target / "harness" / "locks").mkdir(parents=True, exist_ok=True)
+    print(f"initialized attestflow harness in {target}")
+    return 0
+
+
+def cmd_doctor(_: argparse.Namespace) -> int:
+    config = load_config(ROOT)
+    errors = validate_config(config)
+    if errors:
+        for error in errors:
+            print(f"ERROR: {error}", file=sys.stderr)
+        return 1
+    print("doctor passed")
+    return 0
+
+
+def cmd_validate_config(_: argparse.Namespace) -> int:
+    errors = validate_config(load_config(ROOT))
+    if errors:
+        for error in errors:
+            print(f"ERROR: {error}", file=sys.stderr)
+        return 1
+    print("config validation passed")
+    return 0
+
+
+def cmd_validate_task(args: argparse.Namespace) -> int:
+    path = Path(args.path)
+    task = load_data(path)
+    directory_state = path.parent.name if path.parent.name else None
+    errors = validate_task(task, directory_state=directory_state)
+    if errors:
+        for error in errors:
+            print(f"ERROR: {error}", file=sys.stderr)
+        return 1
+    print("task validation passed")
+    return 0
+
+
+def cmd_tasks(_: argparse.Namespace) -> int:
+    config = load_config(ROOT)
+    records = iter_tasks(ROOT, config)
+    if not records:
+        print("no task files found")
+        return 0
+    for record in records:
+        task = record.task
+        print(f"{task.get('id')}\t{task.get('state')}\t{task.get('priority')}\t{task.get('title')}")
+    return 0
+
+
+def cmd_next(_: argparse.Namespace) -> int:
+    config = load_config(ROOT)
+    selected = select_next_task(ROOT, config)
+    if not selected:
+        print("no ready tasks")
+        return 0
+    print(f"{selected.task.get('id')}\t{selected.path}")
+    return 0
+
+
+def cmd_start(args: argparse.Namespace) -> int:
+    config = load_config(ROOT)
+    run = start_task(ROOT, config, args.task, actor_role=args.actor)
+    print(f"started {args.task}: {run.run_id}")
+    return 0
+
+
+def cmd_block(args: argparse.Namespace) -> int:
+    block_task(ROOT, load_config(ROOT), args.task, reason=args.reason)
+    print(f"blocked {args.task}: {args.reason}")
+    return 0
+
+
+def cmd_transition(args: argparse.Namespace) -> int:
+    transition_task(ROOT, load_config(ROOT), args.task, args.state)
+    print(f"moved {args.task} to {args.state}")
+    return 0
+
+
+def cmd_close(args: argparse.Namespace) -> int:
+    close_task(ROOT, load_config(ROOT), args.task)
+    print(f"closed {args.task}")
+    return 0
+
+
+def cmd_evidence(args: argparse.Namespace) -> int:
+    config = load_config(ROOT)
+    for record in iter_tasks(ROOT, config):
+        if record.task.get("id") != args.task:
+            continue
+        evidence = record.task.get("evidence", {})
+        packet = evidence.get("packet") if isinstance(evidence, dict) else None
+        if not packet:
+            print(f"ERROR: {args.task} has no evidence.packet", file=sys.stderr)
+            return 1
+        path = ROOT / str(packet)
+        if not path.exists():
+            print(f"ERROR: evidence packet does not exist: {path}", file=sys.stderr)
+            return 1
+        print(path.read_text(encoding="utf-8"))
+        return 0
+    print(f"ERROR: task not found: {args.task}", file=sys.stderr)
+    return 1
+
+
+def cmd_resume(_: argparse.Namespace) -> int:
+    print(resume_summary(ROOT, load_config(ROOT)))
+    return 0
+
+
+def cmd_secret_scan(_: argparse.Namespace) -> int:
+    findings = secret_scan(ROOT)
+    if findings:
+        for finding in findings:
+            print(f"ERROR: {finding}", file=sys.stderr)
+        return 1
+    print("secret scan passed")
+    return 0
+
+
+def cmd_verify(_: argparse.Namespace) -> int:
+    result = run_verification(
+        ROOT,
+        load_config(ROOT),
+        ROOT / "harness" / "runs" / "adhoc-verify" / "commands",
+    )
+    if result.failed:
+        print("verification failed: " + ", ".join(result.failed), file=sys.stderr)
+        return 1
+    print("verification passed")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="python -m attestflow")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    init = subparsers.add_parser("init")
+    init.add_argument("--path", default=".")
+    init.add_argument("--adapter", default="generic")
+    init.set_defaults(func=cmd_init)
+
+    subparsers.add_parser("doctor").set_defaults(func=cmd_doctor)
+    subparsers.add_parser("validate-config").set_defaults(func=cmd_validate_config)
+
+    validate_task_parser = subparsers.add_parser("validate-task")
+    validate_task_parser.add_argument("path")
+    validate_task_parser.set_defaults(func=cmd_validate_task)
+
+    subparsers.add_parser("tasks").set_defaults(func=cmd_tasks)
+    subparsers.add_parser("next").set_defaults(func=cmd_next)
+
+    start = subparsers.add_parser("start")
+    start.add_argument("task")
+    start.add_argument("--actor", default="orchestrator")
+    start.set_defaults(func=cmd_start)
+
+    block = subparsers.add_parser("block")
+    block.add_argument("task")
+    block.add_argument("--reason", required=True)
+    block.set_defaults(func=cmd_block)
+
+    transition = subparsers.add_parser("transition")
+    transition.add_argument("task")
+    transition.add_argument("state")
+    transition.set_defaults(func=cmd_transition)
+
+    close = subparsers.add_parser("close")
+    close.add_argument("task")
+    close.set_defaults(func=cmd_close)
+
+    evidence = subparsers.add_parser("evidence")
+    evidence.add_argument("task")
+    evidence.set_defaults(func=cmd_evidence)
+
+    subparsers.add_parser("resume").set_defaults(func=cmd_resume)
+    subparsers.add_parser("secret-scan").set_defaults(func=cmd_secret_scan)
+    subparsers.add_parser("verify").set_defaults(func=cmd_verify)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return int(args.func(args))

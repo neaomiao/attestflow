@@ -1,0 +1,35 @@
+roles:
+  orchestrator:
+    owns:
+      - task state
+      - locks
+      - final integration
+      - verification evidence
+  requirements_agent:
+    owns:
+      - requirement intake
+      - BDD scenario drafts
+  test_agent:
+    owns:
+      - unit tests
+      - regression tests
+  worker_agent:
+    owns:
+      - assigned implementation files
+    constraints:
+      - must not write outside files.write
+      - must not revert other agents changes
+  review_agent:
+    owns:
+      - spec compliance review
+      - code quality review
+  ci_agent:
+    owns:
+      - CI log inspection
+      - failing check diagnosis
+  research_agent:
+    owns:
+      - external research notes
+    constraints:
+      - must not write production code
+

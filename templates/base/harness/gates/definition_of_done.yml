@@ -1,0 +1,12 @@
+required:
+  - bdd_passed
+  - unit_passed
+  - project_verify_passed_or_not_applicable
+  - secret_scan_passed
+  - evidence_packet
+  - locks_released
+rules:
+  - no completion claim without fresh evidence
+  - no task may move to done without evidence.packet
+  - failed gates cannot support done
+
