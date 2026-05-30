@@ -53,6 +53,22 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "verifier": {"agent_provider": "command", "command": None},
         "releaser": {"agent_provider": "command", "command": None},
     },
+    "context": {
+        "enabled": True,
+        "max_tree_entries": 200,
+        "max_file_bytes": 4000,
+        "documents": [
+            "README.md",
+            "AGENTS.md",
+            "harness.yml",
+            "pyproject.toml",
+            "package.json",
+            "docs/contracts/capability-schema.md",
+            "docs/contracts/planner-output-schema.md",
+            "docs/contracts/task-schema.md",
+            "docs/design/universal-harness.md",
+        ],
+    },
 }
 
 
@@ -93,6 +109,21 @@ def validate_config(config: dict[str, Any]) -> list[str]:
             agent_provider = capability.get("agent_provider")
             if agent_provider is not None and not isinstance(agent_provider, str):
                 errors.append(f"capabilities.{name}.agent_provider must be a string")
+    context = config.get("context", {})
+    if context is not None and not isinstance(context, dict):
+        errors.append("context must be a mapping")
+    elif isinstance(context, dict):
+        enabled = context.get("enabled")
+        if enabled is not None and not isinstance(enabled, bool):
+            errors.append("context.enabled must be a boolean")
+        for key in ("max_tree_entries", "max_file_bytes"):
+            value = context.get(key)
+            if value is not None and (type(value) is not int or value <= 0):
+                errors.append(f"context.{key} must be a positive integer")
+        for key in ("documents", "focus_files"):
+            value = context.get(key)
+            if value is not None and not _is_string_or_string_list(value):
+                errors.append(f"context.{key} must be a string or list of strings")
     return errors
 
 
@@ -107,3 +138,7 @@ def _merge_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[str, An
         if key not in result:
             result[key] = value
     return result
+
+
+def _is_string_or_string_list(value: Any) -> bool:
+    return isinstance(value, str) or (isinstance(value, list) and all(isinstance(item, str) for item in value))

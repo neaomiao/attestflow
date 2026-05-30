@@ -59,6 +59,30 @@ policies:
             self.assertNotIn("skills", config.get("integrations", {}))
             self.assertEqual(config["capabilities"]["planner"]["agent_provider"], "command")
 
+    def test_validate_config_rejects_invalid_context_fields(self) -> None:
+        config = {
+            "schema_version": 1,
+            "project": {"name": "demo"},
+            "paths": {"tasks": "harness/tasks", "runs": "harness/runs"},
+            "commands": {},
+            "policies": {},
+            "context": {
+                "enabled": "yes",
+                "max_tree_entries": 0,
+                "max_file_bytes": True,
+                "documents": [1],
+                "focus_files": {"path": "README.md"},
+            },
+        }
+
+        errors = validate_config(config)
+
+        self.assertIn("context.enabled must be a boolean", errors)
+        self.assertIn("context.max_tree_entries must be a positive integer", errors)
+        self.assertIn("context.max_file_bytes must be a positive integer", errors)
+        self.assertIn("context.documents must be a string or list of strings", errors)
+        self.assertIn("context.focus_files must be a string or list of strings", errors)
+
     def test_run_verification_uses_configured_commands_and_skips_nulls(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

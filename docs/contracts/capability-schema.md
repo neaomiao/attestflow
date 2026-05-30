@@ -70,6 +70,7 @@ goal -> planner capability input -> programming agent provider -> planner JSON -
 Programming Agent Provider 要求：
 
 - 从 stdin 读取 JSON object。
+- 输入包含 `repository_context`。
 - 向 stdout 输出 JSON object。
 - 输出必须符合 `docs/contracts/planner-output-schema.md`。
 - stderr 会保存到 capability run 证据中。
@@ -107,7 +108,7 @@ task JSON -> capability input -> programming agent provider -> capability output
 Programming Agent Provider 要求：
 
 - 从 stdin 读取 JSON object。
-- 输入包含 `capability`、`task`、`task_path`、`project`、`commands` 和 `instructions`。
+- 输入包含 `capability`、`task`、`task_path`、`project`、`commands`、`repository_context` 和 `instructions`。
 - 向 stdout 输出 JSON object。
 - stderr/stdout 会保存到 `harness/capability-runs/<capability>-<task>-*/`。
 - 非零退出码会阻止任务 evidence 更新。
@@ -144,6 +145,29 @@ Attestflow 会把 `output.json` 的相对路径写回：
   }
 }
 ```
+
+## Repository Context
+
+Capability input 的 `repository_context` 由 Attestflow 确定性生成：
+
+```json
+{
+  "enabled": true,
+  "tree": ["README.md", "attestflow/capabilities.py"],
+  "documents": [{"path": "README.md", "content": "...", "truncated": false}],
+  "files": [{"path": "attestflow/capabilities.py", "content": "...", "truncated": true}],
+  "limits": {"max_tree_entries": 200, "max_file_bytes": 4000}
+}
+```
+
+规则：
+
+- `tree` 是受限文件树。
+- `documents` 来自 `context.documents`。
+- `files` 来自 task `files.read` / `files.write` 和 `context.focus_files`。
+- 二进制文件会被跳过。
+- `.git`、`node_modules`、`__pycache__`、`harness/runs`、`harness/capability-runs` 默认排除。
+- provider 不应自行递归扫描仓库；需要更多上下文时应通过 capability output 声明缺口。
 
 ## 非目标
 

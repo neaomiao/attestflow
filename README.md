@@ -52,6 +52,8 @@ python3 -m attestflow plan "实现登录功能"
 
 Attestflow 的内置 capabilities 借鉴 Superpowers 的强制技能流程和 gstack 的专业角色分工，但不依赖它们。外部 skill、编程 Agent CLI 或 API wrapper 只是可选 agent provider；稳定接口是 Attestflow 自己的 capability contract。
 
+Provider input 会自动带上受控仓库上下文：文件树、核心文档片段，以及任务 `files.read` / `files.write` 指向的文本片段。`harness/runs`、`harness/capability-runs`、`.git`、`node_modules` 等目录默认排除，避免把运行证据和噪音回灌给 Agent。
+
 ## 本地验证
 
 ```bash
@@ -98,6 +100,7 @@ python3 -m attestflow secret-scan
 - 内置 capability registry：intake、planner、bdd、tdd、implementer、reviewer、verifier、releaser
 - `plan` programming agent provider：调用任意编程 Agent 命令，保存 capability 输入/输出证据并导入 runtime task JSON
 - `capability run` task programming agent provider：对单个任务执行 `bdd`、`tdd`、`implementer`、`reviewer`、`verifier` 或 `releaser`，校验 capability output schema，保存 evidence 并写回任务证据索引
+- 自动仓库上下文：收集文件树、核心文档和任务 focus files，写入 capability provider input
 - AI planner JSON 导入为 runtime task JSON
 - task schema 校验
 - `next` 调度

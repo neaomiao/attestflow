@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 from typing import Any
 
+from .context import collect_repository_context
 from .io import dump_data
 from .planner import import_planner_tasks
 from .tasks import TaskRecord, iter_tasks
@@ -193,6 +194,7 @@ def build_planner_input(root: Path, config: dict[str, Any], goal: str) -> dict[s
         "goal": goal,
         "project": config.get("project", {}),
         "commands": config.get("commands", {}),
+        "repository_context": collect_repository_context(root, config),
         "contracts": {
             "planner_output": "docs/contracts/planner-output-schema.md",
             "runtime_task": "docs/contracts/task-schema.md",
@@ -222,6 +224,12 @@ def build_task_capability_input(
     record: TaskRecord,
 ) -> dict[str, Any]:
     task = record.task
+    files = task.get("files", {}) if isinstance(task.get("files"), dict) else {}
+    focus_files = []
+    for key in ("read", "write"):
+        value = files.get(key)
+        if isinstance(value, list):
+            focus_files.extend(str(item) for item in value)
     return {
         "schema_version": 1,
         "capability": capability,
@@ -229,6 +237,7 @@ def build_task_capability_input(
         "commands": config.get("commands", {}),
         "task": task,
         "task_path": str(record.path.relative_to(root)),
+        "repository_context": collect_repository_context(root, config, focus_files=focus_files),
         "instructions": [
             "Return only JSON.",
             "Do not edit task files directly; Attestflow records capability evidence.",

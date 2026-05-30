@@ -54,6 +54,20 @@ capabilities:
   releaser:
     agent_provider: command
     command: null
+context:
+  enabled: true
+  max_tree_entries: 200
+  max_file_bytes: 4000
+  documents:
+    - README.md
+    - AGENTS.md
+    - harness.yml
+    - pyproject.toml
+    - package.json
+    - docs/contracts/capability-schema.md
+    - docs/contracts/planner-output-schema.md
+    - docs/contracts/task-schema.md
+    - docs/design/universal-harness.md
 execution:
   docker:
     enabled: false

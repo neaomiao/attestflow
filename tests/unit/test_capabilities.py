@@ -6,7 +6,14 @@ from tempfile import TemporaryDirectory
 import unittest
 
 import attestflow.cli as cli
-from attestflow.capabilities import get_capability, list_capabilities, run_task_capability
+from attestflow.capabilities import (
+    build_planner_input,
+    build_task_capability_input,
+    get_capability,
+    list_capabilities,
+    run_task_capability,
+)
+from attestflow.tasks import TaskRecord
 from attestflow.io import load_data
 
 
@@ -126,6 +133,27 @@ json.dump(
             self.assertEqual(exit_code, 1)
             self.assertIn("capabilities.planner.command", error.getvalue())
 
+    def test_planner_input_includes_repository_context(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text("# Demo\n\nProject overview.\n", encoding="utf-8")
+            (root / "src").mkdir()
+            (root / "src" / "app.py").write_text("def run():\n    return 'ok'\n", encoding="utf-8")
+            config = {
+                "project": {"name": "demo"},
+                "commands": {},
+                "paths": {"tasks": "harness/tasks"},
+                "context": {"max_tree_entries": 20, "max_file_bytes": 200},
+            }
+
+            payload = build_planner_input(root, config, "Add a feature")
+
+            self.assertIn("repository_context", payload)
+            self.assertIn("README.md", payload["repository_context"]["tree"])
+            self.assertIn("src/app.py", payload["repository_context"]["tree"])
+            readme = next(item for item in payload["repository_context"]["documents"] if item["path"] == "README.md")
+            self.assertIn("Project overview", readme["content"])
+
     def test_task_capability_runner_records_output_and_updates_task_evidence(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -163,6 +191,31 @@ json.dump(
             self.assertTrue(task["evidence"]["capabilities"]["reviewer"].endswith("output.json"))
             self.assertTrue((result.run_path / "input.json").exists())
             self.assertTrue((result.run_path / "output.json").exists())
+
+    def test_task_capability_input_includes_focus_file_snippets(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_ready_task(root, "TASK-0001")
+            source = root / "attestflow" / "capabilities.py"
+            source.parent.mkdir()
+            source.write_text("def capability_marker():\n    return True\n", encoding="utf-8")
+            task_path = root / "harness" / "tasks" / "ready" / "TASK-0001.json"
+            record = TaskRecord(path=task_path, task=load_data(task_path))
+            config = {
+                "project": {"name": "demo"},
+                "commands": {},
+                "context": {"max_tree_entries": 20, "max_file_bytes": 200},
+            }
+
+            payload = build_task_capability_input(root, config, get_capability("reviewer"), record)
+
+            self.assertIn("repository_context", payload)
+            snippet = next(
+                item
+                for item in payload["repository_context"]["files"]
+                if item["path"] == "attestflow/capabilities.py"
+            )
+            self.assertIn("capability_marker", snippet["content"])
 
     def test_task_capability_runner_rejects_invalid_output_schema(self) -> None:
         with TemporaryDirectory() as tmp:

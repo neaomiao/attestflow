@@ -154,6 +154,21 @@ capabilities:
     agent_provider: command
     command: null
 
+context:
+  enabled: true
+  max_tree_entries: 200
+  max_file_bytes: 4000
+  documents:
+    - README.md
+    - AGENTS.md
+    - harness.yml
+    - pyproject.toml
+    - package.json
+    - docs/contracts/capability-schema.md
+    - docs/contracts/planner-output-schema.md
+    - docs/contracts/task-schema.md
+    - docs/design/universal-harness.md
+
 execution:
   docker:
     enabled: false
@@ -199,6 +214,15 @@ releaser     release engineer
 ```
 
 `capability list/show` 展示合同；`plan` 执行目标级 planner capability；`capability run <name> <task>` 执行任务级 capability。Codex、Claude Code、OpenCode、外部 skill 或其他编程 Agent CLI 只通过 agent provider adapter 接入，不能成为 Attestflow core 的前置条件。
+
+Provider input 包含 `repository_context`，由 Attestflow 确定性生成：
+
+- `tree`：受限文件树
+- `documents`：`README.md`、`harness.yml`、核心 contract/design 文档等
+- `files`：任务 `files.read` / `files.write` 指向的文本片段
+- `limits`：实际使用的上下文限制
+
+默认排除 `.git`、`node_modules`、`__pycache__`、`harness/runs` 和 `harness/capability-runs`，避免把运行证据、缓存和依赖目录传给编程 Agent。
 
 ## 每任务独立会话
 
@@ -260,7 +284,7 @@ python -m attestflow capability run reviewer TASK-0001 --command "your-reviewer-
 执行规则：
 
 - 加载 runtime task JSON
-- 构造 capability input，包含 task、project、commands、capability contract 和固定 instructions
+- 构造 capability input，包含 task、project、commands、repository_context、capability contract 和固定 instructions
 - 调用 `--command` 或 `capabilities.<name>.command`
 - 保存 `input.json`、`stdout.log`、`stderr.log` 和 `output.json`
 - provider 非零退出、stdout 不是 JSON object 或 capability output schema 不合法时失败
