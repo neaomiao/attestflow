@@ -13,7 +13,7 @@ from .planner import import_planner_tasks
 from .resume import resume_summary
 from .runner import run_verification
 from .secrets import secret_scan
-from .sessions import resume_agent_session
+from .sessions import list_session_providers, resume_agent_session
 from .tasks import (
     TASK_STATES,
     block_task,
@@ -190,6 +190,12 @@ def cmd_session_resume(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_provider_list(_: argparse.Namespace) -> int:
+    for provider in list_session_providers():
+        print(f"{provider['name']}\t{provider['command']}\t{provider['description']}")
+    return 0
+
+
 def cmd_secret_scan(_: argparse.Namespace) -> int:
     findings = secret_scan(ROOT)
     if findings:
@@ -321,6 +327,10 @@ def build_parser() -> argparse.ArgumentParser:
     session_resume = session_subparsers.add_parser("resume")
     session_resume.add_argument("task")
     session_resume.set_defaults(func=cmd_session_resume)
+
+    provider = subparsers.add_parser("provider")
+    provider_subparsers = provider.add_subparsers(dest="provider_command", required=True)
+    provider_subparsers.add_parser("list").set_defaults(func=cmd_provider_list)
 
     subparsers.add_parser("secret-scan").set_defaults(func=cmd_secret_scan)
     verify = subparsers.add_parser("verify")

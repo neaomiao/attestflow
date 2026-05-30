@@ -127,6 +127,7 @@ sessions:
   role: worker_agent
   launch_command: null
   resume_command: null
+  provider_options: {}
   worktree:
     enabled: false
     path_template: null
@@ -246,6 +247,8 @@ Dispatch 必须原子完成：
 - 如果配置了 `sessions.launch_command`，按 `docs/contracts/session-adapter-schema.md` 执行 command adapter，写入 `session-adapter-input.json`、`session-adapter-output.json` 和 stdout/stderr logs
 
 核心不绑定 Codex、Claude Code、OpenCode 或其他平台。项目可以用 `sessions.launch_command` / `sessions.resume_command` 适配任意编程 Agent CLI。没有配置启动命令时，dispatch 至少生成独立 session packet；接入层可以读取 packet 后启动会话。
+
+当 `sessions.agent_provider` 是 `codex`、`claude-code` 或 `opencode` 时，Attestflow 会使用内置 provider preset 生成 adapter command。项目可以通过 `sessions.provider_options.command`、`launch_args`、`resume_args` 覆盖底层 CLI。
 
 ## AI Planning 和任务落盘
 

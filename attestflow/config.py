@@ -39,6 +39,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "role": "worker_agent",
         "launch_command": None,
         "resume_command": None,
+        "provider_options": {},
         "worktree": {"enabled": False, "path_template": None},
     },
     "capabilities": {
@@ -111,6 +112,9 @@ def validate_config(config: dict[str, Any]) -> list[str]:
     role = sessions.get("role") if isinstance(sessions, dict) else None
     if role is not None and not isinstance(role, str):
         errors.append("sessions.role must be a string")
+    provider_options = sessions.get("provider_options") if isinstance(sessions, dict) else None
+    if provider_options is not None and not isinstance(provider_options, dict):
+        errors.append("sessions.provider_options must be a mapping")
     capabilities = config.get("capabilities", {})
     if isinstance(capabilities, dict):
         for name, capability in capabilities.items():

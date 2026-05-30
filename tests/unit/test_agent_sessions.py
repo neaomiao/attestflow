@@ -96,6 +96,57 @@ json.dump(
             ledger = (run.path / "ledger.jsonl").read_text(encoding="utf-8")
             self.assertIn('"event": "session_launched"', ledger)
 
+    def test_builtin_provider_preset_launches_without_custom_adapter_script(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            fake_codex = bin_dir / "fake-codex"
+            fake_codex.write_text(
+                """
+#!/usr/bin/env python3
+import json
+import sys
+
+prompt = sys.argv[-1]
+assert "Attestflow Agent Session Packet" in prompt
+print(json.dumps({"type": "thread.started", "thread_id": "codex-thread-123"}))
+print(json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "ok"}}))
+""".lstrip(),
+                encoding="utf-8",
+            )
+            fake_codex.chmod(0o755)
+            config = DEFAULT_CONFIG.copy()
+            config["root"] = root
+            config["sessions"] = {
+                "agent_provider": "codex",
+                "role": "worker_agent",
+                "provider_options": {"command": str(fake_codex), "launch_args": ["exec", "--json"]},
+            }
+            write_task(root, "ready", "TASK-0001", ready_task("TASK-0001"))
+
+            run = start_task(root, config, "TASK-0001", actor_role="orchestrator")
+
+            session = load_data(run.path / "session.yml")
+            self.assertEqual(session["status"], "launched")
+            self.assertEqual(session["external_session_id"], "codex-thread-123")
+            self.assertIn("agent_adapters.py", session["launch_command"])
+            adapter_input = load_data(run.path / "session-adapter-input.json")
+            self.assertEqual(adapter_input["provider_options"]["command"], str(fake_codex))
+            adapter_output = load_data(run.path / "session-adapter-output.json")
+            self.assertIn("agent_adapters.py", adapter_output["resume_command"])
+
+    def test_cli_provider_list_exposes_builtin_session_presets(self) -> None:
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            exit_code = cli.main(["provider", "list"])
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("codex", output.getvalue())
+        self.assertIn("claude-code", output.getvalue())
+        self.assertIn("opencode", output.getvalue())
+
     def test_session_launch_invalid_output_records_failed_session(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

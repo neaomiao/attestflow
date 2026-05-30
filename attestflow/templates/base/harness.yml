@@ -29,6 +29,7 @@ sessions:
   role: worker_agent
   launch_command: null
   resume_command: null
+  provider_options: {}
   worktree:
     enabled: false
     path_template: null

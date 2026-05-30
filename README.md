@@ -83,6 +83,7 @@ python3 -m attestflow block TASK-0001 --reason "missing external input"
 python3 -m attestflow evidence TASK-0001
 python3 -m attestflow resume
 python3 -m attestflow session resume TASK-0001
+python3 -m attestflow provider list
 python3 -m attestflow secret-scan
 ```
 
@@ -91,6 +92,8 @@ python3 -m attestflow secret-scan
 `dispatch` 是 AI-first 执行入口。它会把 `ready` 任务移到 `in_progress`，创建 run、locks、独立 agent session、`prompt.md` 和 `session.yml`。如果 `harness.yml` 配置了 `sessions.launch_command`，Attestflow 会按 `docs/contracts/session-adapter-schema.md` 执行 command adapter 来启动真实外部 AI 会话；否则会生成可恢复的 session packet，等待接入层消费。
 
 `sessions.launch_command` / `sessions.resume_command` 是编程 Agent 适配点。命令从 stdin 读取 JSON，向 stdout 返回 JSON；Attestflow 会保存 `session-adapter-input.json`、`session-adapter-output.json`、stdout/stderr logs，并用 `attestflow session resume TASK-*` 恢复对应会话。
+
+如果 `sessions.agent_provider` 设为 `codex`、`claude-code` 或 `opencode`，且没有显式配置 `launch_command`，Attestflow 会自动使用内置 provider preset。`provider_options.command`、`provider_options.launch_args` 和 `provider_options.resume_args` 可以覆盖底层 CLI 命令与参数。
 
 ## 当前能力
 
@@ -107,6 +110,7 @@ python3 -m attestflow secret-scan
 - `next` 调度
 - `dispatch` 自动创建每任务独立 agent session、prompt packet、锁和 run evidence，并可调用编程 Agent session adapter
 - `session resume` 通过同一 session adapter 合同恢复外部编程 Agent 会话
+- 内置 session provider preset：Codex、Claude Code、OpenCode
 - `start` 低层状态推进入口，也会创建 session packet
 - `block` 阻塞任务
 - `transition` 按状态机推进任务
@@ -117,4 +121,4 @@ python3 -m attestflow secret-scan
 - 保守 secret scan
 - 可安装包内置 base 模板和 planner 输出示例
 
-后续重点是 Codex / Claude Code / OpenCode 等编程 Agent provider 预设、CI provider 抽象和更完整的多 Agent 调度。
+后续重点是 CI provider 抽象、更完整的多 Agent 调度，以及安装器把 provider preset 写入目标项目配置。

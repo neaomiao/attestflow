@@ -58,6 +58,7 @@ policies:
             self.assertEqual(exit_code, 0)
             self.assertNotIn("skills", config.get("integrations", {}))
             self.assertEqual(config["sessions"]["agent_provider"], "command")
+            self.assertEqual(config["sessions"]["provider_options"], {})
             self.assertNotIn("provider", config["sessions"])
             self.assertEqual(config["capabilities"]["planner"]["agent_provider"], "command")
 
@@ -73,6 +74,7 @@ policies:
                 "role": ["worker_agent"],
                 "launch_command": False,
                 "resume_command": 7,
+                "provider_options": [],
             },
         }
 
@@ -82,6 +84,7 @@ policies:
         self.assertIn("sessions.role must be a string", errors)
         self.assertIn("sessions.launch_command must be a string or null", errors)
         self.assertIn("sessions.resume_command must be a string or null", errors)
+        self.assertIn("sessions.provider_options must be a mapping", errors)
 
     def test_validate_config_rejects_invalid_context_fields(self) -> None:
         config = {

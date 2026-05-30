@@ -4,11 +4,20 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import shlex
 import subprocess
+import sys
 from typing import Any
 
 from .evidence import RunRecord, append_ledger
 from .io import dump_data, load_data
+
+
+BUILTIN_SESSION_PROVIDERS: dict[str, dict[str, str]] = {
+    "codex": {"command": "codex", "description": "OpenAI Codex CLI via attestflow.agent_adapters."},
+    "claude-code": {"command": "claude", "description": "Anthropic Claude Code CLI via attestflow.agent_adapters."},
+    "opencode": {"command": "opencode", "description": "OpenCode CLI via attestflow.agent_adapters."},
+}
 
 
 @dataclass(frozen=True)
@@ -17,6 +26,13 @@ class AgentSessionRecord:
     path: Path
     prompt_path: Path
     status: str
+
+
+def list_session_providers() -> list[dict[str, str]]:
+    return [
+        {"name": name, "command": item["command"], "description": item["description"]}
+        for name, item in sorted(BUILTIN_SESSION_PROVIDERS.items())
+    ]
 
 
 def create_agent_session(root: Path, config: dict[str, Any], task: dict[str, Any], run: RunRecord) -> AgentSessionRecord:
@@ -29,6 +45,7 @@ def create_agent_session(root: Path, config: dict[str, Any], task: dict[str, Any
     created_at = datetime.now(timezone.utc).isoformat()
 
     prompt_path.write_text(_prompt_packet(root, config, task, run, session_id, role), encoding="utf-8")
+    resume_command_template = session_config.get("resume_command") or _builtin_adapter_command(agent_provider)
     session = {
         "schema_version": 1,
         "session_id": session_id,
@@ -51,7 +68,7 @@ def create_agent_session(root: Path, config: dict[str, Any], task: dict[str, Any
         "launch_exit_code": None,
         "launch_stdout_log": None,
         "launch_stderr_log": None,
-        "resume_command": _render_session_command(session_config.get("resume_command"), root, run, session_id),
+        "resume_command": _render_session_command(resume_command_template, root, run, session_id),
         "resume_adapter_input": None,
         "resume_adapter_output": None,
         "resume_exit_code": None,
@@ -60,7 +77,7 @@ def create_agent_session(root: Path, config: dict[str, Any], task: dict[str, Any
         "failure": None,
     }
 
-    launch_command_template = session_config.get("launch_command")
+    launch_command_template = session_config.get("launch_command") or _builtin_adapter_command(agent_provider)
     if launch_command_template:
         _apply_adapter_result(
             root,
@@ -173,6 +190,13 @@ def _session_config(config: dict[str, Any]) -> dict[str, Any]:
     return sessions if isinstance(sessions, dict) else {}
 
 
+def _builtin_adapter_command(agent_provider: str) -> str | None:
+    if agent_provider not in BUILTIN_SESSION_PROVIDERS:
+        return None
+    adapter_path = Path(__file__).resolve().parent / "agent_adapters.py"
+    return f"{shlex.quote(sys.executable)} {shlex.quote(str(adapter_path))}"
+
+
 def _render_session_command(command: Any, root: Path, run: RunRecord, session_id: str) -> str | None:
     if not command:
         return None
@@ -260,6 +284,7 @@ def _adapter_input(
         },
         "run": {"run_id": run.run_id, "path": str(run.path)},
         "task": task,
+        "provider_options": _provider_options(config),
         "prompt_packet": {
             "path": prompt_ref,
             "absolute_path": str(prompt_path),
@@ -272,6 +297,11 @@ def _adapter_input(
             "Do not edit runtime task JSON directly; Attestflow records session evidence.",
         ],
     }
+
+
+def _provider_options(config: dict[str, Any]) -> dict[str, Any]:
+    options = _session_config(config).get("provider_options", {})
+    return options if isinstance(options, dict) else {}
 
 
 def _run_adapter_command(

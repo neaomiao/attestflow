@@ -15,11 +15,39 @@ Attestflow 负责确定性工作：创建 run、锁、`prompt.md`、adapter inpu
 sessions:
   agent_provider: codex
   role: worker_agent
-  launch_command: python3 scripts/attestflow-codex-session.py launch
-  resume_command: python3 scripts/attestflow-codex-session.py resume
+  launch_command: null
+  resume_command: null
+  provider_options: {}
 ```
 
 `launch_command` 和 `resume_command` 从 stdin 读取 JSON object，向 stdout 输出 JSON object。stderr 会写入 evidence log。
+
+如果 `agent_provider` 是内置 preset，`launch_command` / `resume_command` 可以保持 `null`：
+
+| agent_provider | 默认 CLI | 默认 launch |
+| --- | --- | --- |
+| `codex` | `codex` | `codex exec --json --sandbox workspace-write` |
+| `claude-code` | `claude` | `claude -p --output-format json` |
+| `opencode` | `opencode` | `opencode run --format json` |
+
+可用 `provider_options` 覆盖底层 CLI：
+
+```yaml
+sessions:
+  agent_provider: codex
+  provider_options:
+    command: /opt/bin/codex
+    launch_args:
+      - exec
+      - --json
+      - --sandbox
+      - workspace-write
+    resume_args:
+      - exec
+      - resume
+      - "{external_session_id}"
+      - --json
+```
 
 ## Adapter Input
 
@@ -42,6 +70,7 @@ sessions:
     "path": "/absolute/project/harness/runs/2026-05-30T00-00-00Z-TASK-0001"
   },
   "task": {"id": "TASK-0001"},
+  "provider_options": {},
   "prompt_packet": {
     "path": "prompt.md",
     "absolute_path": "/absolute/project/harness/runs/2026-05-30T00-00-00Z-TASK-0001/prompt.md",
@@ -92,6 +121,8 @@ Resume output：
 - `summary` 必须非空。
 - `external_session_id` 是外部 Agent 会话 id；没有外部 id 时可省略。
 - `resume_command` 可由 adapter 返回，用于后续 `attestflow session resume TASK-*`。
+
+内置 preset 会尽量从外部 CLI 输出中提取 `thread_id`、`session_id`、`sessionID`、`sessionId` 或 `conversation_id` 作为 `external_session_id`。如果外部 CLI 不返回稳定 id，resume 会退回该 CLI 的“继续最近会话”能力；这仍然会留下 Attestflow 的本地 run/session evidence，但项目可以用 `provider_options.resume_args` 收紧行为。
 
 ## Evidence
 
