@@ -37,6 +37,7 @@ BUILTIN_CAPABILITIES: list[dict[str, Any]] = [
         "outputs": ["requirement brief", "open decision list"],
         "gates": ["unresolved business decisions are explicit", "manual work is not added as the default path"],
         "evidence": ["capability input", "requirement brief", "decision log"],
+        "programming_agent_provider": "optional",
         "external_dependency": False,
     },
     {
@@ -48,6 +49,7 @@ BUILTIN_CAPABILITIES: list[dict[str, Any]] = [
         "outputs": ["planner JSON"],
         "gates": ["planner JSON parses", "runtime tasks satisfy Definition of Ready", "task ids are assigned by Attestflow"],
         "evidence": ["input.json", "output.json", "stderr.log"],
+        "programming_agent_provider": "optional",
         "external_dependency": False,
         "contract": "docs/contracts/planner-output-schema.md",
     },
@@ -60,6 +62,7 @@ BUILTIN_CAPABILITIES: list[dict[str, Any]] = [
         "outputs": ["BDD scenarios", "acceptance examples"],
         "gates": ["observable behavior is described before unit tests", "edge cases are named"],
         "evidence": ["scenario diff", "task update"],
+        "programming_agent_provider": "optional",
         "external_dependency": False,
     },
     {
@@ -71,6 +74,7 @@ BUILTIN_CAPABILITIES: list[dict[str, Any]] = [
         "outputs": ["failing test evidence", "passing test evidence"],
         "gates": ["red evidence exists before implementation", "green evidence references the current run"],
         "evidence": ["red log", "green log", "test diff"],
+        "programming_agent_provider": "optional",
         "external_dependency": False,
     },
     {
@@ -82,6 +86,7 @@ BUILTIN_CAPABILITIES: list[dict[str, Any]] = [
         "outputs": ["implementation diff"],
         "gates": ["writes stay inside files.write", "unrelated user changes are preserved"],
         "evidence": ["diff summary", "ledger events"],
+        "programming_agent_provider": "optional",
         "external_dependency": False,
     },
     {
@@ -93,6 +98,7 @@ BUILTIN_CAPABILITIES: list[dict[str, Any]] = [
         "outputs": ["review findings", "fix recommendations"],
         "gates": ["findings are severity ordered", "blocking issues prevent close"],
         "evidence": ["review report", "resolved finding log"],
+        "programming_agent_provider": "optional",
         "external_dependency": False,
     },
     {
@@ -104,6 +110,7 @@ BUILTIN_CAPABILITIES: list[dict[str, Any]] = [
         "outputs": ["verification packet"],
         "gates": ["fresh command logs exist", "required evidence is linked to the task"],
         "evidence": ["command logs", "evidence.md", "ledger.jsonl"],
+        "programming_agent_provider": "optional",
         "external_dependency": False,
     },
     {
@@ -115,6 +122,7 @@ BUILTIN_CAPABILITIES: list[dict[str, Any]] = [
         "outputs": ["release checklist", "post-release verification plan"],
         "gates": ["CI provider is optional", "release evidence is auditable"],
         "evidence": ["release checklist", "CI or local verification logs"],
+        "programming_agent_provider": "optional",
         "external_dependency": False,
     },
 ]
@@ -168,6 +176,7 @@ def run_task_capability(
     run_path = _new_capability_run_path(root, config, f"{capability_name}-{task_id}")
     capability_input = build_task_capability_input(root, config, capability, record)
     output = _run_json_command(root, capability_command, capability_input, run_path, capability_name)
+    _validate_task_capability_output(output, capability_name)
     _record_task_capability_evidence(root, record, capability_name, run_path)
     return TaskCapabilityRunResult(
         capability=capability_name,
@@ -272,6 +281,21 @@ def _run_json_command(
         raise ValueError(f"{capability_name} command must return a JSON object")
     dump_data(output, run_path / "output.json")
     return output
+
+
+def _validate_task_capability_output(output: dict[str, Any], capability_name: str) -> None:
+    if output.get("schema_version") != 1:
+        raise ValueError(f"{capability_name} output schema_version must be 1")
+    if output.get("status") not in {"passed", "failed", "blocked"}:
+        raise ValueError(f"{capability_name} output status must be one of: passed, failed, blocked")
+    if not str(output.get("summary", "")).strip():
+        raise ValueError(f"{capability_name} output summary must be non-empty")
+    findings = output.get("findings", [])
+    if not isinstance(findings, list):
+        raise ValueError(f"{capability_name} output findings must be a list")
+    evidence = output.get("evidence", [])
+    if not isinstance(evidence, list):
+        raise ValueError(f"{capability_name} output evidence must be a list")
 
 
 def _record_task_capability_evidence(

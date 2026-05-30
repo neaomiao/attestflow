@@ -34,25 +34,25 @@ sessions:
     path_template: null
 capabilities:
   planner:
-    provider: command
+    agent_provider: command
     command: null
   bdd:
-    provider: command
+    agent_provider: command
     command: null
   tdd:
-    provider: command
+    agent_provider: command
     command: null
   implementer:
-    provider: command
+    agent_provider: command
     command: null
   reviewer:
-    provider: command
+    agent_provider: command
     command: null
   verifier:
-    provider: command
+    agent_provider: command
     command: null
   releaser:
-    provider: command
+    agent_provider: command
     command: null
 execution:
   docker:

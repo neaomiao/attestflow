@@ -57,6 +57,7 @@ policies:
 
             self.assertEqual(exit_code, 0)
             self.assertNotIn("skills", config.get("integrations", {}))
+            self.assertEqual(config["capabilities"]["planner"]["agent_provider"], "command")
 
     def test_run_verification_uses_configured_commands_and_skips_nulls(self) -> None:
         with TemporaryDirectory() as tmp:

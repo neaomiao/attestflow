@@ -23,6 +23,15 @@ class CapabilityTests(unittest.TestCase):
                 self.assertIn(key, capability)
                 self.assertTrue(capability[key])
 
+    def test_builtin_capabilities_are_for_programming_agent_providers(self) -> None:
+        planner = get_capability("planner")
+        reviewer = get_capability("reviewer")
+
+        self.assertIn("programming_agent_provider", planner)
+        self.assertIn("programming_agent_provider", reviewer)
+        self.assertEqual(planner["programming_agent_provider"], "optional")
+        self.assertEqual(reviewer["programming_agent_provider"], "optional")
+
     def test_get_capability_rejects_unknown_names(self) -> None:
         with self.assertRaisesRegex(ValueError, "unknown capability"):
             get_capability("missing")
@@ -63,9 +72,9 @@ json.dump(
                 "title": "Plan capability task",
                 "priority": 10,
                 "type": "feature",
-                "purpose": "Prove plan command imports model output.",
+                "purpose": "Prove plan command imports programming agent output.",
                 "scope": ["plan command"],
-                "out_of_scope": ["model SDK"],
+                "out_of_scope": ["native agent SDK"],
                 "requirements": {
                     "confirmed": ["command provider returns planner JSON"],
                     "unresolved": [],
@@ -155,6 +164,29 @@ json.dump(
             self.assertTrue((result.run_path / "input.json").exists())
             self.assertTrue((result.run_path / "output.json").exists())
 
+    def test_task_capability_runner_rejects_invalid_output_schema(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_ready_task(root, "TASK-0001")
+            provider = root / "bad_review_provider.py"
+            provider.write_text(
+                """
+import json
+import sys
+
+json.load(sys.stdin)
+json.dump({"schema_version": 1, "summary": "missing status"}, sys.stdout)
+""".lstrip(),
+                encoding="utf-8",
+            )
+            config = {"paths": {"tasks": "harness/tasks", "capability_runs": "harness/capability-runs"}}
+
+            with self.assertRaisesRegex(ValueError, "status must be one of"):
+                run_task_capability(root, config, "reviewer", "TASK-0001", command=f"python3 {provider}")
+
+            task = load_data(root / "harness" / "tasks" / "ready" / "TASK-0001.json")
+            self.assertNotIn("capabilities", task["evidence"])
+
     def test_cli_capability_run_executes_task_scoped_capability(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -214,7 +246,7 @@ def write_ready_task(root: Path, task_id: str) -> None:
         "purpose": "Exercise task scoped capabilities.",
         "context": [],
         "scope": ["capability runner"],
-        "out_of_scope": ["model SDK"],
+        "out_of_scope": ["native agent SDK"],
         "requirements": {"confirmed": ["task is ready"], "unresolved": [], "assumptions": []},
         "bdd_scenarios": ["Task capability receives task context."],
         "unit_tests": ["tests/unit/test_capabilities.py"],

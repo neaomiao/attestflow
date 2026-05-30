@@ -1,7 +1,7 @@
 # Capability Contract
 
 日期：2026-05-30
-状态：planner capability 已实现
+状态：planner capability 和 task-scoped capability runner 已实现
 
 ## 目标
 
@@ -9,10 +9,10 @@ Capability 是 Attestflow 内部的专业能力合同。它借鉴 [Superpowers](
 
 核心边界：
 
-- 生成性判断交给大模型或 agent provider。
+- 生成性判断交给编程 Agent provider。
 - Attestflow 定义输入、输出、门禁和证据。
-- provider 可以是本地命令、模型 CLI、API wrapper 或外部 skill adapter。
-- core 不依赖任何具体 provider。
+- provider 可以是 Codex、Claude Code、OpenCode、本地 agent 命令、API wrapper 或外部 skill adapter。
+- core 不依赖任何具体编程 Agent provider。
 
 ## 字段
 
@@ -28,6 +28,7 @@ Capability 是 Attestflow 内部的专业能力合同。它借鉴 [Superpowers](
   "outputs": ["planner JSON"],
   "gates": ["planner JSON parses", "runtime tasks satisfy Definition of Ready"],
   "evidence": ["input.json", "output.json", "stderr.log"],
+  "programming_agent_provider": "optional",
   "external_dependency": false
 }
 ```
@@ -37,9 +38,10 @@ Capability 是 Attestflow 内部的专业能力合同。它借鉴 [Superpowers](
 - `name` 是稳定 ID。
 - `specialist` 是角色，不是工具名。
 - `phase` 必须能映射到开发流程。
-- `inputs` 和 `outputs` 是 provider 合同。
+- `inputs` 和 `outputs` 是编程 Agent provider 合同。
 - `gates` 是 Attestflow 可审计的完成条件。
 - `evidence` 是必须留下的证据文件或记录。
+- `programming_agent_provider` 表示该 capability 可由编程 Agent provider 执行，但不是 core 依赖。
 - `external_dependency` 对内置能力必须是 `false`。
 
 ## 内置能力
@@ -62,10 +64,10 @@ releaser     ship    release engineer
 流程：
 
 ```text
-goal -> planner capability input -> command provider -> planner JSON -> task import -> runtime task JSON
+goal -> planner capability input -> programming agent provider -> planner JSON -> task import -> runtime task JSON
 ```
 
-Provider 要求：
+Programming Agent Provider 要求：
 
 - 从 stdin 读取 JSON object。
 - 向 stdout 输出 JSON object。
@@ -78,14 +80,14 @@ Provider 要求：
 ```yaml
 capabilities:
   planner:
-    provider: command
+    agent_provider: command
     command: null
 ```
 
 命令行覆盖：
 
 ```bash
-python -m attestflow plan "实现登录功能" --command "your-model-cli"
+python -m attestflow plan "实现登录功能" --command "codex exec --json"
 ```
 
 ## Task-scoped Capability 执行
@@ -99,18 +101,19 @@ python -m attestflow capability run reviewer TASK-0001 --command "your-reviewer-
 流程：
 
 ```text
-task JSON -> capability input -> command provider -> capability output JSON -> task evidence index
+task JSON -> capability input -> programming agent provider -> capability output JSON -> task evidence index
 ```
 
-Provider 要求：
+Programming Agent Provider 要求：
 
 - 从 stdin 读取 JSON object。
 - 输入包含 `capability`、`task`、`task_path`、`project`、`commands` 和 `instructions`。
 - 向 stdout 输出 JSON object。
 - stderr/stdout 会保存到 `harness/capability-runs/<capability>-<task>-*/`。
 - 非零退出码会阻止任务 evidence 更新。
+- stdout 必须满足 capability output schema。
 
-输出建议：
+输出 schema：
 
 ```json
 {
@@ -121,6 +124,14 @@ Provider 要求：
   "evidence": ["review report"]
 }
 ```
+
+字段规则：
+
+- `schema_version` 必须为 `1`。
+- `status` 必须是 `passed`、`failed` 或 `blocked`。
+- `summary` 必须是非空字符串。
+- `findings` 必须是数组。
+- `evidence` 必须是数组。
 
 Attestflow 会把 `output.json` 的相对路径写回：
 

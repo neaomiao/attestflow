@@ -43,15 +43,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "capabilities": {
         "planner": {
-            "provider": "command",
+            "agent_provider": "command",
             "command": None,
         },
-        "bdd": {"provider": "command", "command": None},
-        "tdd": {"provider": "command", "command": None},
-        "implementer": {"provider": "command", "command": None},
-        "reviewer": {"provider": "command", "command": None},
-        "verifier": {"provider": "command", "command": None},
-        "releaser": {"provider": "command", "command": None},
+        "bdd": {"agent_provider": "command", "command": None},
+        "tdd": {"agent_provider": "command", "command": None},
+        "implementer": {"agent_provider": "command", "command": None},
+        "reviewer": {"agent_provider": "command", "command": None},
+        "verifier": {"agent_provider": "command", "command": None},
+        "releaser": {"agent_provider": "command", "command": None},
     },
 }
 
@@ -90,6 +90,9 @@ def validate_config(config: dict[str, Any]) -> list[str]:
             command = capability.get("command")
             if command is not None and not isinstance(command, str):
                 errors.append(f"capabilities.{name}.command must be a string or null")
+            agent_provider = capability.get("agent_provider")
+            if agent_provider is not None and not isinstance(agent_provider, str):
+                errors.append(f"capabilities.{name}.agent_provider must be a string")
     return errors
 
 

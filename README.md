@@ -4,7 +4,7 @@ Attestflow 的目标是把需求收敛、AI 任务拆解、BDD、单元测试、
 
 字段名、状态名和命令名保持英文，便于代码和 CI 解析；说明文档使用中文。
 
-核心原则：AI 能完成的工作不进入人工主路径。大模型负责拆解目标、生成任务草案、补充 BDD 和验收标准；Attestflow 负责确定性校验、分配任务 ID、落盘、锁、验证和证据。
+核心原则：AI 能完成的工作不进入人工主路径。编程 Agent 负责拆解目标、生成任务草案、补充 BDD 和验收标准；Attestflow 负责确定性校验、分配任务 ID、落盘、锁、验证和证据。
 
 ## 一条命令接入新项目
 
@@ -24,33 +24,33 @@ python3 -m attestflow init --path /path/to/project --adapter generic
 
 ## AI-first 任务生成
 
-任务不应该靠人手写 YAML。最直接的主路径是让大模型输出 planner JSON，然后由 Attestflow 校验并落盘：
+任务不应该靠人手写 YAML。最直接的主路径是让编程 Agent 输出 planner JSON，然后由 Attestflow 校验并落盘：
 
 ```bash
 python3 -m attestflow task import --from-json plan.json
 ```
 
-也可以从 stdin 接收模型或自动化系统输出：
+也可以从 stdin 接收编程 Agent 或自动化系统输出：
 
 ```bash
 ai-planner "实现登录功能" | python3 -m attestflow task import --from-json -
 ```
 
-`task import` 会分配 `TASK-*` ID、解析 planner 内部依赖、补齐默认字段、校验 ready 门禁，并写入 `harness/tasks/ready/*.json`。如果模型输出缺少 scope、BDD、unit_tests、acceptance 或 files.write，导入会失败，不会写入半成品任务。
+`task import` 会分配 `TASK-*` ID、解析 planner 内部依赖、补齐默认字段、校验 ready 门禁，并写入 `harness/tasks/ready/*.json`。如果编程 Agent 输出缺少 scope、BDD、unit_tests、acceptance 或 files.write，导入会失败，不会写入半成品任务。
 
-也可以使用内置 capability 入口，让 Attestflow 负责组装标准输入、调用配置的模型命令、保存 capability evidence，并自动导入任务：
+也可以使用内置 capability 入口，让 Attestflow 负责组装标准输入、调用配置的编程 Agent 命令、保存 capability evidence，并自动导入任务：
 
 ```bash
-python3 -m attestflow plan "实现登录功能" --command "your-model-cli"
+python3 -m attestflow plan "实现登录功能" --command "codex exec --json"
 ```
 
-`your-model-cli` 从 stdin 读取 JSON，向 stdout 输出符合 `docs/contracts/planner-output-schema.md` 的 planner JSON。默认模板也支持在 `harness.yml` 中配置 `capabilities.planner.command`，这样可以直接运行：
+编程 Agent provider 可以是 Codex、Claude Code、OpenCode 或其他 agent CLI。它从 stdin 读取 JSON，向 stdout 输出符合 `docs/contracts/planner-output-schema.md` 的 planner JSON。默认模板也支持在 `harness.yml` 中配置 `capabilities.planner.command`，这样可以直接运行：
 
 ```bash
 python3 -m attestflow plan "实现登录功能"
 ```
 
-Attestflow 的内置 capabilities 借鉴 Superpowers 的强制技能流程和 gstack 的专业角色分工，但不依赖它们。外部 skill、模型 CLI 或 API 只是可选 provider；稳定接口是 Attestflow 自己的 capability contract。
+Attestflow 的内置 capabilities 借鉴 Superpowers 的强制技能流程和 gstack 的专业角色分工，但不依赖它们。外部 skill、编程 Agent CLI 或 API wrapper 只是可选 agent provider；稳定接口是 Attestflow 自己的 capability contract。
 
 ## 本地验证
 
@@ -66,8 +66,8 @@ python3 -m attestflow validate-config
 python3 -m attestflow validate-task harness/tasks/ready/TASK-0001-example.json
 python3 -m attestflow capability list
 python3 -m attestflow capability show planner
-python3 -m attestflow plan "实现登录功能" --command "your-model-cli"
-python3 -m attestflow capability run reviewer TASK-0001 --command "your-reviewer-cli"
+python3 -m attestflow plan "实现登录功能" --command "codex exec --json"
+python3 -m attestflow capability run reviewer TASK-0001 --command "claude --json"
 python3 -m attestflow task import --from-json plan.json
 python3 -m attestflow tasks
 python3 -m attestflow next
@@ -83,7 +83,7 @@ python3 -m attestflow resume
 python3 -m attestflow secret-scan
 ```
 
-接入后先让 Agent 审核 `harness.yml` 和项目命令，再由大模型生成 planner JSON 并导入任务。只有凭证、业务取舍和不可自动判断的外部决策需要人工确认。任务进入开发前必须满足 `ready` 门禁；完成前必须有当前 run 的 evidence。
+接入后先让编程 Agent 审核 `harness.yml` 和项目命令，再生成 planner JSON 并导入任务。只有凭证、业务取舍和不可自动判断的外部决策需要人工确认。任务进入开发前必须满足 `ready` 门禁；完成前必须有当前 run 的 evidence。
 
 `dispatch` 是 AI-first 执行入口。它会把 `ready` 任务移到 `in_progress`，创建 run、locks、独立 agent session、`prompt.md` 和 `session.yml`。如果 `harness.yml` 配置了 `sessions.launch_command`，Attestflow 会自动执行该命令来启动真实外部 AI 会话；否则会生成可恢复的 session packet，等待接入层消费。
 
@@ -96,8 +96,8 @@ python3 -m attestflow secret-scan
 - 受限 YAML 子集读写
 - `harness.yml` 校验
 - 内置 capability registry：intake、planner、bdd、tdd、implementer、reviewer、verifier、releaser
-- `plan` command provider：调用任意模型命令，保存 capability 输入/输出证据并导入 runtime task JSON
-- `capability run` task provider：对单个任务执行 `bdd`、`tdd`、`implementer`、`reviewer`、`verifier` 或 `releaser`，保存 capability evidence 并写回任务证据索引
+- `plan` programming agent provider：调用任意编程 Agent 命令，保存 capability 输入/输出证据并导入 runtime task JSON
+- `capability run` task programming agent provider：对单个任务执行 `bdd`、`tdd`、`implementer`、`reviewer`、`verifier` 或 `releaser`，校验 capability output schema，保存 evidence 并写回任务证据索引
 - AI planner JSON 导入为 runtime task JSON
 - task schema 校验
 - `next` 调度
@@ -112,4 +112,4 @@ python3 -m attestflow secret-scan
 - 保守 secret scan
 - 可安装包内置 base 模板和 planner 输出示例
 
-后续重点是原生模型 provider 适配、CI provider 抽象和更完整的多 Agent 调度。
+后续重点是 Codex / Claude Code / OpenCode 等编程 Agent provider 预设、CI provider 抽象和更完整的多 Agent 调度。

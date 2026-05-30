@@ -5,7 +5,7 @@
 
 ## 目标
 
-Planner output 是大模型和 Attestflow 之间的边界。大模型负责理解目标、拆解任务、给出 BDD、unit test、验收标准和文件范围；Attestflow 负责确定性校验、分配 task id、解析依赖并写入 runtime task JSON。
+Planner output 是编程 Agent provider 和 Attestflow 之间的边界。编程 Agent 负责理解目标、拆解任务、给出 BDD、unit test、验收标准和文件范围；Attestflow 负责确定性校验、分配 task id、解析依赖并写入 runtime task JSON。
 
 核心原则：AI 能完成的工作不进入人工主路径。人不手写任务文档；人只处理凭证、业务取舍和无法自动判断的外部决策。
 
@@ -23,9 +23,9 @@ Planner 必须输出 JSON object：
       "title": "Add planner output contract",
       "priority": 10,
       "type": "docs",
-      "purpose": "Document the LLM output shape.",
+      "purpose": "Document the programming agent output shape.",
       "scope": ["planner JSON schema"],
-      "out_of_scope": ["model provider integration"],
+      "out_of_scope": ["programming agent provider presets"],
       "requirements": {
         "confirmed": ["AI creates task drafts"],
         "unresolved": [],
@@ -49,7 +49,7 @@ Planner 必须输出 JSON object：
 - `schema_version`：当前为 `1`。
 - `goal`：原始目标摘要，用于审计，不写入 task 必填字段。
 - `tasks`：非空数组。
-- `key`：planner 内部稳定引用。Attestflow 不信任模型生成的 `TASK-*`，而是用 `key` 解析任务间依赖。
+- `key`：planner 内部稳定引用。Attestflow 不信任编程 Agent 生成的 `TASK-*`，而是用 `key` 解析任务间依赖。
 - `title`：任务标题。
 - `priority`：数字越小越优先。
 - `type`：默认 `feature`。
@@ -62,7 +62,7 @@ Planner 必须输出 JSON object：
 `attestflow task import --from-json PLAN` 和 `attestflow plan "目标"` 必须最终走同一套导入规则：
 
 - 分配递增的 `TASK-*` ID
-- 忽略或覆盖大模型提供的 task id
+- 忽略或覆盖编程 Agent 提供的 task id
 - 把 planner `key` 依赖解析为真实 task id
 - 补齐 `agents`、`external_inputs`、`evidence`、`links`、`risks`、`notes`、时间戳等默认字段
 - 对每个任务执行 task schema 校验
@@ -74,13 +74,13 @@ Planner 必须输出 JSON object：
 - 构造 planner capability input
 - 调用 `capabilities.planner.command` 或 `--command`
 - 保存 `harness/capability-runs/planner-*/input.json`
-- 保存 provider stdout/stderr
-- 将 provider stdout 解析为 planner JSON
+- 保存 programming agent provider stdout/stderr
+- 将 programming agent provider stdout 解析为 planner JSON
 - 保存 `output.json`
 - 复用 `task import` 的确定性校验和落盘
 
 ## 非目标
 
-- 不在基础 runtime 中绑定具体模型 provider。
-- 不让模型直接写 `harness/tasks/**/*.json`。
+- 不在基础 runtime 中绑定具体编程 Agent provider。
+- 不让编程 Agent 直接写 `harness/tasks/**/*.json`。
 - 不把交互式人工填表作为任务创建主路径。

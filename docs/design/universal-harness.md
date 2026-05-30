@@ -17,7 +17,7 @@ intent -> AI planning -> task import -> requirement boundary -> BDD scenario -> 
 
 来源项目的 harness 验证了正确方向：任务状态机、Definition of Ready、Definition of Done、BDD/TDD 顺序、验证证据包和 Agent 文件所有权。但它的问题是把具体语言栈、项目专用文档、私有发布流程、基础设施和业务红线混进了核心。
 
-本设计的核心原则是：AI 能完成的工作不进入人工主路径，协议内核和项目适配分离。大模型负责目标拆解、任务草案、BDD 和验收标准；Attestflow 负责确定性校验、ID 分配、状态、锁、验证和证据。
+本设计的核心原则是：AI 能完成的工作不进入人工主路径，协议内核和项目适配分离。编程 Agent 负责目标拆解、任务草案、BDD 和验收标准；Attestflow 负责确定性校验、ID 分配、状态、锁、验证和证据。
 
 ## 非目标
 
@@ -32,8 +32,8 @@ intent -> AI planning -> task import -> requirement boundary -> BDD scenario -> 
 ## 设计原则
 
 1. 协议优先：`task schema`、状态流转、门禁、证据、锁和 run ledger 是稳定接口。
-2. AI 优先：目标拆解、任务草案、BDD、验收标准和文件范围默认由大模型生成。
-3. 确定性落盘：大模型输出 planner JSON，Attestflow 分配 ID、补默认值、校验 schema，再写 runtime task JSON。
+2. AI 优先：目标拆解、任务草案、BDD、验收标准和文件范围默认由编程 Agent 生成。
+3. 确定性落盘：编程 Agent 输出 planner JSON，Attestflow 分配 ID、补默认值、校验 schema，再写 runtime task JSON。
 4. 适配其次：语言栈、测试命令、CI 平台、Issue 系统、Docker 和工具路由都由项目配置。
 5. 没有可执行证明就不实现：新功能必须先有 BDD，再有 unit test，再写 implementation。
 6. 没有新鲜证据就不完成：`done` 必须引用当前 run 的命令、时间戳和结果。
@@ -133,7 +133,25 @@ sessions:
 
 capabilities:
   planner:
-    provider: command
+    agent_provider: command
+    command: null
+  bdd:
+    agent_provider: command
+    command: null
+  tdd:
+    agent_provider: command
+    command: null
+  implementer:
+    agent_provider: command
+    command: null
+  reviewer:
+    agent_provider: command
+    command: null
+  verifier:
+    agent_provider: command
+    command: null
+  releaser:
+    agent_provider: command
     command: null
 
 execution:
@@ -164,6 +182,7 @@ Attestflow 不依赖外部 skills，但会吸收成熟 skill 系统的结构：
 - `outputs`
 - `gates`
 - `evidence`
+- `programming_agent_provider`
 - `external_dependency: false`
 
 第一批内置能力：
@@ -179,7 +198,7 @@ verifier     verification lead
 releaser     release engineer
 ```
 
-`capability list/show` 展示合同；`plan` 执行目标级 planner capability；`capability run <name> <task>` 执行任务级 capability。外部模型、外部 skill 或 agent CLI 只通过 provider adapter 接入，不能成为 Attestflow core 的前置条件。
+`capability list/show` 展示合同；`plan` 执行目标级 planner capability；`capability run <name> <task>` 执行任务级 capability。Codex、Claude Code、OpenCode、外部 skill 或其他编程 Agent CLI 只通过 agent provider adapter 接入，不能成为 Attestflow core 的前置条件。
 
 ## 每任务独立会话
 
@@ -208,17 +227,17 @@ Dispatch 必须原子完成：
 任务产生分两层：
 
 ```text
-LLM / planning agent -> planner JSON -> attestflow task import -> task JSON
+programming agent provider -> planner JSON -> attestflow task import -> task JSON
 ```
 
-大模型负责判断和拆解，不直接写 `harness/tasks/**/*.json`。现在有两条等价入口：
+编程 Agent 负责判断和拆解，不直接写 `harness/tasks/**/*.json`。现在有两条等价入口：
 
 ```bash
 python -m attestflow plan "目标描述"
 python -m attestflow task import --from-json PLAN.json
 ```
 
-`plan` 会构造标准 capability input，调用 `capabilities.planner.command` 或 `--command` 指定的 provider，将 stdout 作为 planner JSON，再复用 `task import`。Attestflow 接收 planner JSON 后执行确定性处理：
+`plan` 会构造标准 capability input，调用 `capabilities.planner.command` 或 `--command` 指定的编程 Agent provider，将 stdout 作为 planner JSON，再复用 `task import`。Attestflow 接收 planner JSON 后执行确定性处理：
 
 - 分配递增的 `TASK-*` ID
 - 解析 planner 内部 `key` 依赖
@@ -244,7 +263,7 @@ python -m attestflow capability run reviewer TASK-0001 --command "your-reviewer-
 - 构造 capability input，包含 task、project、commands、capability contract 和固定 instructions
 - 调用 `--command` 或 `capabilities.<name>.command`
 - 保存 `input.json`、`stdout.log`、`stderr.log` 和 `output.json`
-- provider 非零退出或 stdout 不是 JSON object 时失败
+- provider 非零退出、stdout 不是 JSON object 或 capability output schema 不合法时失败
 - 成功后把 `output.json` 的相对路径写入 `task.evidence.capabilities.<name>`
 
 这一步让内部 skills 不再只是文档合同，而是有统一执行、证据和任务回写机制。
@@ -368,7 +387,7 @@ python -m attestflow secret-scan
 - `doctor`：检查工具、配置和目录一致性。
 - `validate-config`：验证 `harness.yml`。
 - `validate-task`：验证 schema、状态、目录、依赖和门禁。
-- `task import --from-json`：导入大模型输出的 planner JSON，校验后写入 runtime task JSON。
+- `task import --from-json`：导入编程 Agent 输出的 planner JSON，校验后写入 runtime task JSON。
 - `tasks`：按状态和优先级列出任务。
 - `next`：返回最高优先级、依赖已完成、文件未锁定的 `ready` 任务。
 - `dispatch`：AI-first 执行入口，创建 run、locks、独立 agent session、prompt packet，并按配置启动外部 AI 会话。
@@ -417,7 +436,7 @@ harness/runs/
 - 下一步动作
 - 是否可以继续
 
-## 多 Agent 模型
+## 多 Agent 编排
 
 Agent 角色是协议角色，不是业务身份：
 
@@ -476,7 +495,7 @@ python -m attestflow verify
 
 1. 运行 `python -m attestflow init --adapter generic`。
 2. 让 Agent 审核生成的 `harness.yml` 和项目命令，只有凭证或业务取舍需要人工确认。
-3. 让大模型根据目标和仓库上下文输出 planner JSON。
+3. 让编程 Agent 根据目标和仓库上下文输出 planner JSON。
 4. 运行 `python -m attestflow task import --from-json plan.json`。
 5. 用 `python -m attestflow next` 选择下一个 ready 任务。
 6. 运行 `python -m attestflow dispatch TASK-*`，自动创建独立 agent session。

@@ -5,7 +5,7 @@
 
 ## 目标
 
-`task schema` 是 LLM planner、Agent、CI 和 harness runtime 之间的稳定协议。任务内容默认由大模型生成，Attestflow 负责校验并落盘。任务没有满足 Definition of Ready 前不能执行；任务没有满足 Definition of Done 且没有 evidence 前不能完成。
+`task schema` 是编程 Agent planner、CI 和 harness runtime 之间的稳定协议。任务内容默认由编程 Agent 生成，Attestflow 负责校验并落盘。任务没有满足 Definition of Ready 前不能执行；任务没有满足 Definition of Done 且没有 evidence 前不能完成。
 
 字段名、状态名和命令名保留英文，原因是它们会被代码、CI 和脚本解析。解释文字使用中文。
 
