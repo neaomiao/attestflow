@@ -37,6 +37,7 @@ external_inputs:
   services: []
   user_decisions: []
 evidence:
+  session: null
   run_id: null
   red: null
   green: null
@@ -50,4 +51,3 @@ risks: []
 notes: []
 created_at: 2026-05-29T00:00:00Z
 updated_at: 2026-05-29T00:00:00Z
-

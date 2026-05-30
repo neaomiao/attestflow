@@ -27,6 +27,7 @@ intent -> AI planning -> task import -> requirement boundary -> BDD scenario -> 
 - 不允许 Agent 编排绕过任务状态、文件所有权或验证证据。
 - 不依赖对话记忆作为任务状态或断点恢复的事实来源。
 - 不把手写任务 YAML 设计成主路径；任务 YAML 是机器落盘格式，不是人工编辑界面。
+- 不把某个 AI 产品写死进核心；真实会话启动通过 `sessions.launch_command` 适配。
 
 ## 设计原则
 
@@ -37,8 +38,9 @@ intent -> AI planning -> task import -> requirement boundary -> BDD scenario -> 
 5. 没有可执行证明就不实现：新功能必须先有 BDD，再有 unit test，再写 implementation。
 6. 没有新鲜证据就不完成：`done` 必须引用当前 run 的命令、时间戳和结果。
 7. 从文件恢复，不从记忆恢复：`resume` 读取 task state、lock file 和 append-only ledger。
-8. 并行必须有所有权：多个 Agent 只能在写入范围不重叠时并行。
-9. 默认保守：需求不清进入 `needs_clarification`，外部输入缺失进入 `blocked`。
+8. 每任务独立会话：任务进入执行时必须创建独立 `agent_session`、`prompt.md` 和 `session.yml`。
+9. 并行必须有所有权：多个 Agent 只能在写入范围不重叠时并行。
+10. 默认保守：需求不清进入 `needs_clarification`，外部输入缺失进入 `blocked`。
 
 ## 推荐仓库结构
 
@@ -62,6 +64,7 @@ harness/
     planner.py
     gates.py
     evidence.py
+    sessions.py
     runner.py
     locks.py
     resume.py
@@ -112,9 +115,19 @@ policies:
   require_bdd_before_unit: true
   require_unit_before_implementation: true
   require_fresh_verify_for_done: true
+  require_agent_session_for_task: true
   require_disjoint_agent_write_scopes: true
   require_issue_triage_for_linked_issues: true
   docker_required: false
+
+sessions:
+  provider: command
+  role: worker_agent
+  launch_command: null
+  resume_command: null
+  worktree:
+    enabled: false
+    path_template: null
 
 execution:
   docker:
@@ -131,6 +144,28 @@ integrations:
 ```
 
 核心代码只读取配置，不从 `sport-pred`、`gstack`、`pytest` 等名称推断行为。
+
+## 每任务独立会话
+
+`dispatch TASK` 是 AI-first 执行入口：
+
+```text
+ready task -> dispatch -> run -> agent_session -> prompt packet -> external AI session
+```
+
+Dispatch 必须原子完成：
+
+- 校验 task 处于 `ready`
+- 创建 task/file locks
+- 创建 `harness/runs/<run_id>/`
+- 写入 `metadata.yml`、`ledger.jsonl`、`evidence.md`
+- 写入 `prompt.md`，包含任务边界、写文件范围、BDD、unit test、验收标准和验证命令
+- 写入 `session.yml`，包含 `session_id`、provider、role、状态、prompt packet、启动命令和恢复命令
+- 将 `agent_session` 写回 run metadata
+- 将 `evidence.session` 写回 task
+- 如果配置了 `sessions.launch_command`，执行命令启动真实外部 AI 会话并记录 `session-launch.log`
+
+核心不绑定 Codex、Claude、OpenAI Assistants 或其他平台。项目可以用 `sessions.launch_command` 适配任意会话启动器。没有配置启动命令时，dispatch 至少生成独立 session packet；接入层可以读取 packet 后启动会话。
 
 ## AI Planning 和任务落盘
 
@@ -253,6 +288,7 @@ python -m attestflow validate-task TASK
 python -m attestflow task import --from-json PLAN.json
 python -m attestflow tasks
 python -m attestflow next
+python -m attestflow dispatch TASK
 python -m attestflow start TASK
 python -m attestflow block TASK --reason REASON
 python -m attestflow evidence TASK
@@ -272,7 +308,8 @@ python -m attestflow secret-scan
 - `task import --from-json`：导入大模型输出的 planner JSON，校验后写入 task YAML。
 - `tasks`：按状态和优先级列出任务。
 - `next`：返回最高优先级、依赖已完成、文件未锁定的 `ready` 任务。
-- `start`：原子地把 `ready` 任务变成 `in_progress`，创建 task lock、file locks 和 run ledger。
+- `dispatch`：AI-first 执行入口，创建 run、locks、独立 agent session、prompt packet，并按配置启动外部 AI 会话。
+- `start`：低层生命周期入口，仍会创建 session packet，保留给脚本和兼容场景。
 - `block`：记录阻塞原因并移动到 `blocked`。
 - `evidence`：写入或验证 evidence packet。
 - `verify`：执行配置的质量门禁，用于临时或 CI 验证。
@@ -291,6 +328,9 @@ harness/runs/
     metadata.yml
     ledger.jsonl
     evidence.md
+    session.yml
+    prompt.md
+    session-launch.log
     commands/
       bdd.log
       unit.log
@@ -305,6 +345,8 @@ harness/runs/
 - 当前 task
 - 当前 state
 - owner agent
+- agent session id
+- prompt packet
 - branch/worktree
 - locked files
 - 最近通过的 gate
@@ -374,13 +416,13 @@ python -m attestflow verify
 3. 让大模型根据目标和仓库上下文输出 planner JSON。
 4. 运行 `python -m attestflow task import --from-json plan.json`。
 5. 用 `python -m attestflow next` 选择下一个 ready 任务。
-6. 运行 `python -m attestflow start TASK-*`。
+6. 运行 `python -m attestflow dispatch TASK-*`，自动创建独立 agent session。
 7. Agent 按 BDD -> unit -> implementation 执行。
 8. 运行 `python -m attestflow transition TASK-* review`。
 9. 运行 `python -m attestflow verify --task TASK-*`，把验证结果绑定到当前 run。
 10. 运行 `python -m attestflow transition TASK-* verified` 和 `python -m attestflow transition TASK-* accepted`。
 11. 运行 `python -m attestflow close TASK-*`。
-12. 重复 `next -> start -> verify --task -> close`。
+12. 重复 `next -> dispatch -> verify --task -> close`。
 
 ## 验收标准
 

@@ -95,7 +95,7 @@ def _normalize_planner_task(raw_task: dict[str, Any], task_id: str) -> dict[str,
             "services": _list(external_inputs.get("services")),
             "user_decisions": _list(external_inputs.get("user_decisions")),
         },
-        "evidence": {"run_id": None, "red": None, "green": None, "verify": None, "packet": None},
+        "evidence": {"session": None, "run_id": None, "red": None, "green": None, "verify": None, "packet": None},
         "links": {
             "issues": _list(links.get("issues")),
             "prs": _list(links.get("prs")),

@@ -174,6 +174,12 @@ def validate_close_evidence(run_path: Path, config: dict[str, Any], task_id: str
     errors: list[str] = []
     if str(metadata.get("task_id")) != task_id:
         errors.append("run metadata task_id does not match task")
+    if config.get("policies", {}).get("require_agent_session_for_task", True):
+        session = metadata.get("agent_session", {})
+        if not isinstance(session, dict) or not session.get("session_id"):
+            errors.append("run metadata is missing agent_session")
+        elif not _log_exists(run_path, str(session.get("session_record", "session.yml"))):
+            errors.append("agent session record does not exist")
 
     if not config.get("policies", {}).get("require_fresh_verify_for_done", True):
         return errors

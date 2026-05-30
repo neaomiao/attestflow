@@ -27,5 +27,10 @@ def resume_summary(root: Path, config: dict[str, Any]) -> str:
     item = active[0]
     task_id = item.get("task_id")
     run_id = item.get("run_id")
+    session = item.get("agent_session", {}) if isinstance(item.get("agent_session"), dict) else {}
+    if session.get("session_id"):
+        return (
+            f"{task_id} is in progress in {run_id}; "
+            f"session {session.get('session_id')} is {session.get('status')}; next action: run BDD"
+        )
     return f"{task_id} is in progress in {run_id}; next action: run BDD"
-

@@ -28,9 +28,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "require_bdd_before_unit": True,
         "require_unit_before_implementation": True,
         "require_fresh_verify_for_done": True,
+        "require_agent_session_for_task": True,
         "require_disjoint_agent_write_scopes": True,
         "require_issue_triage_for_linked_issues": True,
         "docker_required": False,
+    },
+    "sessions": {
+        "provider": "command",
+        "role": "worker_agent",
+        "launch_command": None,
+        "resume_command": None,
+        "worktree": {"enabled": False, "path_template": None},
     },
 }
 
@@ -57,6 +65,9 @@ def validate_config(config: dict[str, Any]) -> list[str]:
     for key in ("tasks", "runs"):
         if not isinstance(config.get("paths", {}).get(key), str):
             errors.append(f"paths.{key} must be a string")
+    launch_command = config.get("sessions", {}).get("launch_command")
+    if launch_command is not None and not isinstance(launch_command, str):
+        errors.append("sessions.launch_command must be a string or null")
     return errors
 
 

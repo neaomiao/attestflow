@@ -53,7 +53,7 @@ python3 -m attestflow validate-task harness/tasks/ready/TASK-0001-example.yml
 python3 -m attestflow task import --from-json plan.json
 python3 -m attestflow tasks
 python3 -m attestflow next
-python3 -m attestflow start TASK-0001
+python3 -m attestflow dispatch TASK-0001
 python3 -m attestflow transition TASK-0001 review
 python3 -m attestflow verify --task TASK-0001
 python3 -m attestflow transition TASK-0001 verified
@@ -67,6 +67,10 @@ python3 -m attestflow secret-scan
 
 接入后先让 Agent 审核 `harness.yml` 和项目命令，再由大模型生成 planner JSON 并导入任务。只有凭证、业务取舍和不可自动判断的外部决策需要人工确认。任务进入开发前必须满足 `ready` 门禁；完成前必须有当前 run 的 evidence。
 
+`dispatch` 是 AI-first 执行入口。它会把 `ready` 任务移到 `in_progress`，创建 run、locks、独立 agent session、`prompt.md` 和 `session.yml`。如果 `harness.yml` 配置了 `sessions.launch_command`，Attestflow 会自动执行该命令来启动真实外部 AI 会话；否则会生成可恢复的 session packet，等待接入层消费。
+
+`sessions.launch_command` 是 provider 适配点，支持 `{session_id}`、`{run_id}`、`{run_path}`、`{prompt_packet}`、`{session_log}`、`{root}` 占位符。
+
 ## 当前能力
 
 当前版本不依赖第三方 Python 包：
@@ -76,7 +80,8 @@ python3 -m attestflow secret-scan
 - AI planner JSON 导入为任务 YAML
 - task schema 校验
 - `next` 调度
-- `start` 状态推进、锁和 run evidence
+- `dispatch` 自动创建每任务独立 agent session、prompt packet、锁和 run evidence
+- `start` 低层状态推进入口，也会创建 session packet
 - `block` 阻塞任务
 - `transition` 按状态机推进任务
 - `verify --task` 执行配置命令，并把结果写入当前 run 的 metadata 和 ledger

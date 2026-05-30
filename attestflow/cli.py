@@ -108,6 +108,14 @@ def cmd_start(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_dispatch(args: argparse.Namespace) -> int:
+    config = load_config(ROOT)
+    run = start_task(ROOT, config, args.task, actor_role=args.actor)
+    session = load_data(run.path / "session.yml")
+    print(f"dispatched {args.task}: {run.run_id} -> {session.get('session_id')}")
+    return 0
+
+
 def cmd_block(args: argparse.Namespace) -> int:
     block_task(ROOT, load_config(ROOT), args.task, reason=args.reason)
     print(f"blocked {args.task}: {args.reason}")
@@ -213,6 +221,11 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("task")
     start.add_argument("--actor", default="orchestrator")
     start.set_defaults(func=cmd_start)
+
+    dispatch = subparsers.add_parser("dispatch")
+    dispatch.add_argument("task")
+    dispatch.add_argument("--actor", default="orchestrator")
+    dispatch.set_defaults(func=cmd_dispatch)
 
     block = subparsers.add_parser("block")
     block.add_argument("task")

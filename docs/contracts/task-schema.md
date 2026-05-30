@@ -77,6 +77,7 @@ external_inputs:
   user_decisions: []
 
 evidence:
+  session: null
   run_id: null
   red: null
   green: null
@@ -178,6 +179,7 @@ archived
 必须包含：
 
 - owner agent
+- independent agent session reference
 - run id
 - lock reference
 - 如果启用 Git，则包含 branch 或 worktree reference
@@ -311,6 +313,7 @@ external_inputs:
   services: []
   user_decisions: []
 evidence:
+  session: null
   run_id: null
   red: null
   green: null

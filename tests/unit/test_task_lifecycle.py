@@ -47,7 +47,7 @@ def ready_task(task_id: str, priority: int = 10) -> dict:
         "files": {"read": [], "write": ["attestflow/tasks.py"]},
         "agents": {"owner": "orchestrator", "allowed_roles": ["worker_agent"]},
         "external_inputs": {"credentials": [], "services": [], "user_decisions": []},
-        "evidence": {"run_id": None, "red": None, "green": None, "verify": None, "packet": None},
+        "evidence": {"session": None, "run_id": None, "red": None, "green": None, "verify": None, "packet": None},
         "links": {"issues": [], "prs": [], "docs": []},
         "risks": [],
         "notes": [],

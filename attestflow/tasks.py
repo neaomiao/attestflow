@@ -8,6 +8,7 @@ from .evidence import RunRecord, close_run, create_run, record_verification_resu
 from .io import dump_data, load_data
 from .locks import acquire_file_locks, acquire_task_lock, release_locks_for_task, write_scope_locked
 from .runner import VerificationResult, run_verification
+from .sessions import create_agent_session
 
 
 TASK_STATES = {
@@ -141,6 +142,9 @@ def start_task(root: Path, config: dict[str, Any], task_id: str, actor_role: str
     evidence = dict(updated.get("evidence", {}))
     evidence["run_id"] = run.run_id
     evidence["packet"] = str((run.path / "evidence.md").relative_to(root))
+    updated["evidence"] = evidence
+    session = create_agent_session(root, config, updated, run)
+    evidence["session"] = str(session.path.relative_to(root))
     updated["evidence"] = evidence
     target = task_root(root, config) / "in_progress" / record.path.name
     dump_data(updated, target)

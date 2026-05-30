@@ -18,6 +18,9 @@ harness/runs/<timestamp>-<task-id>/
   metadata.yml
   ledger.jsonl
   evidence.md
+  session.yml
+  prompt.md
+  session-launch.log
   commands/
     bdd.log
     unit.log
@@ -42,6 +45,14 @@ status: in_progress
 actor:
   role: orchestrator
   id: local
+
+agent_session:
+  session_id: session-2026-05-29T00-00-00Z-TASK-0001
+  provider: command
+  role: worker_agent
+  status: prepared
+  prompt_packet: prompt.md
+  session_record: session.yml
 
 workspace:
   root: /absolute/path/to/project
@@ -98,6 +109,8 @@ lock_acquired
 lock_released
 command_started
 command_finished
+session_created
+session_launched
 gate_passed
 gate_failed
 evidence_written
@@ -174,6 +187,48 @@ closed
 - Follow-ups:
 ```
 
+## `session.yml`
+
+每个任务 run 必须有一个独立 agent session record：
+
+```yaml
+schema_version: 1
+session_id: session-2026-05-29T00-00-00Z-TASK-0001
+task_id: TASK-0001
+run_id: 2026-05-29T00-00-00Z-TASK-0001
+provider: command
+role: worker_agent
+status: prepared
+created_at: 2026-05-29T00:00:00Z
+launched_at: null
+prompt_packet: prompt.md
+launch_command: null
+launch_exit_code: null
+launch_log: null
+resume_command: null
+```
+
+`status` 可以是：
+
+- `prepared`：已生成独立 prompt packet，等待外部 agent 接入。
+- `launched`：已执行 `sessions.launch_command` 且退出码为 `0`。
+- `launch_failed`：已尝试启动外部 session，但启动命令失败。
+
+## `prompt.md`
+
+`prompt.md` 是给独立 AI session 的最小上下文包，必须包含：
+
+- session id、run id、task id
+- task title、purpose、scope、out_of_scope
+- confirmed/unresolved requirements
+- read/write file scope
+- BDD scenarios
+- unit test targets
+- acceptance criteria
+- verification commands
+- evidence path
+- completion contract
+
 ## Gate Result Object
 
 `metadata.yml` 中的命令结果使用下面结构：
@@ -197,6 +252,8 @@ ci_url: null
 - task state 是 `accepted`
 - evidence packet 存在
 - run metadata 的 `task_id` 匹配当前 task
+- run metadata 有 `agent_session`
+- `agent_session.session_record` 指向存在的 `session.yml`
 - `harness.yml` 中启用的 verification commands 都有当前 run 的记录
 - 启用命令的 `exit_code` 都是 `0`
 - 启用命令的 `command` 和当前配置一致
