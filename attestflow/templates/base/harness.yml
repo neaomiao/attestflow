@@ -38,7 +38,3 @@ execution:
 integrations:
   git_provider: optional
   ci_provider: optional
-  skills:
-    ship: optional
-    context_save: optional
-    context_restore: optional

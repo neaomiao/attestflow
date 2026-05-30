@@ -1,7 +1,9 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 
+from attestflow.cli import cmd_init
 from attestflow.config import load_config, validate_config
 from attestflow.io import dump_data, load_data
 from attestflow.runner import run_verification
@@ -45,6 +47,16 @@ policies:
             config = load_config(root)
 
             self.assertEqual(validate_config(config), [])
+
+    def test_init_template_does_not_advertise_external_skills(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            exit_code = cmd_init(SimpleNamespace(path=str(root), adapter="generic"))
+            config = load_data(root / "harness.yml")
+
+            self.assertEqual(exit_code, 0)
+            self.assertNotIn("skills", config.get("integrations", {}))
 
     def test_run_verification_uses_configured_commands_and_skips_nulls(self) -> None:
         with TemporaryDirectory() as tmp:

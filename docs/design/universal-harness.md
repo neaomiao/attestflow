@@ -15,7 +15,7 @@ intent -> AI planning -> task import -> requirement boundary -> BDD scenario -> 
 -> verification -> evidence -> task state transition -> next executable task
 ```
 
-原 `sport-pred` harness 验证了正确方向：任务状态机、Definition of Ready、Definition of Done、BDD/TDD 顺序、Docker 验证、证据包和 Agent 文件所有权。但它的问题是把 Python 包结构、项目专用文档、`gstack ship`、Postgres、Redis 和业务红线混进了核心。
+来源项目的 harness 验证了正确方向：任务状态机、Definition of Ready、Definition of Done、BDD/TDD 顺序、验证证据包和 Agent 文件所有权。但它的问题是把具体语言栈、项目专用文档、私有发布流程、基础设施和业务红线混进了核心。
 
 本设计的核心原则是：AI 能完成的工作不进入人工主路径，协议内核和项目适配分离。大模型负责目标拆解、任务草案、BDD 和验收标准；Attestflow 负责确定性校验、ID 分配、状态、锁、验证和证据。
 
@@ -23,7 +23,7 @@ intent -> AI planning -> task import -> requirement boundary -> BDD scenario -> 
 
 - 不在本仓库实现任何业务产品。
 - 不把 Python、Node、Go、Rust 等语言栈写死进核心协议。
-- 不强制依赖 `gstack`、Superpowers、GitHub、Docker 或某个 CI 平台。
+- 不强制依赖任何外部 Agent 工具链、私有工作流、GitHub、Docker 或某个 CI 平台。
 - 不允许 Agent 编排绕过任务状态、文件所有权或验证证据。
 - 不依赖对话记忆作为任务状态或断点恢复的事实来源。
 - 不使用手写任务文件作为主路径；任务 runtime 文件统一为 JSON，由 Attestflow 写入。
@@ -33,8 +33,8 @@ intent -> AI planning -> task import -> requirement boundary -> BDD scenario -> 
 
 1. 协议优先：`task schema`、状态流转、门禁、证据、锁和 run ledger 是稳定接口。
 2. AI 优先：目标拆解、任务草案、BDD、验收标准和文件范围默认由大模型生成。
-3. 确定性落盘：大模型输出 JSON，Attestflow 分配 ID、补默认值、校验 schema，再写 YAML。
-4. 适配其次：语言栈、测试命令、CI 平台、Issue 系统、Docker 和 skill routing 都由项目配置。
+3. 确定性落盘：大模型输出 planner JSON，Attestflow 分配 ID、补默认值、校验 schema，再写 runtime task JSON。
+4. 适配其次：语言栈、测试命令、CI 平台、Issue 系统、Docker 和工具路由都由项目配置。
 5. 没有可执行证明就不实现：新功能必须先有 BDD，再有 unit test，再写 implementation。
 6. 没有新鲜证据就不完成：`done` 必须引用当前 run 的命令、时间戳和结果。
 7. 从文件恢复，不从记忆恢复：`resume` 读取 task state、lock file 和 append-only ledger。
@@ -137,13 +137,9 @@ execution:
 integrations:
   git_provider: optional
   ci_provider: optional
-  skills:
-    ship: optional
-    context_save: optional
-    context_restore: optional
 ```
 
-核心代码只读取配置，不从 `sport-pred`、`gstack`、`pytest` 等名称推断行为。
+核心代码只读取配置，不从历史项目、私有工具或测试框架名称推断行为。
 
 ## 每任务独立会话
 
@@ -429,5 +425,5 @@ python -m attestflow verify
 - 核心协议和项目适配层分离。
 - 保留来源会话中 harness 的本质：需求收敛、BDD/TDD、状态推进、证据和恢复。
 - 明确定义状态流转、门禁、证据、恢复和多 Agent 所有权。
-- 不硬依赖 `sport-pred`、`gstack`、Docker、GitHub 或 Python-only 工作流。
+- 不硬依赖历史项目、外部 Agent 工具链、Docker、GitHub 或 Python-only 工作流。
 - 可从本设计直接推导出实现计划，不需要再猜主要行为。
