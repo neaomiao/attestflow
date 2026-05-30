@@ -59,7 +59,7 @@ Planner 必须输出 JSON object：
 
 ## 导入规则
 
-`attestflow task import --from-json PLAN` 必须：
+`attestflow task import --from-json PLAN` 和 `attestflow plan "目标"` 必须最终走同一套导入规则：
 
 - 分配递增的 `TASK-*` ID
 - 忽略或覆盖大模型提供的 task id
@@ -68,6 +68,16 @@ Planner 必须输出 JSON object：
 - 对每个任务执行 task schema 校验
 - 任一任务不合法时拒绝整个导入
 - 全部任务通过校验后才写入任务文件
+
+`attestflow plan` 额外负责：
+
+- 构造 planner capability input
+- 调用 `capabilities.planner.command` 或 `--command`
+- 保存 `harness/capability-runs/planner-*/input.json`
+- 保存 provider stdout/stderr
+- 将 provider stdout 解析为 planner JSON
+- 保存 `output.json`
+- 复用 `task import` 的确定性校验和落盘
 
 ## 非目标
 

@@ -14,6 +14,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "runs": "harness/runs",
         "gates": "harness/gates",
         "locks": "harness/locks",
+        "capability_runs": "harness/capability-runs",
         "docs": "docs",
     },
     "commands": {
@@ -39,6 +40,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "launch_command": None,
         "resume_command": None,
         "worktree": {"enabled": False, "path_template": None},
+    },
+    "capabilities": {
+        "planner": {
+            "provider": "command",
+            "command": None,
+        },
     },
 }
 
@@ -68,6 +75,9 @@ def validate_config(config: dict[str, Any]) -> list[str]:
     launch_command = config.get("sessions", {}).get("launch_command")
     if launch_command is not None and not isinstance(launch_command, str):
         errors.append("sessions.launch_command must be a string or null")
+    planner_command = config.get("capabilities", {}).get("planner", {}).get("command")
+    if planner_command is not None and not isinstance(planner_command, str):
+        errors.append("capabilities.planner.command must be a string or null")
     return errors
 
 

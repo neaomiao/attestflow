@@ -7,6 +7,7 @@ paths:
   runs: harness/runs
   gates: harness/gates
   locks: harness/locks
+  capability_runs: harness/capability-runs
   docs: docs
 commands:
   bdd: python -m unittest discover -s tests/bdd
@@ -31,6 +32,10 @@ sessions:
   worktree:
     enabled: false
     path_template: null
+capabilities:
+  planner:
+    provider: command
+    command: null
 execution:
   docker:
     enabled: false

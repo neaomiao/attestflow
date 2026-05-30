@@ -24,7 +24,7 @@ python3 -m attestflow init --path /path/to/project --adapter generic
 
 ## AI-first 任务生成
 
-任务不应该靠人手写 YAML。推荐主路径是让大模型输出 planner JSON，然后由 Attestflow 校验并落盘：
+任务不应该靠人手写 YAML。最直接的主路径是让大模型输出 planner JSON，然后由 Attestflow 校验并落盘：
 
 ```bash
 python3 -m attestflow task import --from-json plan.json
@@ -38,6 +38,20 @@ ai-planner "实现登录功能" | python3 -m attestflow task import --from-json 
 
 `task import` 会分配 `TASK-*` ID、解析 planner 内部依赖、补齐默认字段、校验 ready 门禁，并写入 `harness/tasks/ready/*.json`。如果模型输出缺少 scope、BDD、unit_tests、acceptance 或 files.write，导入会失败，不会写入半成品任务。
 
+也可以使用内置 capability 入口，让 Attestflow 负责组装标准输入、调用配置的模型命令、保存 capability evidence，并自动导入任务：
+
+```bash
+python3 -m attestflow plan "实现登录功能" --command "your-model-cli"
+```
+
+`your-model-cli` 从 stdin 读取 JSON，向 stdout 输出符合 `docs/contracts/planner-output-schema.md` 的 planner JSON。默认模板也支持在 `harness.yml` 中配置 `capabilities.planner.command`，这样可以直接运行：
+
+```bash
+python3 -m attestflow plan "实现登录功能"
+```
+
+Attestflow 的内置 capabilities 借鉴 Superpowers 的强制技能流程和 gstack 的专业角色分工，但不依赖它们。外部 skill、模型 CLI 或 API 只是可选 provider；稳定接口是 Attestflow 自己的 capability contract。
+
 ## 本地验证
 
 ```bash
@@ -50,6 +64,9 @@ python3 -m attestflow verify
 ```bash
 python3 -m attestflow validate-config
 python3 -m attestflow validate-task harness/tasks/ready/TASK-0001-example.json
+python3 -m attestflow capability list
+python3 -m attestflow capability show planner
+python3 -m attestflow plan "实现登录功能" --command "your-model-cli"
 python3 -m attestflow task import --from-json plan.json
 python3 -m attestflow tasks
 python3 -m attestflow next
@@ -77,6 +94,8 @@ python3 -m attestflow secret-scan
 
 - 受限 YAML 子集读写
 - `harness.yml` 校验
+- 内置 capability registry：intake、planner、bdd、tdd、implementer、reviewer、verifier、releaser
+- `plan` command provider：调用任意模型命令，保存 capability 输入/输出证据并导入 runtime task JSON
 - AI planner JSON 导入为 runtime task JSON
 - task schema 校验
 - `next` 调度
@@ -91,4 +110,4 @@ python3 -m attestflow secret-scan
 - 保守 secret scan
 - 可安装包内置 base 模板和 planner 输出示例
 
-后续重点是模型 provider 适配、CI provider 抽象和更完整的多 Agent 调度。
+后续重点是原生模型 provider 适配、CI provider 抽象和更完整的多 Agent 调度。

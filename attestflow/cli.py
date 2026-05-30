@@ -6,6 +6,7 @@ import shutil
 import sys
 from pathlib import Path
 
+from .capabilities import get_capability, list_capabilities, run_planner_capability
 from .config import load_config, validate_config
 from .io import load_data
 from .planner import import_planner_tasks
@@ -40,6 +41,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     for state in TASK_STATES:
         (target / "harness" / "tasks" / state).mkdir(parents=True, exist_ok=True)
     (target / "harness" / "runs").mkdir(parents=True, exist_ok=True)
+    (target / "harness" / "capability-runs").mkdir(parents=True, exist_ok=True)
     (target / "harness" / "locks").mkdir(parents=True, exist_ok=True)
     print(f"initialized attestflow harness in {target}")
     return 0
@@ -198,6 +200,35 @@ def cmd_task_import(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_capability_list(_: argparse.Namespace) -> int:
+    for capability in list_capabilities():
+        print(f"{capability['name']}\t{capability['phase']}\t{capability['specialist']}")
+    return 0
+
+
+def cmd_capability_show(args: argparse.Namespace) -> int:
+    try:
+        capability = get_capability(args.name)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(capability, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_plan(args: argparse.Namespace) -> int:
+    goal = " ".join(args.goal).strip()
+    try:
+        result = run_planner_capability(ROOT, load_config(ROOT), goal, command=args.command)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    task_ids = ", ".join(str(record.task["id"]) for record in result.records)
+    print(f"planned and imported {len(result.records)} task(s): {task_ids}")
+    print(f"capability run: {result.run_path}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m attestflow")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -256,6 +287,18 @@ def build_parser() -> argparse.ArgumentParser:
     task_import = task_subparsers.add_parser("import")
     task_import.add_argument("--from-json", required=True)
     task_import.set_defaults(func=cmd_task_import)
+
+    capability = subparsers.add_parser("capability")
+    capability_subparsers = capability.add_subparsers(dest="capability_command", required=True)
+    capability_subparsers.add_parser("list").set_defaults(func=cmd_capability_list)
+    capability_show = capability_subparsers.add_parser("show")
+    capability_show.add_argument("name")
+    capability_show.set_defaults(func=cmd_capability_show)
+
+    plan = subparsers.add_parser("plan")
+    plan.add_argument("goal", nargs="+")
+    plan.add_argument("--command")
+    plan.set_defaults(func=cmd_plan)
     return parser
 
 

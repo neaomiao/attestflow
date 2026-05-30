@@ -1,7 +1,7 @@
 # 通用开发 Harness 设计
 
 日期：2026-05-29
-状态：核心本地闭环已实现，AI-first 任务导入已纳入主路径
+状态：核心本地闭环已实现，AI-first 任务导入和 planner capability 已纳入主路径
 来源会话：019e7244-0bad-7970-81c4-af4c4323486c
 
 ## 目标
@@ -101,6 +101,8 @@ paths:
   tasks: harness/tasks
   runs: harness/runs
   gates: harness/gates
+  locks: harness/locks
+  capability_runs: harness/capability-runs
   docs: docs
 
 commands:
@@ -129,6 +131,11 @@ sessions:
     enabled: false
     path_template: null
 
+capabilities:
+  planner:
+    provider: command
+    command: null
+
 execution:
   docker:
     enabled: false
@@ -140,6 +147,39 @@ integrations:
 ```
 
 核心代码只读取配置，不从历史项目、私有工具或测试框架名称推断行为。
+
+## 内置 Capabilities
+
+Attestflow 不依赖外部 skills，但会吸收成熟 skill 系统的结构：
+
+- 借鉴 [Superpowers](https://github.com/obra/superpowers)：技能按触发条件和流程门禁组织，强调设计先行、TDD、审查和验证证据。
+- 借鉴 [gstack](https://github.com/garrytan/gstack)：能力按专业角色组织，串成 `Think -> Plan -> Build -> Review -> Test -> Ship -> Reflect`。
+
+这两者在 Attestflow 中落为内置 capability contract，而不是运行时依赖。每个 capability 都必须声明：
+
+- `name`
+- `specialist`
+- `phase`
+- `inputs`
+- `outputs`
+- `gates`
+- `evidence`
+- `external_dependency: false`
+
+第一批内置能力：
+
+```text
+intake       requirements partner
+planner      spec planner
+bdd          behavior spec author
+tdd          test engineer
+implementer  implementation worker
+reviewer     staff engineer reviewer
+verifier     verification lead
+releaser     release engineer
+```
+
+`capability list/show` 只展示合同；`plan` 是第一个可执行 capability。外部模型、外部 skill 或 agent CLI 只通过 provider adapter 接入，不能成为 Attestflow core 的前置条件。
 
 ## 每任务独立会话
 
@@ -171,14 +211,22 @@ Dispatch 必须原子完成：
 LLM / planning agent -> planner JSON -> attestflow task import -> task JSON
 ```
 
-大模型负责判断和拆解，不直接写 `harness/tasks/**/*.json`。Attestflow 接收 planner JSON 后执行确定性处理：
+大模型负责判断和拆解，不直接写 `harness/tasks/**/*.json`。现在有两条等价入口：
+
+```bash
+python -m attestflow plan "目标描述"
+python -m attestflow task import --from-json PLAN.json
+```
+
+`plan` 会构造标准 capability input，调用 `capabilities.planner.command` 或 `--command` 指定的 provider，将 stdout 作为 planner JSON，再复用 `task import`。Attestflow 接收 planner JSON 后执行确定性处理：
 
 - 分配递增的 `TASK-*` ID
 - 解析 planner 内部 `key` 依赖
 - 补齐默认字段
 - 校验 task schema 和 ready 门禁
 - 拒绝缺少 BDD、unit tests、acceptance 或写文件范围的任务
-- 只在全部任务可通过校验后写入 YAML
+- 只在全部任务可通过校验后写入 runtime task JSON
+- 保存 capability evidence：`input.json`、`stdout.log`、`stderr.log`、`output.json`
 
 任务 JSON 是 runtime 的事实来源，不是人工主编辑界面。人工只负责不可自动判断的目标取舍、凭证授权和外部业务决策。
 
