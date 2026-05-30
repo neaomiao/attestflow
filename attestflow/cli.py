@@ -13,6 +13,7 @@ from .planner import import_planner_tasks
 from .resume import resume_summary
 from .runner import run_verification
 from .secrets import secret_scan
+from .sessions import resume_agent_session
 from .tasks import (
     TASK_STATES,
     block_task,
@@ -114,6 +115,9 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     config = load_config(ROOT)
     run = start_task(ROOT, config, args.task, actor_role=args.actor)
     session = load_data(run.path / "session.yml")
+    if session.get("status") not in {"prepared", "launched"}:
+        print(f"ERROR: session launch for {args.task} ended with {session.get('status')}", file=sys.stderr)
+        return 1
     print(f"dispatched {args.task}: {run.run_id} -> {session.get('session_id')}")
     return 0
 
@@ -159,6 +163,31 @@ def cmd_evidence(args: argparse.Namespace) -> int:
 def cmd_resume(_: argparse.Namespace) -> int:
     print(resume_summary(ROOT, load_config(ROOT)))
     return 0
+
+
+def cmd_session_resume(args: argparse.Namespace) -> int:
+    config = load_config(ROOT)
+    for record in iter_tasks(ROOT, config):
+        if record.task.get("id") != args.task:
+            continue
+        evidence = record.task.get("evidence", {})
+        run_id = evidence.get("run_id") if isinstance(evidence, dict) else None
+        if not run_id:
+            print(f"ERROR: {args.task} has no evidence.run_id", file=sys.stderr)
+            return 1
+        run_path = ROOT / config.get("paths", {}).get("runs", "harness/runs") / str(run_id)
+        try:
+            resumed = resume_agent_session(ROOT, config, run_path)
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
+        if resumed.status != "resumed":
+            print(f"ERROR: session resume for {args.task} ended with {resumed.status}", file=sys.stderr)
+            return 1
+        print(f"resumed {args.task}: {resumed.session_id} -> {resumed.status}")
+        return 0
+    print(f"ERROR: task not found: {args.task}", file=sys.stderr)
+    return 1
 
 
 def cmd_secret_scan(_: argparse.Namespace) -> int:
@@ -287,6 +316,12 @@ def build_parser() -> argparse.ArgumentParser:
     evidence.set_defaults(func=cmd_evidence)
 
     subparsers.add_parser("resume").set_defaults(func=cmd_resume)
+    session = subparsers.add_parser("session")
+    session_subparsers = session.add_subparsers(dest="session_command", required=True)
+    session_resume = session_subparsers.add_parser("resume")
+    session_resume.add_argument("task")
+    session_resume.set_defaults(func=cmd_session_resume)
+
     subparsers.add_parser("secret-scan").set_defaults(func=cmd_secret_scan)
     verify = subparsers.add_parser("verify")
     verify.add_argument("--task")

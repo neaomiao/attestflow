@@ -23,6 +23,7 @@ DEFAULT_DOCUMENTS = [
     "package.json",
     "docs/contracts/capability-schema.md",
     "docs/contracts/planner-output-schema.md",
+    "docs/contracts/session-adapter-schema.md",
     "docs/contracts/task-schema.md",
     "docs/design/universal-harness.md",
 ]

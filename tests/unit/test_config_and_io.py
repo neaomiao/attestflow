@@ -57,7 +57,31 @@ policies:
 
             self.assertEqual(exit_code, 0)
             self.assertNotIn("skills", config.get("integrations", {}))
+            self.assertEqual(config["sessions"]["agent_provider"], "command")
+            self.assertNotIn("provider", config["sessions"])
             self.assertEqual(config["capabilities"]["planner"]["agent_provider"], "command")
+
+    def test_validate_config_rejects_invalid_session_fields(self) -> None:
+        config = {
+            "schema_version": 1,
+            "project": {"name": "demo"},
+            "paths": {"tasks": "harness/tasks", "runs": "harness/runs"},
+            "commands": {},
+            "policies": {},
+            "sessions": {
+                "agent_provider": 123,
+                "role": ["worker_agent"],
+                "launch_command": False,
+                "resume_command": 7,
+            },
+        }
+
+        errors = validate_config(config)
+
+        self.assertIn("sessions.agent_provider must be a string", errors)
+        self.assertIn("sessions.role must be a string", errors)
+        self.assertIn("sessions.launch_command must be a string or null", errors)
+        self.assertIn("sessions.resume_command must be a string or null", errors)
 
     def test_validate_config_rejects_invalid_context_fields(self) -> None:
         config = {

@@ -20,7 +20,10 @@ harness/runs/<timestamp>-<task-id>/
   evidence.md
   session.yml
   prompt.md
-  session-launch.log
+  session-adapter-input.json
+  session-adapter-output.json
+  session-launch.stdout.log
+  session-launch.stderr.log
   commands/
     bdd.log
     unit.log
@@ -48,9 +51,10 @@ actor:
 
 agent_session:
   session_id: session-2026-05-29T00-00-00Z-TASK-0001
-  provider: command
+  agent_provider: command
   role: worker_agent
   status: prepared
+  external_session_id: null
   prompt_packet: prompt.md
   session_record: session.yml
 
@@ -196,23 +200,42 @@ schema_version: 1
 session_id: session-2026-05-29T00-00-00Z-TASK-0001
 task_id: TASK-0001
 run_id: 2026-05-29T00-00-00Z-TASK-0001
-provider: command
+agent_provider: command
 role: worker_agent
 status: prepared
 created_at: 2026-05-29T00:00:00Z
+updated_at: 2026-05-29T00:00:00Z
 launched_at: null
+resumed_at: null
+external_session_id: null
 prompt_packet: prompt.md
+adapter_input: null
+adapter_output: null
+launch_adapter_input: null
+launch_adapter_output: null
 launch_command: null
 launch_exit_code: null
-launch_log: null
+launch_stdout_log: null
+launch_stderr_log: null
 resume_command: null
+resume_adapter_input: null
+resume_adapter_output: null
+resume_exit_code: null
+resume_stdout_log: null
+resume_stderr_log: null
+failure: null
 ```
 
 `status` 可以是：
 
 - `prepared`：已生成独立 prompt packet，等待外部 agent 接入。
-- `launched`：已执行 `sessions.launch_command` 且退出码为 `0`。
-- `launch_failed`：已尝试启动外部 session，但启动命令失败。
+- `launched`：已执行 `sessions.launch_command`，adapter output 通过 schema 校验。
+- `resumed`：已执行 `sessions.resume_command` 或 `session.resume_command`，adapter output 通过 schema 校验。
+- `blocked`：adapter 明确报告无法启动或恢复，通常因为缺少凭证、授权或外部条件。
+- `launch_failed`：已尝试启动外部 session，但命令失败、stdout 不是 JSON object 或 output schema 不合法。
+- `resume_failed`：已尝试恢复外部 session，但命令失败、stdout 不是 JSON object 或 output schema 不合法。
+
+Session adapter 的输入/输出合同见 `docs/contracts/session-adapter-schema.md`。
 
 ## `prompt.md`
 

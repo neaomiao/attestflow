@@ -35,7 +35,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "docker_required": False,
     },
     "sessions": {
-        "provider": "command",
+        "agent_provider": "command",
         "role": "worker_agent",
         "launch_command": None,
         "resume_command": None,
@@ -65,6 +65,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "package.json",
             "docs/contracts/capability-schema.md",
             "docs/contracts/planner-output-schema.md",
+            "docs/contracts/session-adapter-schema.md",
             "docs/contracts/task-schema.md",
             "docs/design/universal-harness.md",
         ],
@@ -94,9 +95,22 @@ def validate_config(config: dict[str, Any]) -> list[str]:
     for key in ("tasks", "runs"):
         if not isinstance(config.get("paths", {}).get(key), str):
             errors.append(f"paths.{key} must be a string")
-    launch_command = config.get("sessions", {}).get("launch_command")
+    sessions = config.get("sessions", {})
+    if sessions is not None and not isinstance(sessions, dict):
+        errors.append("sessions must be a mapping")
+        sessions = {}
+    launch_command = sessions.get("launch_command") if isinstance(sessions, dict) else None
     if launch_command is not None and not isinstance(launch_command, str):
         errors.append("sessions.launch_command must be a string or null")
+    resume_command = sessions.get("resume_command") if isinstance(sessions, dict) else None
+    if resume_command is not None and not isinstance(resume_command, str):
+        errors.append("sessions.resume_command must be a string or null")
+    agent_provider = sessions.get("agent_provider") if isinstance(sessions, dict) else None
+    if agent_provider is not None and not isinstance(agent_provider, str):
+        errors.append("sessions.agent_provider must be a string")
+    role = sessions.get("role") if isinstance(sessions, dict) else None
+    if role is not None and not isinstance(role, str):
+        errors.append("sessions.role must be a string")
     capabilities = config.get("capabilities", {})
     if isinstance(capabilities, dict):
         for name, capability in capabilities.items():

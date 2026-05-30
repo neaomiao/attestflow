@@ -82,14 +82,15 @@ python3 -m attestflow close TASK-0001
 python3 -m attestflow block TASK-0001 --reason "missing external input"
 python3 -m attestflow evidence TASK-0001
 python3 -m attestflow resume
+python3 -m attestflow session resume TASK-0001
 python3 -m attestflow secret-scan
 ```
 
 接入后先让编程 Agent 审核 `harness.yml` 和项目命令，再生成 planner JSON 并导入任务。只有凭证、业务取舍和不可自动判断的外部决策需要人工确认。任务进入开发前必须满足 `ready` 门禁；完成前必须有当前 run 的 evidence。
 
-`dispatch` 是 AI-first 执行入口。它会把 `ready` 任务移到 `in_progress`，创建 run、locks、独立 agent session、`prompt.md` 和 `session.yml`。如果 `harness.yml` 配置了 `sessions.launch_command`，Attestflow 会自动执行该命令来启动真实外部 AI 会话；否则会生成可恢复的 session packet，等待接入层消费。
+`dispatch` 是 AI-first 执行入口。它会把 `ready` 任务移到 `in_progress`，创建 run、locks、独立 agent session、`prompt.md` 和 `session.yml`。如果 `harness.yml` 配置了 `sessions.launch_command`，Attestflow 会按 `docs/contracts/session-adapter-schema.md` 执行 command adapter 来启动真实外部 AI 会话；否则会生成可恢复的 session packet，等待接入层消费。
 
-`sessions.launch_command` 是 provider 适配点，支持 `{session_id}`、`{run_id}`、`{run_path}`、`{prompt_packet}`、`{session_log}`、`{root}` 占位符。
+`sessions.launch_command` / `sessions.resume_command` 是编程 Agent 适配点。命令从 stdin 读取 JSON，向 stdout 返回 JSON；Attestflow 会保存 `session-adapter-input.json`、`session-adapter-output.json`、stdout/stderr logs，并用 `attestflow session resume TASK-*` 恢复对应会话。
 
 ## 当前能力
 
@@ -104,7 +105,8 @@ python3 -m attestflow secret-scan
 - AI planner JSON 导入为 runtime task JSON
 - task schema 校验
 - `next` 调度
-- `dispatch` 自动创建每任务独立 agent session、prompt packet、锁和 run evidence
+- `dispatch` 自动创建每任务独立 agent session、prompt packet、锁和 run evidence，并可调用编程 Agent session adapter
+- `session resume` 通过同一 session adapter 合同恢复外部编程 Agent 会话
 - `start` 低层状态推进入口，也会创建 session packet
 - `block` 阻塞任务
 - `transition` 按状态机推进任务

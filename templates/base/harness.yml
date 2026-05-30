@@ -25,7 +25,7 @@ policies:
   require_issue_triage_for_linked_issues: true
   docker_required: false
 sessions:
-  provider: command
+  agent_provider: command
   role: worker_agent
   launch_command: null
   resume_command: null
@@ -66,6 +66,7 @@ context:
     - package.json
     - docs/contracts/capability-schema.md
     - docs/contracts/planner-output-schema.md
+    - docs/contracts/session-adapter-schema.md
     - docs/contracts/task-schema.md
     - docs/design/universal-harness.md
 execution:

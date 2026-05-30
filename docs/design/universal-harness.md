@@ -27,7 +27,7 @@ intent -> AI planning -> task import -> requirement boundary -> BDD scenario -> 
 - 不允许 Agent 编排绕过任务状态、文件所有权或验证证据。
 - 不依赖对话记忆作为任务状态或断点恢复的事实来源。
 - 不使用手写任务文件作为主路径；任务 runtime 文件统一为 JSON，由 Attestflow 写入。
-- 不把某个 AI 产品写死进核心；真实会话启动通过 `sessions.launch_command` 适配。
+- 不把某个 AI 产品写死进核心；真实会话启动/恢复通过 `sessions.launch_command` / `sessions.resume_command` 适配。
 
 ## 设计原则
 
@@ -123,7 +123,7 @@ policies:
   docker_required: false
 
 sessions:
-  provider: command
+  agent_provider: command
   role: worker_agent
   launch_command: null
   resume_command: null
@@ -166,6 +166,7 @@ context:
     - package.json
     - docs/contracts/capability-schema.md
     - docs/contracts/planner-output-schema.md
+    - docs/contracts/session-adapter-schema.md
     - docs/contracts/task-schema.md
     - docs/design/universal-harness.md
 
@@ -239,12 +240,12 @@ Dispatch 必须原子完成：
 - 创建 `harness/runs/<run_id>/`
 - 写入 `metadata.yml`、`ledger.jsonl`、`evidence.md`
 - 写入 `prompt.md`，包含任务边界、写文件范围、BDD、unit test、验收标准和验证命令
-- 写入 `session.yml`，包含 `session_id`、provider、role、状态、prompt packet、启动命令和恢复命令
+- 写入 `session.yml`，包含 `session_id`、`agent_provider`、role、状态、prompt packet、启动命令和恢复命令
 - 将 `agent_session` 写回 run metadata
 - 将 `evidence.session` 写回 task
-- 如果配置了 `sessions.launch_command`，执行命令启动真实外部 AI 会话并记录 `session-launch.log`
+- 如果配置了 `sessions.launch_command`，按 `docs/contracts/session-adapter-schema.md` 执行 command adapter，写入 `session-adapter-input.json`、`session-adapter-output.json` 和 stdout/stderr logs
 
-核心不绑定 Codex、Claude、OpenAI Assistants 或其他平台。项目可以用 `sessions.launch_command` 适配任意会话启动器。没有配置启动命令时，dispatch 至少生成独立 session packet；接入层可以读取 packet 后启动会话。
+核心不绑定 Codex、Claude Code、OpenCode 或其他平台。项目可以用 `sessions.launch_command` / `sessions.resume_command` 适配任意编程 Agent CLI。没有配置启动命令时，dispatch 至少生成独立 session packet；接入层可以读取 packet 后启动会话。
 
 ## AI Planning 和任务落盘
 
@@ -436,7 +437,10 @@ harness/runs/
     evidence.md
     session.yml
     prompt.md
-    session-launch.log
+    session-adapter-input.json
+    session-adapter-output.json
+    session-launch.stdout.log
+    session-launch.stderr.log
     commands/
       bdd.log
       unit.log
