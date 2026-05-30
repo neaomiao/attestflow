@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shlex
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -29,6 +32,15 @@ from .tasks import (
 
 
 ROOT = Path.cwd()
+
+
+PROVIDER_DOCTOR_DEFAULTS: dict[str, dict[str, object]] = {
+    "codex": {"args": ["doctor", "--json"], "failure_patterns": []},
+    "claude-code": {"args": ["auth", "status"], "failure_patterns": []},
+    "opencode": {"args": ["providers", "list"], "failure_patterns": ["0 credentials"]},
+}
+
+PROVIDER_DOCTOR_TIMEOUT_SECONDS = 20
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -104,13 +116,13 @@ def _configure_initialized_agent_provider(target: Path, agent_provider: str, age
 
 def _doctor_errors(root: Path, config: dict) -> list[str]:
     errors = validate_config(config)
-    errors.extend(_doctor_provider_errors(config))
+    errors.extend(_doctor_provider_errors(root, config))
     if (root / "harness.yml").exists():
         errors.extend(_doctor_runtime_layout_errors(root, config))
     return errors
 
 
-def _doctor_provider_errors(config: dict) -> list[str]:
+def _doctor_provider_errors(root: Path, config: dict) -> list[str]:
     sessions = config.get("sessions", {})
     if not isinstance(sessions, dict):
         return []
@@ -125,7 +137,114 @@ def _doctor_provider_errors(config: dict) -> list[str]:
     command = str(command or provider_commands[agent_provider])
     if not _command_exists(command):
         return [f"session provider command not found for {agent_provider}: {command}"]
+    preflight_error = _doctor_provider_preflight_error(root, agent_provider, command, provider_options)
+    if preflight_error:
+        return [preflight_error]
     return []
+
+
+def _doctor_provider_preflight_error(
+    root: Path,
+    agent_provider: str,
+    command: str,
+    provider_options: object,
+) -> str | None:
+    options = provider_options if isinstance(provider_options, dict) else {}
+    if options.get("doctor_enabled") is False:
+        return None
+    args = _doctor_provider_args(agent_provider, options)
+    if args is None:
+        return None
+    display = " ".join(shlex.quote(item) for item in [command, *args])
+    try:
+        completed = subprocess.run(
+            [command, *args],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=_doctor_provider_timeout(options),
+        )
+    except subprocess.TimeoutExpired as exc:
+        return f"session provider preflight timed out for {agent_provider}: {display}{_doctor_output_suffix(exc.stdout, exc.stderr)}"
+    except OSError as exc:
+        return f"session provider preflight could not run for {agent_provider}: {display}: {exc}"
+    if completed.returncode != 0:
+        return (
+            f"session provider preflight failed for {agent_provider}: {display} exited with "
+            f"{completed.returncode}{_doctor_output_suffix(completed.stdout, completed.stderr)}"
+        )
+    output = _doctor_combined_output(completed.stdout, completed.stderr)
+    for pattern in _doctor_failure_patterns(agent_provider, options):
+        if pattern and pattern.lower() in output.lower():
+            return (
+                f"session provider preflight output indicates {agent_provider} is not ready: "
+                f"matched {pattern!r}{_doctor_output_suffix(completed.stdout, completed.stderr)}"
+            )
+    return None
+
+
+def _doctor_provider_args(agent_provider: str, options: dict) -> list[str] | None:
+    env_name = f"ATTESTFLOW_{_provider_env_name(agent_provider)}_DOCTOR_ARGS"
+    if os.environ.get(env_name):
+        return shlex.split(os.environ[env_name])
+    configured = options.get("doctor_args")
+    if configured is None:
+        configured = PROVIDER_DOCTOR_DEFAULTS.get(agent_provider, {}).get("args")
+    if configured is None:
+        return None
+    if isinstance(configured, str):
+        args = shlex.split(configured)
+        return args or None
+    if isinstance(configured, list):
+        args = [str(item) for item in configured]
+        return args or None
+    return [str(configured)]
+
+
+def _doctor_failure_patterns(agent_provider: str, options: dict) -> list[str]:
+    configured = options.get("doctor_failure_patterns")
+    if configured is None:
+        configured = PROVIDER_DOCTOR_DEFAULTS.get(agent_provider, {}).get("failure_patterns", [])
+    if isinstance(configured, str):
+        return [configured]
+    if isinstance(configured, list):
+        return [str(item) for item in configured]
+    return []
+
+
+def _doctor_provider_timeout(options: dict) -> int:
+    configured = options.get("doctor_timeout_seconds", PROVIDER_DOCTOR_TIMEOUT_SECONDS)
+    return configured if type(configured) is int and configured > 0 else PROVIDER_DOCTOR_TIMEOUT_SECONDS
+
+
+def _doctor_output_suffix(stdout: object, stderr: object) -> str:
+    excerpt = _doctor_output_excerpt(_doctor_combined_output(stdout, stderr))
+    return f": {excerpt}" if excerpt else ""
+
+
+def _doctor_combined_output(stdout: object, stderr: object) -> str:
+    parts = [part for part in (_doctor_text(stdout), _doctor_text(stderr)) if part.strip()]
+    return "\n".join(parts)
+
+
+def _doctor_text(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _doctor_output_excerpt(text: str) -> str:
+    cleaned = " ".join(text.split())
+    if len(cleaned) > 500:
+        return cleaned[:497] + "..."
+    return cleaned
+
+
+def _provider_env_name(agent_provider: str) -> str:
+    return agent_provider.upper().replace("-", "_")
 
 
 def _doctor_runtime_layout_errors(root: Path, config: dict) -> list[str]:

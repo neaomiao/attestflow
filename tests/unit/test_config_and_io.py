@@ -100,6 +100,125 @@ policies:
 
             self.assertEqual(exit_code, 0)
 
+    def test_doctor_runs_builtin_provider_preflight(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            args_log = root / "provider-args.txt"
+            fake_codex = root / "fake-codex"
+            fake_codex.write_text(
+                f"""#!/usr/bin/env python3
+import pathlib
+import sys
+
+pathlib.Path({str(args_log)!r}).write_text(" ".join(sys.argv[1:]), encoding="utf-8")
+sys.exit(0)
+""",
+                encoding="utf-8",
+            )
+            fake_codex.chmod(0o755)
+            cmd_init(SimpleNamespace(path=str(root), adapter="generic", agent_provider="codex", agent_command=str(fake_codex)))
+            original_root = cli.ROOT
+            cli.ROOT = root
+            try:
+                exit_code = cmd_doctor(SimpleNamespace())
+            finally:
+                cli.ROOT = original_root
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(args_log.read_text(encoding="utf-8"), "doctor --json")
+
+    def test_doctor_rejects_failing_provider_preflight(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_codex = root / "fake-codex"
+            fake_codex.write_text(
+                """#!/usr/bin/env python3
+import sys
+
+print("auth missing", file=sys.stderr)
+sys.exit(7)
+""",
+                encoding="utf-8",
+            )
+            fake_codex.chmod(0o755)
+            cmd_init(SimpleNamespace(path=str(root), adapter="generic", agent_provider="codex", agent_command=str(fake_codex)))
+            original_root = cli.ROOT
+            cli.ROOT = root
+            try:
+                error = io.StringIO()
+                with redirect_stderr(error):
+                    exit_code = cmd_doctor(SimpleNamespace())
+            finally:
+                cli.ROOT = original_root
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("session provider preflight failed for codex", error.getvalue())
+            self.assertIn("auth missing", error.getvalue())
+
+    def test_doctor_uses_configured_provider_preflight_args(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            args_log = root / "provider-args.txt"
+            fake_codex = root / "fake-codex"
+            fake_codex.write_text(
+                f"""#!/usr/bin/env python3
+import pathlib
+import sys
+
+pathlib.Path({str(args_log)!r}).write_text(" ".join(sys.argv[1:]), encoding="utf-8")
+sys.exit(0)
+""",
+                encoding="utf-8",
+            )
+            fake_codex.chmod(0o755)
+            cmd_init(SimpleNamespace(path=str(root), adapter="generic", agent_provider="codex", agent_command=str(fake_codex)))
+            config = load_data(root / "harness.yml")
+            config["sessions"]["provider_options"]["doctor_args"] = ["auth", "status"]
+            dump_data(config, root / "harness.yml")
+            original_root = cli.ROOT
+            cli.ROOT = root
+            try:
+                exit_code = cmd_doctor(SimpleNamespace())
+            finally:
+                cli.ROOT = original_root
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(args_log.read_text(encoding="utf-8"), "auth status")
+
+    def test_doctor_rejects_opencode_with_no_credentials(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_opencode = root / "fake-opencode"
+            fake_opencode.write_text(
+                """#!/usr/bin/env python3
+import sys
+
+print("0 credentials")
+sys.exit(0)
+""",
+                encoding="utf-8",
+            )
+            fake_opencode.chmod(0o755)
+            cmd_init(
+                SimpleNamespace(
+                    path=str(root),
+                    adapter="generic",
+                    agent_provider="opencode",
+                    agent_command=str(fake_opencode),
+                )
+            )
+            original_root = cli.ROOT
+            cli.ROOT = root
+            try:
+                error = io.StringIO()
+                with redirect_stderr(error):
+                    exit_code = cmd_doctor(SimpleNamespace())
+            finally:
+                cli.ROOT = original_root
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("session provider preflight output indicates opencode is not ready", error.getvalue())
+
     def test_doctor_rejects_missing_builtin_provider_command(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

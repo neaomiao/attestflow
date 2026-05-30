@@ -248,7 +248,7 @@ Dispatch 必须原子完成：
 
 核心不绑定 Codex、Claude Code、OpenCode 或其他平台。项目可以用 `sessions.launch_command` / `sessions.resume_command` 适配任意编程 Agent CLI。没有配置启动命令时，dispatch 至少生成独立 session packet；接入层可以读取 packet 后启动会话。
 
-当 `sessions.agent_provider` 是 `codex`、`claude-code` 或 `opencode` 时，Attestflow 会使用内置 provider preset 生成 adapter command。项目可以通过 `sessions.provider_options.command`、`launch_args`、`resume_args` 覆盖底层 CLI。
+当 `sessions.agent_provider` 是 `codex`、`claude-code` 或 `opencode` 时，Attestflow 会使用内置 provider preset 生成 adapter command。项目可以通过 `sessions.provider_options.command`、`launch_args`、`resume_args` 覆盖底层 CLI；`doctor_args`、`doctor_timeout_seconds` 和 `doctor_failure_patterns` 覆盖 provider preflight。默认 preflight 不执行项目任务，只检查 provider 是否具备可运行的登录、授权或凭证状态。
 
 ## AI Planning 和任务落盘
 
@@ -425,7 +425,7 @@ python -m attestflow secret-scan
 命令职责：
 
 - `init`：在目标项目生成模板文件；`--agent-provider codex|claude-code|opencode` 会写入内置 provider preset。
-- `doctor`：检查配置、runtime 目录、任务 schema 和 provider CLI 是否存在；不启动真实 Agent，不处理登录授权。
+- `doctor`：检查配置、runtime 目录、任务 schema、provider CLI 和 provider preflight；不执行项目任务，但会尽早暴露登录、授权或凭证不可用。
 - `validate-config`：验证 `harness.yml`。
 - `validate-task`：验证 schema、状态、目录、依赖和门禁。
 - `task import --from-json`：导入编程 Agent 输出的 planner JSON，校验后写入 runtime task JSON。
@@ -539,7 +539,7 @@ python -m attestflow verify
 ## 新项目接入流程
 
 1. 运行 `python -m attestflow init --agent-provider codex`，或选择 `claude-code` / `opencode`。
-2. 运行 `python -m attestflow doctor`，确认配置、目录和 provider CLI 可用。
+2. 运行 `python -m attestflow doctor`，确认配置、目录、provider CLI 和 provider preflight 可用。
 3. 让 Agent 审核生成的 `harness.yml` 和项目命令，只有凭证或业务取舍需要人工确认。
 4. 让编程 Agent 根据目标和仓库上下文输出 planner JSON。
 5. 运行 `python -m attestflow task import --from-json plan.json`。

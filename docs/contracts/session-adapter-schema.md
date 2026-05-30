@@ -55,7 +55,14 @@ sessions:
       - resume
       - "{external_session_id}"
       - --json
+    doctor_args:
+      - doctor
+      - --json
+    doctor_timeout_seconds: 20
+    doctor_failure_patterns: []
 ```
+
+`doctor` 会在检查命令存在后执行 provider preflight。内置默认值是 `codex doctor --json`、`claude auth status` 和 `opencode providers list`；OpenCode 默认把 `0 credentials` 视为未就绪。项目可以用 `provider_options.doctor_args`、`doctor_timeout_seconds` 和 `doctor_failure_patterns` 覆盖；离线或受限环境可以设 `provider_options.doctor_enabled: false` 跳过 preflight。
 
 ## Adapter Input
 

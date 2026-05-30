@@ -28,7 +28,7 @@ python3 -m attestflow init --path /path/to/project --agent-provider codex
 python3 -m attestflow doctor
 ```
 
-`doctor` 会检查配置、runtime 目录、任务 schema，以及内置 provider CLI 是否存在；它不会启动真实 Agent，也不会做登录授权动作。
+`doctor` 会检查配置、runtime 目录、任务 schema、内置 provider CLI，以及 provider preflight。它不会执行项目任务；Codex 默认运行 `codex doctor --json`，Claude Code 默认运行 `claude auth status`，OpenCode 默认运行 `opencode providers list` 并拒绝 `0 credentials`。
 
 ## AI-first 任务生成
 
@@ -99,7 +99,7 @@ python3 -m attestflow secret-scan
 
 `sessions.launch_command` / `sessions.resume_command` 是编程 Agent 适配点。命令从 stdin 读取 JSON，向 stdout 返回 JSON；Attestflow 会保存 `session-adapter-input.json`、`session-adapter-output.json`、stdout/stderr logs，并用 `attestflow session resume TASK-*` 恢复对应会话。
 
-如果 `sessions.agent_provider` 设为 `codex`、`claude-code` 或 `opencode`，且没有显式配置 `launch_command`，Attestflow 会自动使用内置 provider preset。`provider_options.command`、`provider_options.launch_args` 和 `provider_options.resume_args` 可以覆盖底层 CLI 命令与参数。
+如果 `sessions.agent_provider` 设为 `codex`、`claude-code` 或 `opencode`，且没有显式配置 `launch_command`，Attestflow 会自动使用内置 provider preset。`provider_options.command`、`provider_options.launch_args`、`provider_options.resume_args`、`provider_options.doctor_args` 和 `provider_options.doctor_failure_patterns` 可以覆盖底层 CLI 命令、运行参数和 preflight 规则；离线环境可设 `provider_options.doctor_enabled: false` 跳过 provider preflight。
 
 ## 当前能力
 
@@ -107,7 +107,7 @@ python3 -m attestflow secret-scan
 
 - 受限 YAML 子集读写
 - `harness.yml` 校验
-- `init --agent-provider codex|claude-code|opencode` 写入内置 provider preset；`doctor` 检查配置、runtime 目录、任务 schema 和 provider CLI 可用性
+- `init --agent-provider codex|claude-code|opencode` 写入内置 provider preset；`doctor` 检查配置、runtime 目录、任务 schema、provider CLI 和 provider preflight
 - 内置 capability registry：intake、planner、bdd、tdd、implementer、reviewer、verifier、releaser
 - 内置 capability provider adapter：Codex、Claude Code、OpenCode preset 可直接驱动 `plan` 和 `capability run`
 - `plan` programming agent provider：调用编程 Agent provider，保存 capability 输入/输出证据并导入 runtime task JSON
@@ -130,4 +130,4 @@ python3 -m attestflow secret-scan
 - 保守 secret scan
 - 可安装包内置 base 模板和 planner 输出示例
 
-后续重点是 CI provider 抽象、更完整的多 Agent 调度，以及 provider 登录/授权检查的可选扩展。
+后续重点是 CI provider 抽象、更完整的多 Agent 调度，以及可安装包的端到端接入体验。
