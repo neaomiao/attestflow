@@ -11,6 +11,7 @@ from attestflow.capabilities import (
     build_task_capability_input,
     get_capability,
     list_capabilities,
+    run_planner_capability,
     run_task_capability,
 )
 from attestflow.tasks import TaskRecord
@@ -118,6 +119,56 @@ json.dump(
             self.assertTrue((runs[0] / "input.json").exists())
             self.assertTrue((runs[0] / "output.json").exists())
 
+    def test_plan_uses_builtin_agent_provider_without_manual_command(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_codex = root / "fake-codex"
+            fake_codex.write_text(
+                """
+#!/usr/bin/env python3
+import json
+import sys
+
+prompt = sys.argv[-1]
+assert "Return only planner JSON" in prompt
+json.dump(
+    {
+        "schema_version": 1,
+        "tasks": [
+            {
+                "title": "Use provider preset for planning",
+                "priority": 10,
+                "type": "feature",
+                "purpose": "Plan without a hand-written command.",
+                "scope": ["capability provider preset"],
+                "out_of_scope": ["manual command wiring"],
+                "requirements": {"confirmed": ["provider preset exists"], "unresolved": [], "assumptions": []},
+                "bdd_scenarios": ["Plan command uses built-in provider."],
+                "unit_tests": ["tests/unit/test_capabilities.py"],
+                "acceptance": ["ready task JSON exists"],
+                "files": {"read": ["README.md"], "write": ["attestflow/capabilities.py"]},
+            }
+        ],
+    },
+    sys.stdout,
+)
+""".lstrip(),
+                encoding="utf-8",
+            )
+            fake_codex.chmod(0o755)
+            config = {
+                "paths": {"tasks": "harness/tasks", "capability_runs": "harness/capability-runs"},
+                "sessions": {"agent_provider": "codex", "provider_options": {"command": str(fake_codex)}},
+                "capabilities": {"planner": {"agent_provider": "codex", "command": None}},
+            }
+
+            result = run_planner_capability(root, config, "Add provider-wired planning")
+
+            self.assertEqual([record.task["id"] for record in result.records], ["TASK-0001"])
+            self.assertTrue((root / "harness" / "tasks" / "ready" / "TASK-0001.json").exists())
+            self.assertTrue((result.run_path / "input.json").exists())
+            self.assertTrue((result.run_path / "output.json").exists())
+
     def test_cli_plan_requires_a_planner_command(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -191,6 +242,46 @@ json.dump(
             self.assertTrue(task["evidence"]["capabilities"]["reviewer"].endswith("output.json"))
             self.assertTrue((result.run_path / "input.json").exists())
             self.assertTrue((result.run_path / "output.json").exists())
+
+    def test_task_capability_uses_builtin_agent_provider_without_manual_command(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_ready_task(root, "TASK-0001")
+            fake_codex = root / "fake-codex"
+            fake_codex.write_text(
+                """
+#!/usr/bin/env python3
+import json
+import sys
+
+prompt = sys.argv[-1]
+assert "Return only JSON" in prompt
+assert "reviewer" in prompt
+json.dump(
+    {
+        "schema_version": 1,
+        "status": "passed",
+        "summary": "No blocking issues.",
+        "findings": [],
+        "evidence": ["review report"],
+    },
+    sys.stdout,
+)
+""".lstrip(),
+                encoding="utf-8",
+            )
+            fake_codex.chmod(0o755)
+            config = {
+                "paths": {"tasks": "harness/tasks", "capability_runs": "harness/capability-runs"},
+                "sessions": {"agent_provider": "codex", "provider_options": {"command": str(fake_codex)}},
+                "capabilities": {"reviewer": {"agent_provider": "codex", "command": None}},
+            }
+
+            result = run_task_capability(root, config, "reviewer", "TASK-0001")
+
+            self.assertEqual(result.output["status"], "passed")
+            task = load_data(root / "harness" / "tasks" / "ready" / "TASK-0001.json")
+            self.assertTrue(task["evidence"]["capabilities"]["reviewer"].endswith("output.json"))
 
     def test_task_capability_blocked_output_moves_task_to_blocked(self) -> None:
         with TemporaryDirectory() as tmp:

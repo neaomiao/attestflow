@@ -81,9 +81,11 @@ Programming Agent Provider 要求：
 ```yaml
 capabilities:
   planner:
-    agent_provider: command
+    agent_provider: codex
     command: null
 ```
+
+当 `agent_provider` 是 `codex`、`claude-code` 或 `opencode` 且 `command` 为 `null` 时，Attestflow 会自动使用内置 capability adapter。Adapter 会把 capability input 转成编程 Agent prompt，调用对应 CLI，并从 stdout 中抽取符合 contract 的 JSON。显式 `--command` 或 `capabilities.<name>.command` 优先级更高。
 
 命令行覆盖：
 
@@ -96,7 +98,7 @@ python -m attestflow plan "实现登录功能" --command "codex exec --json"
 除 `planner` 外，capability 可以绑定到一个 runtime task 执行：
 
 ```bash
-python -m attestflow capability run reviewer TASK-0001 --command "your-reviewer-cli"
+python -m attestflow capability run reviewer TASK-0001
 ```
 
 流程：
@@ -108,7 +110,7 @@ task JSON -> capability input -> programming agent provider -> capability output
 Programming Agent Provider 要求：
 
 - 从 stdin 读取 JSON object。
-- 输入包含 `capability`、`task`、`task_path`、`project`、`commands`、`repository_context` 和 `instructions`。
+- 输入包含 `capability`、`agent_provider`、`provider_options`、`task`、`task_path`、`project`、`commands`、`repository_context` 和 `instructions`。
 - 向 stdout 输出 JSON object。
 - stderr/stdout 会保存到 `harness/capability-runs/<capability>-<task>-*/`。
 - 非零退出码会阻止任务 evidence 更新。

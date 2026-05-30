@@ -215,7 +215,7 @@ verifier     verification lead
 releaser     release engineer
 ```
 
-`capability list/show` 展示合同；`plan` 执行目标级 planner capability；`capability run <name> <task>` 执行任务级 capability。Codex、Claude Code、OpenCode、外部 skill 或其他编程 Agent CLI 只通过 agent provider adapter 接入，不能成为 Attestflow core 的前置条件。
+`capability list/show` 展示合同；`plan` 执行目标级 planner capability；`capability run <name> <task>` 执行任务级 capability。Codex、Claude Code、OpenCode、外部 skill 或其他编程 Agent CLI 只通过 agent provider adapter 接入，不能成为 Attestflow core 的前置条件。内置 provider preset 会自动接线 `plan` 和 `capability run`；显式 `--command` 仍作为覆盖入口。
 
 Provider input 包含 `repository_context`，由 Attestflow 确定性生成：
 
@@ -265,7 +265,7 @@ python -m attestflow plan "目标描述"
 python -m attestflow task import --from-json PLAN.json
 ```
 
-`plan` 会构造标准 capability input，调用 `capabilities.planner.command` 或 `--command` 指定的编程 Agent provider，将 stdout 作为 planner JSON，再复用 `task import`。Attestflow 接收 planner JSON 后执行确定性处理：
+`plan` 会构造标准 capability input，调用 `--command`、`capabilities.planner.command` 或内置 provider adapter，将 stdout 作为 planner JSON，再复用 `task import`。Attestflow 接收 planner JSON 后执行确定性处理：
 
 - 分配递增的 `TASK-*` ID
 - 解析 planner 内部 `key` 依赖
@@ -282,14 +282,14 @@ python -m attestflow task import --from-json PLAN.json
 `bdd`、`tdd`、`implementer`、`reviewer`、`verifier` 和 `releaser` 共享一个任务级执行入口：
 
 ```bash
-python -m attestflow capability run reviewer TASK-0001 --command "your-reviewer-cli"
+python -m attestflow capability run reviewer TASK-0001
 ```
 
 执行规则：
 
 - 加载 runtime task JSON
 - 构造 capability input，包含 task、project、commands、repository_context、capability contract 和固定 instructions
-- 调用 `--command` 或 `capabilities.<name>.command`
+- 调用 `--command`、`capabilities.<name>.command` 或内置 provider adapter
 - 保存 `input.json`、`stdout.log`、`stderr.log` 和 `output.json`
 - provider 非零退出、stdout 不是 JSON object 或 capability output schema 不合法时失败
 - 成功后把 `output.json` 的相对路径写入 `task.evidence.capabilities.<name>`

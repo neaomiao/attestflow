@@ -5,12 +5,15 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import shlex
 import subprocess
+import sys
 from typing import Any
 
 from .context import collect_repository_context
 from .io import dump_data
 from .planner import import_planner_tasks
+from .sessions import BUILTIN_SESSION_PROVIDERS
 from .tasks import TaskRecord, block_task, iter_tasks
 
 
@@ -202,6 +205,9 @@ def build_planner_input(root: Path, config: dict[str, Any], goal: str) -> dict[s
     return {
         "schema_version": 1,
         "capability": get_capability("planner"),
+        "agent_provider": _capability_agent_provider(config, "planner"),
+        "provider_options": _provider_options(config, "planner"),
+        "root": str(root),
         "goal": goal,
         "project": config.get("project", {}),
         "commands": config.get("commands", {}),
@@ -244,6 +250,9 @@ def build_task_capability_input(
     return {
         "schema_version": 1,
         "capability": capability,
+        "agent_provider": _capability_agent_provider(config, str(capability["name"])),
+        "provider_options": _provider_options(config, str(capability["name"])),
+        "root": str(root),
         "project": config.get("project", {}),
         "commands": config.get("commands", {}),
         "task": task,
@@ -259,10 +268,47 @@ def build_task_capability_input(
 
 
 def _configured_command(config: dict[str, Any], capability_name: str) -> str | None:
+    capability_config = _capability_config(config, capability_name)
+    command = capability_config.get("command") if isinstance(capability_config, dict) else None
+    if command:
+        return str(command)
+    agent_provider = _capability_agent_provider(config, capability_name)
+    if agent_provider in BUILTIN_SESSION_PROVIDERS:
+        return _builtin_capability_adapter_command()
+    return None
+
+
+def _capability_config(config: dict[str, Any], capability_name: str) -> dict[str, Any]:
     capabilities = config.get("capabilities", {})
     capability_config = capabilities.get(capability_name, {}) if isinstance(capabilities, dict) else {}
-    command = capability_config.get("command") if isinstance(capability_config, dict) else None
-    return str(command) if command else None
+    return capability_config if isinstance(capability_config, dict) else {}
+
+
+def _capability_agent_provider(config: dict[str, Any], capability_name: str) -> str:
+    capability_config = _capability_config(config, capability_name)
+    if capability_config.get("agent_provider"):
+        return str(capability_config["agent_provider"])
+    sessions = config.get("sessions", {})
+    if isinstance(sessions, dict) and sessions.get("agent_provider"):
+        return str(sessions["agent_provider"])
+    return "command"
+
+
+def _provider_options(config: dict[str, Any], capability_name: str) -> dict[str, Any]:
+    options: dict[str, Any] = {}
+    sessions = config.get("sessions", {})
+    session_options = sessions.get("provider_options", {}) if isinstance(sessions, dict) else {}
+    if isinstance(session_options, dict):
+        options.update(session_options)
+    capability_options = _capability_config(config, capability_name).get("provider_options", {})
+    if isinstance(capability_options, dict):
+        options.update(capability_options)
+    return options
+
+
+def _builtin_capability_adapter_command() -> str:
+    adapter_path = Path(__file__).resolve().parent / "capability_adapters.py"
+    return f"{shlex.quote(sys.executable)} {shlex.quote(str(adapter_path))}"
 
 
 def _find_task(root: Path, config: dict[str, Any], task_id: str) -> TaskRecord:

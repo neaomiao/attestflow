@@ -49,14 +49,10 @@ ai-planner "实现登录功能" | python3 -m attestflow task import --from-json 
 也可以使用内置 capability 入口，让 Attestflow 负责组装标准输入、调用配置的编程 Agent 命令、保存 capability evidence，并自动导入任务：
 
 ```bash
-python3 -m attestflow plan "实现登录功能" --command "codex exec --json"
-```
-
-编程 Agent provider 可以是 Codex、Claude Code、OpenCode 或其他 agent CLI。它从 stdin 读取 JSON，向 stdout 输出符合 `docs/contracts/planner-output-schema.md` 的 planner JSON。默认模板也支持在 `harness.yml` 中配置 `capabilities.planner.command`，这样可以直接运行：
-
-```bash
 python3 -m attestflow plan "实现登录功能"
 ```
+
+编程 Agent provider 可以是 Codex、Claude Code、OpenCode 或其他 agent CLI。`init --agent-provider codex|claude-code|opencode` 会把 capability provider 自动接到内置 adapter；显式 `--command` 或 `capabilities.<name>.command` 仍可覆盖。Provider 最终需要输出符合 `docs/contracts/planner-output-schema.md` 的 planner JSON。
 
 Attestflow 的内置 capabilities 借鉴 Superpowers 的强制技能流程和 gstack 的专业角色分工，但不依赖它们。外部 skill、编程 Agent CLI 或 API wrapper 只是可选 agent provider；稳定接口是 Attestflow 自己的 capability contract。
 
@@ -77,8 +73,8 @@ python3 -m attestflow doctor
 python3 -m attestflow validate-task harness/tasks/ready/TASK-0001-example.json
 python3 -m attestflow capability list
 python3 -m attestflow capability show planner
-python3 -m attestflow plan "实现登录功能" --command "codex exec --json"
-python3 -m attestflow capability run reviewer TASK-0001 --command "claude --json"
+python3 -m attestflow plan "实现登录功能"
+python3 -m attestflow capability run reviewer TASK-0001
 python3 -m attestflow task import --from-json plan.json
 python3 -m attestflow tasks
 python3 -m attestflow next
@@ -113,7 +109,8 @@ python3 -m attestflow secret-scan
 - `harness.yml` 校验
 - `init --agent-provider codex|claude-code|opencode` 写入内置 provider preset；`doctor` 检查配置、runtime 目录、任务 schema 和 provider CLI 可用性
 - 内置 capability registry：intake、planner、bdd、tdd、implementer、reviewer、verifier、releaser
-- `plan` programming agent provider：调用任意编程 Agent 命令，保存 capability 输入/输出证据并导入 runtime task JSON
+- 内置 capability provider adapter：Codex、Claude Code、OpenCode preset 可直接驱动 `plan` 和 `capability run`
+- `plan` programming agent provider：调用编程 Agent provider，保存 capability 输入/输出证据并导入 runtime task JSON
 - `capability run` task programming agent provider：对单个任务执行 `bdd`、`tdd`、`implementer`、`reviewer`、`verifier` 或 `releaser`，校验 capability output schema，保存 evidence 并写回任务证据索引
 - 自动仓库上下文：收集文件树、核心文档和任务 focus files，写入 capability provider input
 - AI planner JSON 导入为 runtime task JSON
@@ -133,4 +130,4 @@ python3 -m attestflow secret-scan
 - 保守 secret scan
 - 可安装包内置 base 模板和 planner 输出示例
 
-后续重点是 capability provider command 自动接线、CI provider 抽象和更完整的多 Agent 调度。
+后续重点是 CI provider 抽象、更完整的多 Agent 调度，以及 provider 登录/授权检查的可选扩展。
