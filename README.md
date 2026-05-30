@@ -80,6 +80,7 @@ python3 -m attestflow transition TASK-0001 verified
 python3 -m attestflow transition TASK-0001 accepted
 python3 -m attestflow close TASK-0001
 python3 -m attestflow block TASK-0001 --reason "missing external input"
+python3 -m attestflow unblock TASK-0001 --blocker BLK-0001 --resolution "input provided"
 python3 -m attestflow evidence TASK-0001
 python3 -m attestflow resume
 python3 -m attestflow session resume TASK-0001
@@ -112,7 +113,8 @@ python3 -m attestflow secret-scan
 - `session resume` 通过同一 session adapter 合同恢复外部编程 Agent 会话
 - 内置 session provider preset：Codex、Claude Code、OpenCode
 - `start` 低层状态推进入口，也会创建 session packet
-- `block` 阻塞任务
+- 结构化 blocker 协议：`blockers[]` 记录 reason、unblock condition、owner、source；`block` / `unblock` 推进阻塞生命周期
+- session adapter 或 capability output 返回 `blocked` 时，自动把任务移入 `blocked` 并写入 active blocker
 - `transition` 按状态机推进任务
 - `verify --task` 执行配置命令，并把结果写入当前 run 的 metadata 和 ledger
 - `close` 校验当前 run 的 DoD evidence 后关闭 accepted 任务、释放锁、写关闭 ledger

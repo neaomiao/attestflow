@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,16 @@ REQUIRED_FIELDS = {
     "priority",
     "type",
 }
+BLOCKER_REQUIRED_FIELDS = {
+    "id",
+    "type",
+    "reason",
+    "unblock_condition",
+    "owner",
+    "source",
+    "status",
+    "created_at",
+}
 
 
 @dataclass(frozen=True)
@@ -73,7 +84,17 @@ def validate_task(task: dict[str, Any], directory_state: str | None = None) -> l
     if directory_state and state != directory_state:
         errors.append(f"directory state {directory_state!r} does not match task state {state!r}")
 
+    active_blockers = _active_blockers(task)
+    if state == "blocked":
+        if not active_blockers:
+            errors.append("blocked task must have at least one active blocker")
+        errors.extend(_validate_blockers(task))
+    elif active_blockers:
+        errors.append(f"active blockers require state blocked, got {state}")
+
     if state in EXECUTABLE_STATES:
+        if _required_external_inputs(task):
+            errors.append("external_inputs must be empty when state is ready; move task to blocked until inputs exist")
         _require_text(task, "purpose", state, errors)
         _require_list(task, "scope", state, errors)
         _require_list(task, "out_of_scope", state, errors)
@@ -146,19 +167,79 @@ def start_task(root: Path, config: dict[str, Any], task_id: str, actor_role: str
     session = create_agent_session(root, config, updated, run)
     evidence["session"] = str(session.path.relative_to(root))
     updated["evidence"] = evidence
-    target = task_root(root, config) / "in_progress" / f"{task_id}.json"
+    target_state = "in_progress"
+    if session.status == "blocked":
+        session_data = load_data(session.path)
+        updated = _add_blocker(
+            updated,
+            reason=str(session_data.get("summary") or session_data.get("failure") or "agent session blocked"),
+            unblock_condition="Resolve the agent session prerequisite, then unblock and dispatch the task again.",
+            owner="user",
+            blocker_type="agent_session",
+            source="session:launch",
+        )
+        release_locks_for_task(root, config, task_id)
+        target_state = "blocked"
+    target = task_root(root, config) / target_state / f"{task_id}.json"
+    updated["state"] = target_state
     dump_data(updated, target)
     record.path.unlink()
     return run
 
 
-def block_task(root: Path, config: dict[str, Any], task_id: str, reason: str) -> TaskRecord:
+def block_task(
+    root: Path,
+    config: dict[str, Any],
+    task_id: str,
+    reason: str,
+    *,
+    unblock_condition: str | None = None,
+    owner: str = "user",
+    blocker_type: str = "external_input",
+    source: str = "cli",
+) -> TaskRecord:
     record = _find_task(root, config, task_id, expected_state=None)
-    updated = dict(record.task)
+    updated = _add_blocker(
+        record.task,
+        reason=reason,
+        unblock_condition=unblock_condition or f"Resolve blocker: {reason}",
+        owner=owner,
+        blocker_type=blocker_type,
+        source=source,
+    )
     notes = list(updated.get("notes", []))
     notes.append(reason)
     updated["notes"] = notes
+    if record.task.get("state") == "in_progress":
+        release_locks_for_task(root, config, task_id)
     return _move_task(root, config, record, updated, "blocked")
+
+
+def unblock_task(
+    root: Path,
+    config: dict[str, Any],
+    task_id: str,
+    blocker_id: str,
+    *,
+    resolution: str,
+) -> TaskRecord:
+    record = _find_task(root, config, task_id, expected_state="blocked")
+    blockers = _blockers(record.task)
+    for blocker in blockers:
+        if blocker.get("id") != blocker_id:
+            continue
+        if blocker.get("status") != "active":
+            raise ValueError(f"blocker is not active: {blocker_id}")
+        blocker["status"] = "resolved"
+        blocker["resolution"] = resolution
+        blocker["resolved_at"] = _utc_now()
+        updated = dict(record.task)
+        updated["blockers"] = blockers
+        new_state = "blocked" if _active_blockers(updated) else "ready"
+        if new_state == "ready":
+            updated["external_inputs"] = _empty_external_inputs()
+        return _move_task(root, config, record, updated, new_state)
+    raise ValueError(f"blocker not found: {blocker_id}")
 
 
 def transition_task(root: Path, config: dict[str, Any], task_id: str, new_state: str) -> TaskRecord:
@@ -167,6 +248,10 @@ def transition_task(root: Path, config: dict[str, Any], task_id: str, new_state:
     if (current, new_state) not in ALLOWED_TRANSITIONS:
         raise ValueError(f"invalid transition: {current} -> {new_state}")
     updated = dict(record.task)
+    updated["state"] = new_state
+    errors = validate_task(updated, directory_state=new_state)
+    if errors:
+        raise ValueError("; ".join(errors))
     return _move_task(root, config, record, updated, new_state)
 
 
@@ -244,3 +329,96 @@ def _require_list(task: dict[str, Any], field: str, state: str, errors: list[str
     value = task.get(field)
     if not isinstance(value, list) or not value:
         errors.append(f"{field} must be a non-empty list when state is {state}")
+
+
+def _add_blocker(
+    task: dict[str, Any],
+    *,
+    reason: str,
+    unblock_condition: str,
+    owner: str,
+    blocker_type: str,
+    source: str,
+) -> dict[str, Any]:
+    updated = dict(task)
+    blockers = _blockers(updated)
+    blockers.append(
+        {
+            "id": _next_blocker_id(blockers),
+            "type": blocker_type,
+            "reason": str(reason),
+            "unblock_condition": str(unblock_condition),
+            "owner": str(owner),
+            "source": str(source),
+            "status": "active",
+            "created_at": _utc_now(),
+            "resolved_at": None,
+        }
+    )
+    updated["blockers"] = blockers
+    return updated
+
+
+def _blockers(task: dict[str, Any]) -> list[dict[str, Any]]:
+    blockers = task.get("blockers", [])
+    if not isinstance(blockers, list):
+        return []
+    return [dict(item) for item in blockers if isinstance(item, dict)]
+
+
+def _active_blockers(task: dict[str, Any]) -> list[dict[str, Any]]:
+    return [blocker for blocker in _blockers(task) if blocker.get("status") == "active"]
+
+
+def _validate_blockers(task: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    raw_blockers = task.get("blockers", [])
+    if not isinstance(raw_blockers, list):
+        return ["blockers must be a list when state is blocked"]
+    for index, blocker in enumerate(raw_blockers):
+        if not isinstance(blocker, dict):
+            errors.append(f"blockers[{index}] must be an object")
+            continue
+        missing = sorted(BLOCKER_REQUIRED_FIELDS - set(blocker))
+        if missing:
+            errors.append(f"blockers[{index}] missing required fields: {', '.join(missing)}")
+        if blocker.get("status") not in {"active", "resolved"}:
+            errors.append(f"blockers[{index}].status must be active or resolved")
+        for key in ("id", "type", "reason", "unblock_condition", "owner", "source", "created_at"):
+            if not str(blocker.get(key, "")).strip():
+                errors.append(f"blockers[{index}].{key} must be non-empty")
+    return errors
+
+
+def _required_external_inputs(task: dict[str, Any]) -> list[str]:
+    external_inputs = task.get("external_inputs", {})
+    if not isinstance(external_inputs, dict):
+        return []
+    required: list[str] = []
+    for value in external_inputs.values():
+        if isinstance(value, list):
+            required.extend(str(item) for item in value if str(item).strip())
+        elif str(value or "").strip():
+            required.append(str(value))
+    return required
+
+
+def _empty_external_inputs() -> dict[str, list[str]]:
+    return {"credentials": [], "services": [], "user_decisions": []}
+
+
+def _next_blocker_id(blockers: list[dict[str, Any]]) -> str:
+    highest = 0
+    for blocker in blockers:
+        raw_id = str(blocker.get("id", ""))
+        if not raw_id.startswith("BLK-"):
+            continue
+        try:
+            highest = max(highest, int(raw_id.removeprefix("BLK-")))
+        except ValueError:
+            continue
+    return f"BLK-{highest + 1:04d}"
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()

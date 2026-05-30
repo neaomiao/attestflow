@@ -61,6 +61,7 @@ harness/tasks/
   "acceptance": [],
   "dependencies": [],
   "blocks": [],
+  "blockers": [],
   "files": {
     "read": [],
     "write": []
@@ -135,7 +136,9 @@ archived
 
 `files.write`：`start` 前必须非空，用于 Agent 冲突检测。
 
-`external_inputs`：任何必需外部输入缺失时，任务必须进入 `blocked`。
+`external_inputs`：任何必需外部输入缺失时，任务不能保持 `ready`，必须进入 `blocked` 并写入 active blocker。
+
+`blockers`：结构化阻塞记录。`ready`、`in_progress`、`review`、`verified`、`accepted`、`done` 不能有 active blocker；`blocked` 必须至少有一个 active blocker。
 
 `evidence`：进入 `done` 前必须引用真实 run packet。
 
@@ -187,9 +190,26 @@ archived
 
 必须包含：
 
+- 至少一个 `status: active` 的 `blockers[]` 条目
 - blocker reason
 - unblock condition
-- 下一步责任人
+- 下一步责任人 `owner`
+
+`blockers[]` 条目格式：
+
+```json
+{
+  "id": "BLK-0001",
+  "type": "credential",
+  "reason": "missing API_TOKEN",
+  "unblock_condition": "Set API_TOKEN in the target environment.",
+  "owner": "user",
+  "source": "session:launch",
+  "status": "active",
+  "created_at": "2026-05-30T00:00:00Z",
+  "resolved_at": null
+}
+```
 
 ### `review`
 
@@ -254,7 +274,8 @@ blocked -> ready
 - `state` 是 `ready`
 - 依赖已完成
 - `files.write` 未被锁定
-- 必需外部输入已存在
+- 没有 active blocker
+- `external_inputs` 为空；否则任务必须先进入 `blocked`
 - `priority` 最小
 - 优先级相同按 `id` 字典序排序
 
@@ -306,6 +327,7 @@ blocked -> ready
   ],
   "dependencies": [],
   "blocks": [],
+  "blockers": [],
   "files": {
     "read": [
       "docs/contracts/task-schema.md"

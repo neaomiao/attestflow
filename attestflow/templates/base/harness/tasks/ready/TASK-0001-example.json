@@ -33,6 +33,7 @@
   ],
   "dependencies": [],
   "blocks": [],
+  "blockers": [],
   "files": {
     "read": [],
     "write": [

@@ -56,6 +56,8 @@ Planner 必须输出 JSON object：
 - `purpose`、`scope`、`out_of_scope`、`bdd_scenarios`、`unit_tests`、`acceptance`、`files.write`：ready 任务必填。
 - `requirements.unresolved`：ready 非 spike 任务必须为空。
 - `dependencies`：可以引用同一 planner output 里的 `key`，导入后会转换为真实 `TASK-*`。
+- `external_inputs`：如果需要凭证、服务或业务决策，planner 必须显式写出；这类任务不能作为 `ready` 导入，除非外部输入已经由项目配置证明存在。
+- `blockers`：当 planner 判断任务应进入 `blocked` 时，必须提供 active blocker；Attestflow 会保留该结构并执行 task schema 校验。
 
 ## 导入规则
 
@@ -64,7 +66,7 @@ Planner 必须输出 JSON object：
 - 分配递增的 `TASK-*` ID
 - 忽略或覆盖编程 Agent 提供的 task id
 - 把 planner `key` 依赖解析为真实 task id
-- 补齐 `agents`、`external_inputs`、`evidence`、`links`、`risks`、`notes`、时间戳等默认字段
+- 补齐 `agents`、`external_inputs`、`blockers`、`evidence`、`links`、`risks`、`notes`、时间戳等默认字段
 - 对每个任务执行 task schema 校验
 - 任一任务不合法时拒绝整个导入
 - 全部任务通过校验后才写入任务文件

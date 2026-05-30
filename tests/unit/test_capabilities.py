@@ -192,6 +192,43 @@ json.dump(
             self.assertTrue((result.run_path / "input.json").exists())
             self.assertTrue((result.run_path / "output.json").exists())
 
+    def test_task_capability_blocked_output_moves_task_to_blocked(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_ready_task(root, "TASK-0001")
+            provider = root / "review_provider.py"
+            provider.write_text(
+                """
+import json
+import sys
+
+json.load(sys.stdin)
+json.dump(
+    {
+        "schema_version": 1,
+        "status": "blocked",
+        "summary": "missing product decision",
+        "findings": [],
+        "evidence": ["decision needed"],
+    },
+    sys.stdout,
+)
+""".lstrip(),
+                encoding="utf-8",
+            )
+            config = {"paths": {"tasks": "harness/tasks", "capability_runs": "harness/capability-runs"}}
+
+            result = run_task_capability(root, config, "reviewer", "TASK-0001", command=f"python3 {provider}")
+
+            self.assertEqual(result.output["status"], "blocked")
+            self.assertFalse((root / "harness" / "tasks" / "ready" / "TASK-0001.json").exists())
+            task = load_data(root / "harness" / "tasks" / "blocked" / "TASK-0001.json")
+            self.assertEqual(task["state"], "blocked")
+            self.assertEqual(task["blockers"][0]["type"], "capability")
+            self.assertEqual(task["blockers"][0]["source"], "capability:reviewer")
+            self.assertEqual(task["blockers"][0]["reason"], "missing product decision")
+            self.assertTrue(task["evidence"]["capabilities"]["reviewer"].endswith("output.json"))
+
     def test_task_capability_input_includes_focus_file_snippets(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -306,6 +343,7 @@ def write_ready_task(root: Path, task_id: str) -> None:
         "acceptance": ["capability evidence is recorded"],
         "dependencies": [],
         "blocks": [],
+        "blockers": [],
         "files": {"read": ["README.md"], "write": ["attestflow/capabilities.py"]},
         "agents": {"owner": "orchestrator", "allowed_roles": ["worker_agent"]},
         "external_inputs": {"credentials": [], "services": [], "user_decisions": []},

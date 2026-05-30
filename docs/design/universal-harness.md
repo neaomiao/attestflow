@@ -386,6 +386,18 @@ Definition of Done 判断任务能否关闭：
 - evidence packet 存在且引用当前 task/run
 - 最终状态流转合法
 
+## 阻塞协议
+
+阻塞必须是结构化状态，不是 `notes` 里的自然语言。任务进入 `blocked` 时必须写入 `blockers[]`，每条 blocker 包含 `id`、`type`、`reason`、`unblock_condition`、`owner`、`source`、`status`、`created_at` 和 `resolved_at`。
+
+确定性规则：
+
+- `ready` 和其他可执行状态不能有 active blocker。
+- `blocked` 必须至少有一个 active blocker。
+- `external_inputs` 非空表示还有凭证、服务或业务决策未满足；这类任务不能被 `next` 调度。
+- session adapter 或 task capability 返回 `blocked` 时，Attestflow 自动移动任务到 `blocked`，写 active blocker，并保留输入/输出 evidence。
+- `unblock` 只解决指定 blocker；所有 active blocker 解决后，任务才回到 `ready`。
+
 ## CLI
 
 稳定 CLI 表面：
@@ -401,6 +413,7 @@ python -m attestflow next
 python -m attestflow dispatch TASK
 python -m attestflow start TASK
 python -m attestflow block TASK --reason REASON
+python -m attestflow unblock TASK --blocker BLK --resolution RESOLUTION
 python -m attestflow evidence TASK
 python -m attestflow verify
 python -m attestflow verify --task TASK
@@ -420,7 +433,8 @@ python -m attestflow secret-scan
 - `next`：返回最高优先级、依赖已完成、文件未锁定的 `ready` 任务。
 - `dispatch`：AI-first 执行入口，创建 run、locks、独立 agent session、prompt packet，并按配置启动外部 AI 会话。
 - `start`：低层生命周期入口，仍会创建 session packet，保留给脚本和兼容场景。
-- `block`：记录阻塞原因并移动到 `blocked`。
+- `block`：写入结构化 active blocker，记录 reason / unblock condition / owner / source，并移动到 `blocked`。
+- `unblock`：解决指定 blocker；没有 active blocker 后把任务转回 `ready`。
 - `evidence`：写入或验证 evidence packet。
 - `verify`：执行配置的质量门禁，用于临时或 CI 验证。
 - `verify --task`：执行配置的质量门禁，并把命令结果写入当前 task run。

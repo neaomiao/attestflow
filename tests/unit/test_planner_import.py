@@ -61,6 +61,7 @@ class PlannerImportTests(unittest.TestCase):
             second = load_data(root / "harness" / "tasks" / "ready" / "TASK-0003.json")
             self.assertEqual(first["state"], "ready")
             self.assertEqual(first["agents"]["owner"], "orchestrator")
+            self.assertEqual(first["blockers"], [])
             self.assertEqual(second["dependencies"], ["TASK-0002"])
             self.assertEqual(second["evidence"]["run_id"], None)
 

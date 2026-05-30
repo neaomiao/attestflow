@@ -11,7 +11,7 @@ from typing import Any
 from .context import collect_repository_context
 from .io import dump_data
 from .planner import import_planner_tasks
-from .tasks import TaskRecord, iter_tasks
+from .tasks import TaskRecord, block_task, iter_tasks
 
 
 @dataclass(frozen=True)
@@ -179,6 +179,17 @@ def run_task_capability(
     output = _run_json_command(root, capability_command, capability_input, run_path, capability_name)
     _validate_task_capability_output(output, capability_name)
     _record_task_capability_evidence(root, record, capability_name, run_path)
+    if output.get("status") == "blocked":
+        block_task(
+            root,
+            config,
+            task_id,
+            reason=str(output["summary"]),
+            unblock_condition=f"Resolve blocker reported by capability {capability_name}, then unblock the task.",
+            owner="user",
+            blocker_type="capability",
+            source=f"capability:{capability_name}",
+        )
     return TaskCapabilityRunResult(
         capability=capability_name,
         task_id=task_id,

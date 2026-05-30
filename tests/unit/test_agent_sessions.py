@@ -170,6 +170,51 @@ print(json.dumps({"type": "item.completed", "item": {"type": "agent_message", "t
             self.assertEqual(session["launch_exit_code"], 0)
             self.assertTrue((run.path / "session-launch.stdout.log").exists())
 
+    def test_session_launch_blocked_moves_task_to_blocked_with_structured_blocker(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider = root / "blocked_session_provider.py"
+            provider.write_text(
+                """
+import json
+import sys
+
+json.load(sys.stdin)
+json.dump(
+    {
+        "schema_version": 1,
+        "status": "blocked",
+        "summary": "codex command not authenticated",
+    },
+    sys.stdout,
+)
+""".lstrip(),
+                encoding="utf-8",
+            )
+            config = DEFAULT_CONFIG.copy()
+            config["root"] = root
+            config["sessions"] = {
+                "agent_provider": "codex",
+                "role": "worker_agent",
+                "launch_command": f"python3 {provider}",
+            }
+            write_task(root, "ready", "TASK-0001", ready_task("TASK-0001"))
+
+            run = start_task(root, config, "TASK-0001", actor_role="orchestrator")
+
+            self.assertFalse((root / "harness" / "tasks" / "in_progress" / "TASK-0001.json").exists())
+            blocked = load_data(root / "harness" / "tasks" / "blocked" / "TASK-0001.json")
+            self.assertEqual(blocked["state"], "blocked")
+            self.assertEqual(blocked["evidence"]["run_id"], run.run_id)
+            self.assertTrue(blocked["evidence"]["session"].endswith("session.yml"))
+            self.assertEqual(blocked["blockers"][0]["type"], "agent_session")
+            self.assertEqual(blocked["blockers"][0]["source"], "session:launch")
+            self.assertEqual(blocked["blockers"][0]["reason"], "codex command not authenticated")
+            self.assertEqual(blocked["blockers"][0]["status"], "active")
+            self.assertFalse((root / "harness" / "locks" / "tasks" / "TASK-0001.lock").exists())
+            session = load_data(run.path / "session.yml")
+            self.assertEqual(session["status"], "blocked")
+
     def test_session_resume_runs_configured_adapter_command(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

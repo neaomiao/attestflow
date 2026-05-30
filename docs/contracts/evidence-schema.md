@@ -235,6 +235,8 @@ failure: null
 - `launch_failed`：已尝试启动外部 session，但命令失败、stdout 不是 JSON object 或 output schema 不合法。
 - `resume_failed`：已尝试恢复外部 session，但命令失败、stdout 不是 JSON object 或 output schema 不合法。
 
+Launch 返回 `blocked` 时，Attestflow 会把 task 移到 `blocked`，释放 task/file locks，并写入 `type: agent_session` 的 active blocker。技术失败仍保留为 `launch_failed` / `resume_failed` session status，不伪装成业务阻塞。
+
 Session adapter 的输入/输出合同见 `docs/contracts/session-adapter-schema.md`。
 
 ## `prompt.md`
@@ -300,7 +302,7 @@ ci_url: null
 
 - 最后事件是 BDD 失败的 `command_finished`：下一步是修 BDD 场景或需求边界。
 - 最后事件是 unit tests 的 `gate_passed`：下一步按 gate 顺序进入 implementation 或 project verify。
-- 最后事件是 `blocked`：下一步是满足 unblock condition，再转回 `ready`。
+- 最后事件或 task state 是 `blocked`：下一步是满足 active blocker 的 `unblock_condition`，执行 `attestflow unblock TASK --blocker BLK-* --resolution ...`，再转回 `ready`。
 - state 是 active 但 lock 丢失：下一步是修复状态或经确认后重新获取 lock。
 
 ## Evidence 校验

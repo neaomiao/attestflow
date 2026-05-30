@@ -1,7 +1,10 @@
+from contextlib import redirect_stdout
+import io
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
+import attestflow.cli as cli
 from attestflow.config import DEFAULT_CONFIG
 from attestflow.evidence import record_verification_results
 from attestflow.io import dump_data, load_data
@@ -13,6 +16,7 @@ from attestflow.tasks import (
     select_next_task,
     start_task,
     transition_task,
+    unblock_task,
     validate_task,
     verify_task,
 )
@@ -44,6 +48,7 @@ def ready_task(task_id: str, priority: int = 10) -> dict:
         "acceptance": ["validator rejects incomplete ready tasks"],
         "dependencies": [],
         "blocks": [],
+        "blockers": [],
         "files": {"read": [], "write": ["attestflow/tasks.py"]},
         "agents": {"owner": "orchestrator", "allowed_roles": ["worker_agent"]},
         "external_inputs": {"credentials": [], "services": [], "user_decisions": []},
@@ -123,11 +128,191 @@ class TaskLifecycleTests(unittest.TestCase):
             config["root"] = root
             write_task(root, "ready", "TASK-0001", ready_task("TASK-0001"))
 
-            blocked = block_task(root, config, "TASK-0001", reason="missing API credentials")
+            blocked = block_task(
+                root,
+                config,
+                "TASK-0001",
+                reason="missing API credentials",
+                unblock_condition="Set API_TOKEN in the target environment.",
+                owner="user",
+                blocker_type="credential",
+                source="cli",
+            )
 
             self.assertEqual(blocked.task["state"], "blocked")
-            self.assertIn("missing API credentials", blocked.task["notes"])
+            self.assertEqual(blocked.task["blockers"][0]["id"], "BLK-0001")
+            self.assertEqual(blocked.task["blockers"][0]["status"], "active")
+            self.assertEqual(blocked.task["blockers"][0]["reason"], "missing API credentials")
+            self.assertEqual(blocked.task["blockers"][0]["unblock_condition"], "Set API_TOKEN in the target environment.")
+            self.assertEqual(blocked.task["blockers"][0]["owner"], "user")
+            self.assertEqual(blocked.task["blockers"][0]["type"], "credential")
+            self.assertEqual(blocked.task["blockers"][0]["source"], "cli")
             self.assertTrue((root / "harness" / "tasks" / "blocked" / "TASK-0001.json").exists())
+
+    def test_blocked_task_requires_active_structured_blocker(self) -> None:
+        task = ready_task("TASK-0001")
+        task["state"] = "blocked"
+
+        errors = validate_task(task, directory_state="blocked")
+
+        self.assertIn("blocked task must have at least one active blocker", errors)
+
+    def test_ready_task_with_external_inputs_is_not_executable(self) -> None:
+        task = ready_task("TASK-0001")
+        task["external_inputs"]["credentials"] = ["API_TOKEN"]
+
+        errors = validate_task(task, directory_state="ready")
+
+        self.assertIn("external_inputs must be empty when state is ready; move task to blocked until inputs exist", errors)
+
+    def test_select_next_skips_ready_tasks_with_active_blockers_or_external_inputs(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = DEFAULT_CONFIG.copy()
+            config["root"] = root
+            blocked_ready = ready_task("TASK-0001", priority=1)
+            blocked_ready["blockers"] = [
+                {
+                    "id": "BLK-0001",
+                    "type": "credential",
+                    "reason": "missing API token",
+                    "unblock_condition": "Set API_TOKEN.",
+                    "owner": "user",
+                    "source": "planner",
+                    "status": "active",
+                    "created_at": "2026-05-30T00:00:00Z",
+                    "resolved_at": None,
+                }
+            ]
+            external_input_ready = ready_task("TASK-0002", priority=2)
+            external_input_ready["external_inputs"]["services"] = ["staging database"]
+            write_task(root, "ready", "TASK-0001", blocked_ready)
+            write_task(root, "ready", "TASK-0002", external_input_ready)
+            write_task(root, "ready", "TASK-0003", ready_task("TASK-0003", priority=3))
+
+            selected = select_next_task(root, config)
+
+            self.assertIsNotNone(selected)
+            self.assertEqual(selected.task["id"], "TASK-0003")
+
+    def test_unblock_resolves_blocker_and_returns_task_to_ready(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = DEFAULT_CONFIG.copy()
+            config["root"] = root
+            write_task(root, "ready", "TASK-0001", ready_task("TASK-0001"))
+            block_task(
+                root,
+                config,
+                "TASK-0001",
+                reason="missing API credentials",
+                unblock_condition="Set API_TOKEN in the target environment.",
+                owner="user",
+                blocker_type="credential",
+                source="cli",
+            )
+
+            unblocked = unblock_task(
+                root,
+                config,
+                "TASK-0001",
+                "BLK-0001",
+                resolution="API_TOKEN configured in CI.",
+            )
+
+            self.assertEqual(unblocked.task["state"], "ready")
+            self.assertEqual(unblocked.task["blockers"][0]["status"], "resolved")
+            self.assertEqual(unblocked.task["blockers"][0]["resolution"], "API_TOKEN configured in CI.")
+            self.assertIsNotNone(unblocked.task["blockers"][0]["resolved_at"])
+            self.assertTrue((root / "harness" / "tasks" / "ready" / "TASK-0001.json").exists())
+
+    def test_unblock_clears_resolved_external_inputs_before_ready(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = DEFAULT_CONFIG.copy()
+            config["root"] = root
+            task = ready_task("TASK-0001")
+            task["state"] = "blocked"
+            task["external_inputs"]["credentials"] = ["API_TOKEN"]
+            task["blockers"] = [
+                {
+                    "id": "BLK-0001",
+                    "type": "credential",
+                    "reason": "missing API_TOKEN",
+                    "unblock_condition": "Set API_TOKEN.",
+                    "owner": "user",
+                    "source": "planner",
+                    "status": "active",
+                    "created_at": "2026-05-30T00:00:00Z",
+                    "resolved_at": None,
+                }
+            ]
+            write_task(root, "blocked", "TASK-0001", task)
+
+            unblocked = unblock_task(root, config, "TASK-0001", "BLK-0001", resolution="API_TOKEN configured.")
+
+            self.assertEqual(unblocked.task["state"], "ready")
+            self.assertEqual(unblocked.task["external_inputs"], {"credentials": [], "services": [], "user_decisions": []})
+            self.assertEqual(validate_task(unblocked.task, directory_state="ready"), [])
+
+    def test_transition_cannot_move_blocked_task_to_ready_with_active_blocker(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = DEFAULT_CONFIG.copy()
+            config["root"] = root
+            write_task(root, "ready", "TASK-0001", ready_task("TASK-0001"))
+            block_task(
+                root,
+                config,
+                "TASK-0001",
+                reason="missing API credentials",
+                unblock_condition="Set API_TOKEN in the target environment.",
+                owner="user",
+                blocker_type="credential",
+                source="cli",
+            )
+
+            with self.assertRaisesRegex(ValueError, "active blockers require state blocked"):
+                transition_task(root, config, "TASK-0001", "ready")
+
+    def test_cli_unblock_resolves_structured_blocker(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = DEFAULT_CONFIG.copy()
+            config["root"] = root
+            write_task(root, "ready", "TASK-0001", ready_task("TASK-0001"))
+            block_task(
+                root,
+                config,
+                "TASK-0001",
+                reason="missing API credentials",
+                unblock_condition="Set API_TOKEN in the target environment.",
+                owner="user",
+                blocker_type="credential",
+                source="cli",
+            )
+            original_root = cli.ROOT
+            cli.ROOT = root
+            try:
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    exit_code = cli.main(
+                        [
+                            "unblock",
+                            "TASK-0001",
+                            "--blocker",
+                            "BLK-0001",
+                            "--resolution",
+                            "API_TOKEN configured.",
+                        ]
+                    )
+            finally:
+                cli.ROOT = original_root
+
+            self.assertEqual(exit_code, 0)
+            self.assertIn("unblocked TASK-0001", output.getvalue())
+            task = load_data(root / "harness" / "tasks" / "ready" / "TASK-0001.json")
+            self.assertEqual(task["blockers"][0]["status"], "resolved")
 
     def test_close_task_requires_accepted_state_and_releases_locks(self) -> None:
         with TemporaryDirectory() as tmp:

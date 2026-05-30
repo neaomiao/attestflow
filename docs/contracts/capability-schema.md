@@ -134,6 +134,8 @@ Programming Agent Provider 要求：
 - `findings` 必须是数组。
 - `evidence` 必须是数组。
 
+当 task-scoped capability 返回 `blocked` 时，Attestflow 会先保存 `output.json` 并写回 `evidence.capabilities.<name>`，再把任务移入 `blocked`，追加 `type: capability`、`source: capability:<name>` 的 active blocker。Capability 不直接编辑 runtime task JSON。
+
 Attestflow 会把 `output.json` 的相对路径写回：
 
 ```json

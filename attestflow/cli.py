@@ -22,6 +22,7 @@ from .tasks import (
     select_next_task,
     start_task,
     transition_task,
+    unblock_task,
     validate_task,
     verify_task,
 )
@@ -123,8 +124,23 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
 
 
 def cmd_block(args: argparse.Namespace) -> int:
-    block_task(ROOT, load_config(ROOT), args.task, reason=args.reason)
+    block_task(
+        ROOT,
+        load_config(ROOT),
+        args.task,
+        reason=args.reason,
+        unblock_condition=args.unblock_condition,
+        owner=args.owner,
+        blocker_type=args.type,
+        source="cli",
+    )
     print(f"blocked {args.task}: {args.reason}")
+    return 0
+
+
+def cmd_unblock(args: argparse.Namespace) -> int:
+    record = unblock_task(ROOT, load_config(ROOT), args.task, args.blocker, resolution=args.resolution)
+    print(f"unblocked {args.task}: {args.blocker} -> {record.task['state']}")
     return 0
 
 
@@ -306,7 +322,16 @@ def build_parser() -> argparse.ArgumentParser:
     block = subparsers.add_parser("block")
     block.add_argument("task")
     block.add_argument("--reason", required=True)
+    block.add_argument("--unblock-condition")
+    block.add_argument("--owner", default="user")
+    block.add_argument("--type", default="external_input")
     block.set_defaults(func=cmd_block)
+
+    unblock = subparsers.add_parser("unblock")
+    unblock.add_argument("task")
+    unblock.add_argument("--blocker", required=True)
+    unblock.add_argument("--resolution", required=True)
+    unblock.set_defaults(func=cmd_unblock)
 
     transition = subparsers.add_parser("transition")
     transition.add_argument("task")

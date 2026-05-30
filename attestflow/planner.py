@@ -82,6 +82,7 @@ def _normalize_planner_task(raw_task: dict[str, Any], task_id: str) -> dict[str,
         "acceptance": _list(raw_task.get("acceptance")),
         "dependencies": _list(raw_task.get("dependencies")),
         "blocks": _list(raw_task.get("blocks")),
+        "blockers": _dict_list(raw_task.get("blockers")),
         "files": {
             "read": _list(files.get("read")),
             "write": _list(files.get("write")),
@@ -127,3 +128,9 @@ def _list(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value]
     return [str(value)]
+
+
+def _dict_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
