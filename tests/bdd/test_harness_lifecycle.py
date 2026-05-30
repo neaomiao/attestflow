@@ -23,7 +23,7 @@ class HarnessLifecycleScenarioTests(unittest.TestCase):
             run = start_task(root, config, "TASK-0001", actor_role="orchestrator")
 
             self.assertTrue(run.path.exists())
-            self.assertTrue((root / "harness" / "tasks" / "in_progress" / "TASK-0001.yml").exists())
+            self.assertTrue((root / "harness" / "tasks" / "in_progress" / "TASK-0001.json").exists())
 
 
 if __name__ == "__main__":

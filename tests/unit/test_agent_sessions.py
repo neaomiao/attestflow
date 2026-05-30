@@ -33,7 +33,7 @@ class AgentSessionTests(unittest.TestCase):
             self.assertEqual(metadata["agent_session"]["session_id"], session["session_id"])
             self.assertEqual(metadata["agent_session"]["prompt_packet"], "prompt.md")
 
-            active = load_data(root / "harness" / "tasks" / "in_progress" / "TASK-0001.yml")
+            active = load_data(root / "harness" / "tasks" / "in_progress" / "TASK-0001.json")
             self.assertEqual(active["evidence"]["session"], str((run.path / "session.yml").relative_to(root)))
             ledger = (run.path / "ledger.jsonl").read_text(encoding="utf-8")
             self.assertIn('"event": "session_created"', ledger)
@@ -76,7 +76,7 @@ class AgentSessionTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             self.assertIn("dispatched TASK-0001", output.getvalue())
-            active = load_data(root / "harness" / "tasks" / "in_progress" / "TASK-0001.yml")
+            active = load_data(root / "harness" / "tasks" / "in_progress" / "TASK-0001.json")
             self.assertTrue(active["evidence"]["session"].endswith("session.yml"))
 
 

@@ -21,7 +21,7 @@ from attestflow.tasks import (
 def write_task(root: Path, state: str, task_id: str, data: dict) -> Path:
     task_dir = root / "harness" / "tasks" / state
     task_dir.mkdir(parents=True, exist_ok=True)
-    path = task_dir / f"{task_id}.yml"
+    path = task_dir / f"{task_id}.json"
     dump_data(data, path)
     return path
 
@@ -94,7 +94,7 @@ class TaskLifecycleTests(unittest.TestCase):
             run = start_task(root, config, "TASK-0001", actor_role="orchestrator")
 
             self.assertFalse(source.exists())
-            active = root / "harness" / "tasks" / "in_progress" / "TASK-0001.yml"
+            active = root / "harness" / "tasks" / "in_progress" / "TASK-0001.json"
             self.assertTrue(active.exists())
             active_task = load_data(active)
             self.assertEqual(active_task["state"], "in_progress")
@@ -127,7 +127,7 @@ class TaskLifecycleTests(unittest.TestCase):
 
             self.assertEqual(blocked.task["state"], "blocked")
             self.assertIn("missing API credentials", blocked.task["notes"])
-            self.assertTrue((root / "harness" / "tasks" / "blocked" / "TASK-0001.yml").exists())
+            self.assertTrue((root / "harness" / "tasks" / "blocked" / "TASK-0001.json").exists())
 
     def test_close_task_requires_accepted_state_and_releases_locks(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -143,14 +143,14 @@ class TaskLifecycleTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "missing passing evidence for bdd"):
                 close_task(root, config, "TASK-0001")
 
-            self.assertTrue((root / "harness" / "tasks" / "accepted" / "TASK-0001.yml").exists())
+            self.assertTrue((root / "harness" / "tasks" / "accepted" / "TASK-0001.json").exists())
             self.assertTrue((root / "harness" / "locks" / "tasks" / "TASK-0001.lock").exists())
             record_passing_evidence(config, run.path)
 
             closed = close_task(root, config, "TASK-0001")
 
             self.assertEqual(closed.task["state"], "done")
-            self.assertTrue((root / "harness" / "tasks" / "done" / "TASK-0001.yml").exists())
+            self.assertTrue((root / "harness" / "tasks" / "done" / "TASK-0001.json").exists())
             self.assertFalse((root / "harness" / "locks" / "tasks" / "TASK-0001.lock").exists())
             self.assertFalse((root / "harness" / "locks" / "files" / "attestflow.tasks.py.lock").exists())
             metadata = load_data(run.path / "metadata.yml")
@@ -181,7 +181,7 @@ class TaskLifecycleTests(unittest.TestCase):
             self.assertEqual(metadata["commands"]["bdd"]["log"], "commands/bdd.log")
             self.assertTrue(metadata["commands"]["bdd"]["fresh"])
             self.assertEqual(metadata["commands"]["secret_scan"]["exit_code"], 0)
-            active = load_data(root / "harness" / "tasks" / "in_progress" / "TASK-0001.yml")
+            active = load_data(root / "harness" / "tasks" / "in_progress" / "TASK-0001.json")
             self.assertEqual(active["evidence"]["verify"], str((run.path / "metadata.yml").relative_to(root)))
 
 

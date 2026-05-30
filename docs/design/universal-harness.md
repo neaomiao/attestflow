@@ -26,7 +26,7 @@ intent -> AI planning -> task import -> requirement boundary -> BDD scenario -> 
 - 不强制依赖 `gstack`、Superpowers、GitHub、Docker 或某个 CI 平台。
 - 不允许 Agent 编排绕过任务状态、文件所有权或验证证据。
 - 不依赖对话记忆作为任务状态或断点恢复的事实来源。
-- 不把手写任务 YAML 设计成主路径；任务 YAML 是机器落盘格式，不是人工编辑界面。
+- 不使用手写任务文件作为主路径；任务 runtime 文件统一为 JSON，由 Attestflow 写入。
 - 不把某个 AI 产品写死进核心；真实会话启动通过 `sessions.launch_command` 适配。
 
 ## 设计原则
@@ -172,10 +172,10 @@ Dispatch 必须原子完成：
 任务产生分两层：
 
 ```text
-LLM / planning agent -> planner JSON -> attestflow task import -> task YAML
+LLM / planning agent -> planner JSON -> attestflow task import -> task JSON
 ```
 
-大模型负责判断和拆解，不直接写 `harness/tasks/**/*.yml`。Attestflow 接收 planner JSON 后执行确定性处理：
+大模型负责判断和拆解，不直接写 `harness/tasks/**/*.json`。Attestflow 接收 planner JSON 后执行确定性处理：
 
 - 分配递增的 `TASK-*` ID
 - 解析 planner 内部 `key` 依赖
@@ -184,11 +184,11 @@ LLM / planning agent -> planner JSON -> attestflow task import -> task YAML
 - 拒绝缺少 BDD、unit tests、acceptance 或写文件范围的任务
 - 只在全部任务可通过校验后写入 YAML
 
-任务 YAML 是 runtime 的事实来源，不是人工主编辑界面。人工只负责不可自动判断的目标取舍、凭证授权和外部业务决策。
+任务 JSON 是 runtime 的事实来源，不是人工主编辑界面。人工只负责不可自动判断的目标取舍、凭证授权和外部业务决策。
 
 ## 任务存储
 
-任务是 YAML 文件，放在配置指定的任务目录下：
+任务是 JSON 文件，放在配置指定的任务目录下：
 
 ```text
 harness/tasks/
@@ -305,7 +305,7 @@ python -m attestflow secret-scan
 - `doctor`：检查工具、配置和目录一致性。
 - `validate-config`：验证 `harness.yml`。
 - `validate-task`：验证 schema、状态、目录、依赖和门禁。
-- `task import --from-json`：导入大模型输出的 planner JSON，校验后写入 task YAML。
+- `task import --from-json`：导入大模型输出的 planner JSON，校验后写入 runtime task JSON。
 - `tasks`：按状态和优先级列出任务。
 - `next`：返回最高优先级、依赖已完成、文件未锁定的 `ready` 任务。
 - `dispatch`：AI-first 执行入口，创建 run、locks、独立 agent session、prompt packet，并按配置启动外部 AI 会话。

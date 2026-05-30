@@ -94,7 +94,7 @@ def iter_tasks(root: Path, config: dict[str, Any]) -> list[TaskRecord]:
     records: list[TaskRecord] = []
     if not base.exists():
         return records
-    for path in sorted(base.glob("*/*.yml")):
+    for path in sorted(base.glob("*/*.json")):
         task = load_data(path)
         records.append(TaskRecord(path=path, task=task))
     return records
@@ -146,7 +146,7 @@ def start_task(root: Path, config: dict[str, Any], task_id: str, actor_role: str
     session = create_agent_session(root, config, updated, run)
     evidence["session"] = str(session.path.relative_to(root))
     updated["evidence"] = evidence
-    target = task_root(root, config) / "in_progress" / record.path.name
+    target = task_root(root, config) / "in_progress" / f"{task_id}.json"
     dump_data(updated, target)
     record.path.unlink()
     return run
@@ -228,7 +228,7 @@ def _move_task(
     if new_state not in TASK_STATES:
         raise ValueError(f"invalid state: {new_state}")
     updated["state"] = new_state
-    target = task_root(root, config) / new_state / record.path.name
+    target = task_root(root, config) / new_state / f"{record.task['id']}.json"
     dump_data(updated, target)
     if record.path != target and record.path.exists():
         record.path.unlink()

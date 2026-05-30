@@ -36,7 +36,7 @@ python3 -m attestflow task import --from-json plan.json
 ai-planner "实现登录功能" | python3 -m attestflow task import --from-json -
 ```
 
-`task import` 会分配 `TASK-*` ID、解析 planner 内部依赖、补齐默认字段、校验 ready 门禁，并写入 `harness/tasks/ready/*.yml`。如果模型输出缺少 scope、BDD、unit_tests、acceptance 或 files.write，导入会失败，不会写入半成品任务。
+`task import` 会分配 `TASK-*` ID、解析 planner 内部依赖、补齐默认字段、校验 ready 门禁，并写入 `harness/tasks/ready/*.json`。如果模型输出缺少 scope、BDD、unit_tests、acceptance 或 files.write，导入会失败，不会写入半成品任务。
 
 ## 本地验证
 
@@ -49,7 +49,7 @@ python3 -m attestflow verify
 
 ```bash
 python3 -m attestflow validate-config
-python3 -m attestflow validate-task harness/tasks/ready/TASK-0001-example.yml
+python3 -m attestflow validate-task harness/tasks/ready/TASK-0001-example.json
 python3 -m attestflow task import --from-json plan.json
 python3 -m attestflow tasks
 python3 -m attestflow next
@@ -77,7 +77,7 @@ python3 -m attestflow secret-scan
 
 - 受限 YAML 子集读写
 - `harness.yml` 校验
-- AI planner JSON 导入为任务 YAML
+- AI planner JSON 导入为 runtime task JSON
 - task schema 校验
 - `next` 调度
 - `dispatch` 自动创建每任务独立 agent session、prompt packet、锁和 run evidence

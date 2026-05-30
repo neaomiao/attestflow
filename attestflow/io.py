@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import ast
+import json
 from pathlib import Path
 from typing import Any
 
 
 def load_data(path: Path) -> dict[str, Any]:
+    if path.suffix == ".json":
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError(f"{path} must contain a mapping at the top level")
+        return data
     lines = _clean_lines(path.read_text(encoding="utf-8"))
     if not lines:
         return {}
@@ -19,6 +25,9 @@ def load_data(path: Path) -> dict[str, Any]:
 
 def dump_data(data: dict[str, Any], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix == ".json":
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        return
     path.write_text(_dump_value(data, 0).rstrip() + "\n", encoding="utf-8")
 
 
@@ -164,4 +173,3 @@ def _dump_scalar(value: Any) -> str:
     ):
         return repr(text)
     return text
-

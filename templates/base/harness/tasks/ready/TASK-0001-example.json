@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "id": "TASK-0001",
+  "title": "Add first harness-managed change",
+  "state": "ready",
+  "priority": 10,
+  "type": "feature",
+  "purpose": "Demonstrate a task that can be selected and started by the harness.",
+  "context": [
+    "This task is a template example for new projects."
+  ],
+  "scope": [
+    "Replace this example with a real project task."
+  ],
+  "out_of_scope": [
+    "Implementing unrelated business behavior."
+  ],
+  "requirements": {
+    "confirmed": [
+      "Ready tasks need executable proof."
+    ],
+    "unresolved": [],
+    "assumptions": []
+  },
+  "bdd_scenarios": [
+    "Ready task can be selected by priority."
+  ],
+  "unit_tests": [
+    "tests/unit/test_first_task.py"
+  ],
+  "acceptance": [
+    "harness next returns TASK-0001."
+  ],
+  "dependencies": [],
+  "blocks": [],
+  "files": {
+    "read": [],
+    "write": [
+      "src/example.py"
+    ]
+  },
+  "agents": {
+    "owner": "orchestrator",
+    "allowed_roles": [
+      "worker_agent"
+    ]
+  },
+  "external_inputs": {
+    "credentials": [],
+    "services": [],
+    "user_decisions": []
+  },
+  "evidence": {
+    "session": null,
+    "run_id": null,
+    "red": null,
+    "green": null,
+    "verify": null,
+    "packet": null
+  },
+  "links": {
+    "issues": [],
+    "prs": [],
+    "docs": []
+  },
+  "risks": [],
+  "notes": [],
+  "created_at": "2026-05-29T00:00:00Z",
+  "updated_at": "2026-05-29T00:00:00Z"
+}

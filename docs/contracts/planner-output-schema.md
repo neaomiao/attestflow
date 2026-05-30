@@ -5,9 +5,9 @@
 
 ## 目标
 
-Planner output 是大模型和 Attestflow 之间的边界。大模型负责理解目标、拆解任务、给出 BDD、unit test、验收标准和文件范围；Attestflow 负责确定性校验、分配 task id、解析依赖并写入 task YAML。
+Planner output 是大模型和 Attestflow 之间的边界。大模型负责理解目标、拆解任务、给出 BDD、unit test、验收标准和文件范围；Attestflow 负责确定性校验、分配 task id、解析依赖并写入 runtime task JSON。
 
-核心原则：AI 能完成的工作不进入人工主路径。人不手写任务 YAML；人只处理凭证、业务取舍和无法自动判断的外部决策。
+核心原则：AI 能完成的工作不进入人工主路径。人不手写任务文档；人只处理凭证、业务取舍和无法自动判断的外部决策。
 
 ## 输入格式
 
@@ -72,5 +72,5 @@ Planner 必须输出 JSON object：
 ## 非目标
 
 - 不在基础 runtime 中绑定具体模型 provider。
-- 不让模型直接写 `harness/tasks/**/*.yml`。
+- 不让模型直接写 `harness/tasks/**/*.json`。
 - 不把交互式人工填表作为任务创建主路径。

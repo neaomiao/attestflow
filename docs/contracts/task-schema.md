@@ -9,14 +9,14 @@
 
 字段名、状态名和命令名保留英文，原因是它们会被代码、CI 和脚本解析。解释文字使用中文。
 
-任务 YAML 是 runtime 的持久格式，不是人工主编辑入口。主路径是 planner JSON 通过 `attestflow task import --from-json` 导入。
+任务 JSON 是 runtime 的唯一任务文档格式，不是人工主编辑入口。主路径是 planner JSON 通过 `attestflow task import --from-json` 导入。
 
 ## 文件位置
 
 任务文件放在配置的任务根目录：
 
 ```text
-harness/tasks/<state>/<task-id>.yml
+harness/tasks/<state>/<task-id>.json
 ```
 
 目录状态必须和文件内 `state` 一致。
@@ -39,60 +39,59 @@ harness/tasks/
 
 ## 必填字段
 
-```yaml
-schema_version: 1
-id: TASK-0001
-title: Short imperative title
-state: proposed
-priority: 100
-type: feature
-
-purpose: ""
-context: []
-scope: []
-out_of_scope: []
-
-requirements:
-  confirmed: []
-  unresolved: []
-  assumptions: []
-
-bdd_scenarios: []
-unit_tests: []
-acceptance: []
-
-dependencies: []
-blocks: []
-files:
-  read: []
-  write: []
-
-agents:
-  owner: orchestrator
-  allowed_roles: []
-
-external_inputs:
-  credentials: []
-  services: []
-  user_decisions: []
-
-evidence:
-  session: null
-  run_id: null
-  red: null
-  green: null
-  verify: null
-  packet: null
-
-links:
-  issues: []
-  prs: []
-  docs: []
-
-risks: []
-notes: []
-created_at: null
-updated_at: null
+```json
+{
+  "schema_version": 1,
+  "id": "TASK-0001",
+  "title": "Short imperative title",
+  "state": "proposed",
+  "priority": 100,
+  "type": "feature",
+  "purpose": "",
+  "context": [],
+  "scope": [],
+  "out_of_scope": [],
+  "requirements": {
+    "confirmed": [],
+    "unresolved": [],
+    "assumptions": []
+  },
+  "bdd_scenarios": [],
+  "unit_tests": [],
+  "acceptance": [],
+  "dependencies": [],
+  "blocks": [],
+  "files": {
+    "read": [],
+    "write": []
+  },
+  "agents": {
+    "owner": "orchestrator",
+    "allowed_roles": []
+  },
+  "external_inputs": {
+    "credentials": [],
+    "services": [],
+    "user_decisions": []
+  },
+  "evidence": {
+    "session": null,
+    "run_id": null,
+    "red": null,
+    "green": null,
+    "verify": null,
+    "packet": null
+  },
+  "links": {
+    "issues": [],
+    "prs": [],
+    "docs": []
+  },
+  "risks": [],
+  "notes": [],
+  "created_at": null,
+  "updated_at": null
+}
 ```
 
 ## 字段规则
@@ -270,62 +269,81 @@ blocked -> ready
 
 ## 最小 Ready 示例
 
-```yaml
-schema_version: 1
-id: TASK-0001
-title: Add task validator
-state: ready
-priority: 10
-type: feature
-purpose: Enforce task schema before implementation begins.
-context:
-  - The harness must reject incomplete executable tasks.
-scope:
-  - Validate required fields.
-  - Validate ready-state requirements.
-out_of_scope:
-  - Build CI integration.
-requirements:
-  confirmed:
-    - Ready tasks need BDD and unit test targets.
-  unresolved: []
-  assumptions: []
-bdd_scenarios:
-  - Ready task without BDD is rejected.
-unit_tests:
-  - tests/unit/test_task_schema.py
-acceptance:
-  - Invalid ready task exits with non-zero status.
-dependencies: []
-blocks: []
-files:
-  read:
-    - docs/contracts/task-schema.md
-  write:
-    - attestflow/tasks.py
-agents:
-  owner: orchestrator
-  allowed_roles:
-    - worker_agent
-    - test_agent
-external_inputs:
-  credentials: []
-  services: []
-  user_decisions: []
-evidence:
-  session: null
-  run_id: null
-  red: null
-  green: null
-  verify: null
-  packet: null
-links:
-  issues: []
-  prs: []
-  docs:
-    - docs/contracts/task-schema.md
-risks: []
-notes: []
-created_at: 2026-05-29T00:00:00Z
-updated_at: 2026-05-29T00:00:00Z
+```json
+{
+  "schema_version": 1,
+  "id": "TASK-0001",
+  "title": "Add task validator",
+  "state": "ready",
+  "priority": 10,
+  "type": "feature",
+  "purpose": "Enforce task schema before implementation begins.",
+  "context": [
+    "The harness must reject incomplete executable tasks."
+  ],
+  "scope": [
+    "Validate required fields.",
+    "Validate ready-state requirements."
+  ],
+  "out_of_scope": [
+    "Build CI integration."
+  ],
+  "requirements": {
+    "confirmed": [
+      "Ready tasks need BDD and unit test targets."
+    ],
+    "unresolved": [],
+    "assumptions": []
+  },
+  "bdd_scenarios": [
+    "Ready task without BDD is rejected."
+  ],
+  "unit_tests": [
+    "tests/unit/test_task_schema.py"
+  ],
+  "acceptance": [
+    "Invalid ready task exits with non-zero status."
+  ],
+  "dependencies": [],
+  "blocks": [],
+  "files": {
+    "read": [
+      "docs/contracts/task-schema.md"
+    ],
+    "write": [
+      "attestflow/tasks.py"
+    ]
+  },
+  "agents": {
+    "owner": "orchestrator",
+    "allowed_roles": [
+      "worker_agent",
+      "test_agent"
+    ]
+  },
+  "external_inputs": {
+    "credentials": [],
+    "services": [],
+    "user_decisions": []
+  },
+  "evidence": {
+    "session": null,
+    "run_id": null,
+    "red": null,
+    "green": null,
+    "verify": null,
+    "packet": null
+  },
+  "links": {
+    "issues": [],
+    "prs": [],
+    "docs": [
+      "docs/contracts/task-schema.md"
+    ]
+  },
+  "risks": [],
+  "notes": [],
+  "created_at": "2026-05-29T00:00:00Z",
+  "updated_at": "2026-05-29T00:00:00Z"
+}
 ```

@@ -47,7 +47,7 @@ class PlannerImportTests(unittest.TestCase):
                         "requirements": {"confirmed": ["import must validate tasks"], "unresolved": [], "assumptions": []},
                         "bdd_scenarios": ["Planner JSON imports ready tasks."],
                         "unit_tests": ["tests/unit/test_planner_import.py"],
-                        "acceptance": ["import writes ready task YAML"],
+                        "acceptance": ["import writes ready task JSON"],
                         "dependencies": ["planner_contract"],
                         "files": {"read": ["attestflow/tasks.py"], "write": ["attestflow/planner.py"]},
                     },
@@ -57,8 +57,8 @@ class PlannerImportTests(unittest.TestCase):
             records = import_planner_tasks(root, config, plan)
 
             self.assertEqual([record.task["id"] for record in records], ["TASK-0002", "TASK-0003"])
-            first = load_data(root / "harness" / "tasks" / "ready" / "TASK-0002.yml")
-            second = load_data(root / "harness" / "tasks" / "ready" / "TASK-0003.yml")
+            first = load_data(root / "harness" / "tasks" / "ready" / "TASK-0002.json")
+            second = load_data(root / "harness" / "tasks" / "ready" / "TASK-0003.json")
             self.assertEqual(first["state"], "ready")
             self.assertEqual(first["agents"]["owner"], "orchestrator")
             self.assertEqual(second["dependencies"], ["TASK-0002"])
@@ -83,7 +83,7 @@ class PlannerImportTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "scope must be a non-empty list"):
                 import_planner_tasks(root, config, plan)
 
-            self.assertFalse((root / "harness" / "tasks" / "ready" / "TASK-0001.yml").exists())
+            self.assertFalse((root / "harness" / "tasks" / "ready" / "TASK-0001.json").exists())
 
     def test_cli_task_import_reads_planner_json_file(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -124,7 +124,7 @@ class PlannerImportTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             self.assertIn("imported 1 task(s): TASK-0001", output.getvalue())
-            task = load_data(root / "harness" / "tasks" / "ready" / "TASK-0001.yml")
+            task = load_data(root / "harness" / "tasks" / "ready" / "TASK-0001.json")
             self.assertEqual(task["title"], "Import planner JSON")
 
 

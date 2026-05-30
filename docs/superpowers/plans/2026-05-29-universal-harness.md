@@ -26,7 +26,7 @@
 - Create `attestflow/secrets.py`: conservative secret scan.
 - Create `attestflow/cli.py`: command parser and exit codes.
 - Create `templates/base/harness.yml`: generic adapter config.
-- Create `templates/base/harness/tasks/ready/TASK-0001-example.yml`: sample ready task.
+- Create `templates/base/harness/tasks/ready/TASK-0001-example.json`: sample ready task.
 - Create `templates/base/harness/gates/definition_of_ready.yml`: default DoR.
 - Create `templates/base/harness/gates/definition_of_done.yml`: default DoD.
 - Create `templates/base/harness/agents/roles.yml`: default roles.

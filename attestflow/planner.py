@@ -39,7 +39,7 @@ def import_planner_tasks(root: Path, config: dict[str, Any], plan: dict[str, Any
     for task in normalized:
         task_errors = validate_task(task, directory_state=str(task["state"]))
         errors.extend(f"{task['id']}: {error}" for error in task_errors)
-        target = task_root(root, config) / str(task["state"]) / f"{task['id']}.yml"
+        target = task_root(root, config) / str(task["state"]) / f"{task['id']}.json"
         if target.exists():
             errors.append(f"{task['id']}: task file already exists")
     if errors:
@@ -47,7 +47,7 @@ def import_planner_tasks(root: Path, config: dict[str, Any], plan: dict[str, Any
 
     records: list[TaskRecord] = []
     for task in normalized:
-        target = task_root(root, config) / str(task["state"]) / f"{task['id']}.yml"
+        target = task_root(root, config) / str(task["state"]) / f"{task['id']}.json"
         dump_data(task, target)
         records.append(TaskRecord(path=target, task=task))
     return records
