@@ -6,7 +6,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from .capabilities import get_capability, list_capabilities, run_planner_capability
+from .capabilities import get_capability, list_capabilities, run_planner_capability, run_task_capability
 from .config import load_config, validate_config
 from .io import load_data
 from .planner import import_planner_tasks
@@ -216,6 +216,16 @@ def cmd_capability_show(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_capability_run(args: argparse.Namespace) -> int:
+    try:
+        result = run_task_capability(ROOT, load_config(ROOT), args.name, args.task, command=args.command)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    print(f"ran {result.capability} for {result.task_id}: {result.run_path}")
+    return 0
+
+
 def cmd_plan(args: argparse.Namespace) -> int:
     goal = " ".join(args.goal).strip()
     try:
@@ -294,6 +304,11 @@ def build_parser() -> argparse.ArgumentParser:
     capability_show = capability_subparsers.add_parser("show")
     capability_show.add_argument("name")
     capability_show.set_defaults(func=cmd_capability_show)
+    capability_run = capability_subparsers.add_parser("run")
+    capability_run.add_argument("name")
+    capability_run.add_argument("task")
+    capability_run.add_argument("--command")
+    capability_run.set_defaults(func=cmd_capability_run)
 
     plan = subparsers.add_parser("plan")
     plan.add_argument("goal", nargs="+")

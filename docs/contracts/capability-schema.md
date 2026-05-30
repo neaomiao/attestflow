@@ -88,6 +88,52 @@ capabilities:
 python -m attestflow plan "实现登录功能" --command "your-model-cli"
 ```
 
+## Task-scoped Capability 执行
+
+除 `planner` 外，capability 可以绑定到一个 runtime task 执行：
+
+```bash
+python -m attestflow capability run reviewer TASK-0001 --command "your-reviewer-cli"
+```
+
+流程：
+
+```text
+task JSON -> capability input -> command provider -> capability output JSON -> task evidence index
+```
+
+Provider 要求：
+
+- 从 stdin 读取 JSON object。
+- 输入包含 `capability`、`task`、`task_path`、`project`、`commands` 和 `instructions`。
+- 向 stdout 输出 JSON object。
+- stderr/stdout 会保存到 `harness/capability-runs/<capability>-<task>-*/`。
+- 非零退出码会阻止任务 evidence 更新。
+
+输出建议：
+
+```json
+{
+  "schema_version": 1,
+  "status": "passed",
+  "summary": "No blocking issues.",
+  "findings": [],
+  "evidence": ["review report"]
+}
+```
+
+Attestflow 会把 `output.json` 的相对路径写回：
+
+```json
+{
+  "evidence": {
+    "capabilities": {
+      "reviewer": "harness/capability-runs/reviewer-TASK-0001-.../output.json"
+    }
+  }
+}
+```
+
 ## 非目标
 
 - 不复制 Superpowers 或 gstack 的外部安装机制。

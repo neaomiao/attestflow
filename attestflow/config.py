@@ -46,6 +46,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "provider": "command",
             "command": None,
         },
+        "bdd": {"provider": "command", "command": None},
+        "tdd": {"provider": "command", "command": None},
+        "implementer": {"provider": "command", "command": None},
+        "reviewer": {"provider": "command", "command": None},
+        "verifier": {"provider": "command", "command": None},
+        "releaser": {"provider": "command", "command": None},
     },
 }
 
@@ -75,9 +81,15 @@ def validate_config(config: dict[str, Any]) -> list[str]:
     launch_command = config.get("sessions", {}).get("launch_command")
     if launch_command is not None and not isinstance(launch_command, str):
         errors.append("sessions.launch_command must be a string or null")
-    planner_command = config.get("capabilities", {}).get("planner", {}).get("command")
-    if planner_command is not None and not isinstance(planner_command, str):
-        errors.append("capabilities.planner.command must be a string or null")
+    capabilities = config.get("capabilities", {})
+    if isinstance(capabilities, dict):
+        for name, capability in capabilities.items():
+            if not isinstance(capability, dict):
+                errors.append(f"capabilities.{name} must be a mapping")
+                continue
+            command = capability.get("command")
+            if command is not None and not isinstance(command, str):
+                errors.append(f"capabilities.{name}.command must be a string or null")
     return errors
 
 

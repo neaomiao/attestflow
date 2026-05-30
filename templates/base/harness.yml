@@ -36,6 +36,24 @@ capabilities:
   planner:
     provider: command
     command: null
+  bdd:
+    provider: command
+    command: null
+  tdd:
+    provider: command
+    command: null
+  implementer:
+    provider: command
+    command: null
+  reviewer:
+    provider: command
+    command: null
+  verifier:
+    provider: command
+    command: null
+  releaser:
+    provider: command
+    command: null
 execution:
   docker:
     enabled: false

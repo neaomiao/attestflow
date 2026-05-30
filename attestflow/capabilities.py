@@ -19,6 +19,14 @@ class CapabilityRunResult:
     run_path: Path
 
 
+@dataclass(frozen=True)
+class TaskCapabilityRunResult:
+    capability: str
+    task_id: str
+    output: dict[str, Any]
+    run_path: Path
+
+
 BUILTIN_CAPABILITIES: list[dict[str, Any]] = [
     {
         "name": "intake",
@@ -136,32 +144,37 @@ def run_planner_capability(
 
     run_path = _new_capability_run_path(root, config, "planner")
     capability_input = build_planner_input(root, config, goal)
-    dump_data(capability_input, run_path / "input.json")
-
-    completed = subprocess.run(
-        planner_command,
-        cwd=root,
-        shell=True,
-        text=True,
-        input=json.dumps(capability_input, ensure_ascii=False),
-        capture_output=True,
-        check=False,
-    )
-    (run_path / "stderr.log").write_text(completed.stderr or "", encoding="utf-8")
-    (run_path / "stdout.log").write_text(completed.stdout or "", encoding="utf-8")
-    if completed.returncode != 0:
-        raise ValueError(f"planner command failed with exit code {completed.returncode}")
-
-    try:
-        planner_output = json.loads(completed.stdout)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"planner command did not return valid JSON: {exc}") from exc
-    if not isinstance(planner_output, dict):
-        raise ValueError("planner command must return a JSON object")
-
-    dump_data(planner_output, run_path / "output.json")
+    planner_output = _run_json_command(root, planner_command, capability_input, run_path, "planner")
     records = import_planner_tasks(root, config, planner_output)
     return CapabilityRunResult(records=records, run_path=run_path)
+
+
+def run_task_capability(
+    root: Path,
+    config: dict[str, Any],
+    capability_name: str,
+    task_id: str,
+    *,
+    command: str | None = None,
+) -> TaskCapabilityRunResult:
+    if capability_name == "planner":
+        raise ValueError("planner is goal-scoped; use attestflow plan")
+    capability = get_capability(capability_name)
+    capability_command = command or _configured_command(config, capability_name)
+    if not capability_command:
+        raise ValueError(f"capabilities.{capability_name}.command must be configured or passed with --command")
+
+    record = _find_task(root, config, task_id)
+    run_path = _new_capability_run_path(root, config, f"{capability_name}-{task_id}")
+    capability_input = build_task_capability_input(root, config, capability, record)
+    output = _run_json_command(root, capability_command, capability_input, run_path, capability_name)
+    _record_task_capability_evidence(root, record, capability_name, run_path)
+    return TaskCapabilityRunResult(
+        capability=capability_name,
+        task_id=task_id,
+        output=output,
+        run_path=run_path,
+    )
 
 
 def build_planner_input(root: Path, config: dict[str, Any], goal: str) -> dict[str, Any]:
@@ -193,11 +206,87 @@ def build_planner_input(root: Path, config: dict[str, Any], goal: str) -> dict[s
     }
 
 
+def build_task_capability_input(
+    root: Path,
+    config: dict[str, Any],
+    capability: dict[str, Any],
+    record: TaskRecord,
+) -> dict[str, Any]:
+    task = record.task
+    return {
+        "schema_version": 1,
+        "capability": capability,
+        "project": config.get("project", {}),
+        "commands": config.get("commands", {}),
+        "task": task,
+        "task_path": str(record.path.relative_to(root)),
+        "instructions": [
+            "Return only JSON.",
+            "Do not edit task files directly; Attestflow records capability evidence.",
+            "Report blocking external inputs instead of assuming credentials, services, or business decisions.",
+            "Keep findings and evidence scoped to the provided task.",
+        ],
+    }
+
+
 def _configured_command(config: dict[str, Any], capability_name: str) -> str | None:
     capabilities = config.get("capabilities", {})
     capability_config = capabilities.get(capability_name, {}) if isinstance(capabilities, dict) else {}
     command = capability_config.get("command") if isinstance(capability_config, dict) else None
     return str(command) if command else None
+
+
+def _find_task(root: Path, config: dict[str, Any], task_id: str) -> TaskRecord:
+    for record in iter_tasks(root, config):
+        if record.task.get("id") == task_id:
+            return record
+    raise FileNotFoundError(f"task not found: {task_id}")
+
+
+def _run_json_command(
+    root: Path,
+    command: str,
+    payload: dict[str, Any],
+    run_path: Path,
+    capability_name: str,
+) -> dict[str, Any]:
+    dump_data(payload, run_path / "input.json")
+    completed = subprocess.run(
+        command,
+        cwd=root,
+        shell=True,
+        text=True,
+        input=json.dumps(payload, ensure_ascii=False),
+        capture_output=True,
+        check=False,
+    )
+    (run_path / "stderr.log").write_text(completed.stderr or "", encoding="utf-8")
+    (run_path / "stdout.log").write_text(completed.stdout or "", encoding="utf-8")
+    if completed.returncode != 0:
+        raise ValueError(f"{capability_name} command failed with exit code {completed.returncode}")
+    try:
+        output = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{capability_name} command did not return valid JSON: {exc}") from exc
+    if not isinstance(output, dict):
+        raise ValueError(f"{capability_name} command must return a JSON object")
+    dump_data(output, run_path / "output.json")
+    return output
+
+
+def _record_task_capability_evidence(
+    root: Path,
+    record: TaskRecord,
+    capability_name: str,
+    run_path: Path,
+) -> None:
+    updated = dict(record.task)
+    evidence = dict(updated.get("evidence", {}))
+    capabilities = dict(evidence.get("capabilities", {})) if isinstance(evidence.get("capabilities"), dict) else {}
+    capabilities[capability_name] = str((run_path / "output.json").relative_to(root))
+    evidence["capabilities"] = capabilities
+    updated["evidence"] = evidence
+    dump_data(updated, record.path)
 
 
 def _new_capability_run_path(root: Path, config: dict[str, Any], capability_name: str) -> Path:

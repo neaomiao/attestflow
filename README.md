@@ -67,6 +67,7 @@ python3 -m attestflow validate-task harness/tasks/ready/TASK-0001-example.json
 python3 -m attestflow capability list
 python3 -m attestflow capability show planner
 python3 -m attestflow plan "实现登录功能" --command "your-model-cli"
+python3 -m attestflow capability run reviewer TASK-0001 --command "your-reviewer-cli"
 python3 -m attestflow task import --from-json plan.json
 python3 -m attestflow tasks
 python3 -m attestflow next
@@ -96,6 +97,7 @@ python3 -m attestflow secret-scan
 - `harness.yml` 校验
 - 内置 capability registry：intake、planner、bdd、tdd、implementer、reviewer、verifier、releaser
 - `plan` command provider：调用任意模型命令，保存 capability 输入/输出证据并导入 runtime task JSON
+- `capability run` task provider：对单个任务执行 `bdd`、`tdd`、`implementer`、`reviewer`、`verifier` 或 `releaser`，保存 capability evidence 并写回任务证据索引
 - AI planner JSON 导入为 runtime task JSON
 - task schema 校验
 - `next` 调度

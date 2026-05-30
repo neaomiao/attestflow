@@ -179,7 +179,7 @@ verifier     verification lead
 releaser     release engineer
 ```
 
-`capability list/show` 只展示合同；`plan` 是第一个可执行 capability。外部模型、外部 skill 或 agent CLI 只通过 provider adapter 接入，不能成为 Attestflow core 的前置条件。
+`capability list/show` 展示合同；`plan` 执行目标级 planner capability；`capability run <name> <task>` 执行任务级 capability。外部模型、外部 skill 或 agent CLI 只通过 provider adapter 接入，不能成为 Attestflow core 的前置条件。
 
 ## 每任务独立会话
 
@@ -229,6 +229,25 @@ python -m attestflow task import --from-json PLAN.json
 - 保存 capability evidence：`input.json`、`stdout.log`、`stderr.log`、`output.json`
 
 任务 JSON 是 runtime 的事实来源，不是人工主编辑界面。人工只负责不可自动判断的目标取舍、凭证授权和外部业务决策。
+
+## Task-scoped Capability 执行
+
+`bdd`、`tdd`、`implementer`、`reviewer`、`verifier` 和 `releaser` 共享一个任务级执行入口：
+
+```bash
+python -m attestflow capability run reviewer TASK-0001 --command "your-reviewer-cli"
+```
+
+执行规则：
+
+- 加载 runtime task JSON
+- 构造 capability input，包含 task、project、commands、capability contract 和固定 instructions
+- 调用 `--command` 或 `capabilities.<name>.command`
+- 保存 `input.json`、`stdout.log`、`stderr.log` 和 `output.json`
+- provider 非零退出或 stdout 不是 JSON object 时失败
+- 成功后把 `output.json` 的相对路径写入 `task.evidence.capabilities.<name>`
+
+这一步让内部 skills 不再只是文档合同，而是有统一执行、证据和任务回写机制。
 
 ## 任务存储
 
