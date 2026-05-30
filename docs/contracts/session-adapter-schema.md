@@ -30,6 +30,14 @@ sessions:
 | `claude-code` | `claude` | `claude -p --output-format json` |
 | `opencode` | `opencode` | `opencode run --format json` |
 
+初始化新项目时可以直接写入 preset：
+
+```bash
+python -m attestflow init --agent-provider codex
+python -m attestflow init --agent-provider claude-code
+python -m attestflow init --agent-provider opencode
+```
+
 可用 `provider_options` 覆盖底层 CLI：
 
 ```yaml

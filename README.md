@@ -11,16 +11,24 @@ Attestflow 的目标是把需求收敛、AI 任务拆解、BDD、单元测试、
 发布到 GitHub 后，新项目可以用一条命令安装并初始化：
 
 ```bash
-python3 -m pip install --user git+https://github.com/neaomiao/attestflow.git && python3 -m attestflow init --path . --adapter generic
+python3 -m pip install --user git+https://github.com/neaomiao/attestflow.git && python3 -m attestflow init --path . --agent-provider codex
 ```
 
 如果已经在本地 clone 了本仓库：
 
 ```bash
-python3 -m attestflow init --path /path/to/project --adapter generic
+python3 -m attestflow init --path /path/to/project --agent-provider codex
 ```
 
 该命令会生成 `harness.yml`、任务状态目录、DoR/DoD、Agent 角色、GitHub Actions 模板和示例 `TASK-0001`。
+
+`--agent-provider` 支持 `command`、`codex`、`claude-code`、`opencode`。如果本机 CLI 不在 `PATH`，可以用 `--agent-command /absolute/path/to/agent` 写入 provider preset。初始化后运行：
+
+```bash
+python3 -m attestflow doctor
+```
+
+`doctor` 会检查配置、runtime 目录、任务 schema，以及内置 provider CLI 是否存在；它不会启动真实 Agent，也不会做登录授权动作。
 
 ## AI-first 任务生成
 
@@ -65,6 +73,7 @@ python3 -m attestflow verify
 
 ```bash
 python3 -m attestflow validate-config
+python3 -m attestflow doctor
 python3 -m attestflow validate-task harness/tasks/ready/TASK-0001-example.json
 python3 -m attestflow capability list
 python3 -m attestflow capability show planner
@@ -102,6 +111,7 @@ python3 -m attestflow secret-scan
 
 - 受限 YAML 子集读写
 - `harness.yml` 校验
+- `init --agent-provider codex|claude-code|opencode` 写入内置 provider preset；`doctor` 检查配置、runtime 目录、任务 schema 和 provider CLI 可用性
 - 内置 capability registry：intake、planner、bdd、tdd、implementer、reviewer、verifier、releaser
 - `plan` programming agent provider：调用任意编程 Agent 命令，保存 capability 输入/输出证据并导入 runtime task JSON
 - `capability run` task programming agent provider：对单个任务执行 `bdd`、`tdd`、`implementer`、`reviewer`、`verifier` 或 `releaser`，校验 capability output schema，保存 evidence 并写回任务证据索引
@@ -123,4 +133,4 @@ python3 -m attestflow secret-scan
 - 保守 secret scan
 - 可安装包内置 base 模板和 planner 输出示例
 
-后续重点是 CI provider 抽象、更完整的多 Agent 调度，以及安装器把 provider preset 写入目标项目配置。
+后续重点是 capability provider command 自动接线、CI provider 抽象和更完整的多 Agent 调度。

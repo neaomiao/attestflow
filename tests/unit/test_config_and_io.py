@@ -1,9 +1,12 @@
+from contextlib import redirect_stderr
+import io
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
 
-from attestflow.cli import cmd_init
+import attestflow.cli as cli
+from attestflow.cli import cmd_doctor, cmd_init
 from attestflow.config import load_config, validate_config
 from attestflow.io import dump_data, load_data
 from attestflow.runner import run_verification
@@ -52,7 +55,7 @@ policies:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
 
-            exit_code = cmd_init(SimpleNamespace(path=str(root), adapter="generic"))
+            exit_code = cmd_init(SimpleNamespace(path=str(root), adapter="generic", agent_provider="command", agent_command=None))
             config = load_data(root / "harness.yml")
 
             self.assertEqual(exit_code, 0)
@@ -61,6 +64,64 @@ policies:
             self.assertEqual(config["sessions"]["provider_options"], {})
             self.assertNotIn("provider", config["sessions"])
             self.assertEqual(config["capabilities"]["planner"]["agent_provider"], "command")
+
+    def test_init_can_write_builtin_agent_provider_preset(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_codex = root / "fake-codex"
+            fake_codex.write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
+            fake_codex.chmod(0o755)
+
+            exit_code = cmd_init(
+                SimpleNamespace(path=str(root), adapter="generic", agent_provider="codex", agent_command=str(fake_codex))
+            )
+            config = load_data(root / "harness.yml")
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(config["sessions"]["agent_provider"], "codex")
+            self.assertEqual(config["sessions"]["provider_options"]["command"], str(fake_codex))
+            self.assertEqual(config["sessions"]["launch_command"], None)
+            self.assertEqual(config["capabilities"]["planner"]["agent_provider"], "codex")
+            self.assertEqual(config["capabilities"]["reviewer"]["agent_provider"], "codex")
+
+    def test_doctor_checks_initialized_provider_command(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_codex = root / "fake-codex"
+            fake_codex.write_text("#!/usr/bin/env sh\nexit 0\n", encoding="utf-8")
+            fake_codex.chmod(0o755)
+            cmd_init(SimpleNamespace(path=str(root), adapter="generic", agent_provider="codex", agent_command=str(fake_codex)))
+            original_root = cli.ROOT
+            cli.ROOT = root
+            try:
+                exit_code = cmd_doctor(SimpleNamespace())
+            finally:
+                cli.ROOT = original_root
+
+            self.assertEqual(exit_code, 0)
+
+    def test_doctor_rejects_missing_builtin_provider_command(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cmd_init(
+                SimpleNamespace(
+                    path=str(root),
+                    adapter="generic",
+                    agent_provider="codex",
+                    agent_command=str(root / "missing-codex"),
+                )
+            )
+            original_root = cli.ROOT
+            cli.ROOT = root
+            try:
+                error = io.StringIO()
+                with redirect_stderr(error):
+                    exit_code = cmd_doctor(SimpleNamespace())
+            finally:
+                cli.ROOT = original_root
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("session provider command not found", error.getvalue())
 
     def test_validate_config_rejects_invalid_session_fields(self) -> None:
         config = {

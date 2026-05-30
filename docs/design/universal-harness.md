@@ -403,7 +403,7 @@ Definition of Done 判断任务能否关闭：
 稳定 CLI 表面：
 
 ```bash
-python -m attestflow init
+python -m attestflow init --agent-provider codex
 python -m attestflow doctor
 python -m attestflow validate-config
 python -m attestflow validate-task TASK
@@ -424,8 +424,8 @@ python -m attestflow secret-scan
 
 命令职责：
 
-- `init`：在目标项目生成模板文件。
-- `doctor`：检查工具、配置和目录一致性。
+- `init`：在目标项目生成模板文件；`--agent-provider codex|claude-code|opencode` 会写入内置 provider preset。
+- `doctor`：检查配置、runtime 目录、任务 schema 和 provider CLI 是否存在；不启动真实 Agent，不处理登录授权。
 - `validate-config`：验证 `harness.yml`。
 - `validate-task`：验证 schema、状态、目录、依赖和门禁。
 - `task import --from-json`：导入编程 Agent 输出的 planner JSON，校验后写入 runtime task JSON。
@@ -538,18 +538,19 @@ python -m attestflow verify
 
 ## 新项目接入流程
 
-1. 运行 `python -m attestflow init --adapter generic`。
-2. 让 Agent 审核生成的 `harness.yml` 和项目命令，只有凭证或业务取舍需要人工确认。
-3. 让编程 Agent 根据目标和仓库上下文输出 planner JSON。
-4. 运行 `python -m attestflow task import --from-json plan.json`。
-5. 用 `python -m attestflow next` 选择下一个 ready 任务。
-6. 运行 `python -m attestflow dispatch TASK-*`，自动创建独立 agent session。
-7. Agent 按 BDD -> unit -> implementation 执行。
-8. 运行 `python -m attestflow transition TASK-* review`。
-9. 运行 `python -m attestflow verify --task TASK-*`，把验证结果绑定到当前 run。
-10. 运行 `python -m attestflow transition TASK-* verified` 和 `python -m attestflow transition TASK-* accepted`。
-11. 运行 `python -m attestflow close TASK-*`。
-12. 重复 `next -> dispatch -> verify --task -> close`。
+1. 运行 `python -m attestflow init --agent-provider codex`，或选择 `claude-code` / `opencode`。
+2. 运行 `python -m attestflow doctor`，确认配置、目录和 provider CLI 可用。
+3. 让 Agent 审核生成的 `harness.yml` 和项目命令，只有凭证或业务取舍需要人工确认。
+4. 让编程 Agent 根据目标和仓库上下文输出 planner JSON。
+5. 运行 `python -m attestflow task import --from-json plan.json`。
+6. 用 `python -m attestflow next` 选择下一个 ready 任务。
+7. 运行 `python -m attestflow dispatch TASK-*`，自动创建独立 agent session。
+8. Agent 按 BDD -> unit -> implementation 执行。
+9. 运行 `python -m attestflow transition TASK-* review`。
+10. 运行 `python -m attestflow verify --task TASK-*`，把验证结果绑定到当前 run。
+11. 运行 `python -m attestflow transition TASK-* verified` 和 `python -m attestflow transition TASK-* accepted`。
+12. 运行 `python -m attestflow close TASK-*`。
+13. 重复 `next -> dispatch -> verify --task -> close`。
 
 ## 验收标准
 

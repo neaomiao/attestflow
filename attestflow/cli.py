@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .capabilities import get_capability, list_capabilities, run_planner_capability, run_task_capability
 from .config import load_config, validate_config
-from .io import load_data
+from .io import dump_data, load_data
 from .planner import import_planner_tasks
 from .resume import resume_summary
 from .runner import run_verification
@@ -39,7 +39,14 @@ def cmd_init(args: argparse.Namespace) -> int:
     if not source.exists():
         print("ERROR: templates/base does not exist", file=sys.stderr)
         return 1
+    agent_provider = getattr(args, "agent_provider", "command") or "command"
+    agent_command = getattr(args, "agent_command", None)
+    provider_commands = _builtin_session_provider_commands()
+    if agent_provider != "command" and agent_provider not in provider_commands:
+        print(f"ERROR: unknown agent provider: {agent_provider}", file=sys.stderr)
+        return 1
     shutil.copytree(source, target, dirs_exist_ok=True)
+    _configure_initialized_agent_provider(target, agent_provider, agent_command)
     for state in TASK_STATES:
         (target / "harness" / "tasks" / state).mkdir(parents=True, exist_ok=True)
     (target / "harness" / "runs").mkdir(parents=True, exist_ok=True)
@@ -51,7 +58,7 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 def cmd_doctor(_: argparse.Namespace) -> int:
     config = load_config(ROOT)
-    errors = validate_config(config)
+    errors = _doctor_errors(ROOT, config)
     if errors:
         for error in errors:
             print(f"ERROR: {error}", file=sys.stderr)
@@ -68,6 +75,88 @@ def cmd_validate_config(_: argparse.Namespace) -> int:
         return 1
     print("config validation passed")
     return 0
+
+
+def _configure_initialized_agent_provider(target: Path, agent_provider: str, agent_command: str | None) -> None:
+    config_path = target / "harness.yml"
+    config = load_data(config_path)
+    sessions = config.get("sessions", {})
+    if isinstance(sessions, dict):
+        sessions["agent_provider"] = agent_provider
+        sessions["launch_command"] = None
+        sessions["resume_command"] = None
+        provider_options = sessions.get("provider_options", {})
+        provider_options = provider_options if isinstance(provider_options, dict) else {}
+        if agent_command:
+            provider_options["command"] = str(agent_command)
+        elif agent_provider == "command":
+            provider_options = {}
+        sessions["provider_options"] = provider_options
+        config["sessions"] = sessions
+
+    capabilities = config.get("capabilities", {})
+    if isinstance(capabilities, dict):
+        for capability in capabilities.values():
+            if isinstance(capability, dict):
+                capability["agent_provider"] = agent_provider
+    dump_data(config, config_path)
+
+
+def _doctor_errors(root: Path, config: dict) -> list[str]:
+    errors = validate_config(config)
+    errors.extend(_doctor_provider_errors(config))
+    if (root / "harness.yml").exists():
+        errors.extend(_doctor_runtime_layout_errors(root, config))
+    return errors
+
+
+def _doctor_provider_errors(config: dict) -> list[str]:
+    sessions = config.get("sessions", {})
+    if not isinstance(sessions, dict):
+        return []
+    agent_provider = str(sessions.get("agent_provider", "command"))
+    provider_commands = _builtin_session_provider_commands()
+    if agent_provider not in provider_commands:
+        return []
+    provider_options = sessions.get("provider_options", {})
+    command = None
+    if isinstance(provider_options, dict):
+        command = provider_options.get("command")
+    command = str(command or provider_commands[agent_provider])
+    if not _command_exists(command):
+        return [f"session provider command not found for {agent_provider}: {command}"]
+    return []
+
+
+def _doctor_runtime_layout_errors(root: Path, config: dict) -> list[str]:
+    errors: list[str] = []
+    paths = config.get("paths", {}) if isinstance(config.get("paths"), dict) else {}
+    task_root = root / str(paths.get("tasks", "harness/tasks"))
+    for state in TASK_STATES:
+        if not (task_root / state).is_dir():
+            errors.append(f"missing task state directory: {task_root / state}")
+    for key, default in (("runs", "harness/runs"), ("locks", "harness/locks"), ("capability_runs", "harness/capability-runs")):
+        path = root / str(paths.get(key, default))
+        if not path.is_dir():
+            errors.append(f"missing {key} directory: {path}")
+    if task_root.exists():
+        for path in sorted(task_root.glob("*/*.json")):
+            try:
+                task = load_data(path)
+            except ValueError as exc:
+                errors.append(str(exc))
+                continue
+            for error in validate_task(task, directory_state=path.parent.name):
+                errors.append(f"{path}: {error}")
+    return errors
+
+
+def _builtin_session_provider_commands() -> dict[str, str]:
+    return {provider["name"]: provider["command"] for provider in list_session_providers()}
+
+
+def _command_exists(command: str) -> bool:
+    return bool(shutil.which(command) or Path(command).exists())
 
 
 def cmd_validate_task(args: argparse.Namespace) -> int:
@@ -297,6 +386,8 @@ def build_parser() -> argparse.ArgumentParser:
     init = subparsers.add_parser("init")
     init.add_argument("--path", default=".")
     init.add_argument("--adapter", default="generic")
+    init.add_argument("--agent-provider", choices=["command", *sorted(_builtin_session_provider_commands())], default="command")
+    init.add_argument("--agent-command")
     init.set_defaults(func=cmd_init)
 
     subparsers.add_parser("doctor").set_defaults(func=cmd_doctor)
