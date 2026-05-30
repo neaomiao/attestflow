@@ -54,6 +54,7 @@ harness/
     contracts/
       task-schema.md
       evidence-schema.md
+      ci-provider-schema.md
   attestflow/
     __init__.py
     __main__.py
@@ -64,6 +65,8 @@ harness/
     planner.py
     gates.py
     evidence.py
+    ci.py
+    ci_adapters.py
     sessions.py
     runner.py
     locks.py
@@ -103,6 +106,7 @@ paths:
   gates: harness/gates
   locks: harness/locks
   capability_runs: harness/capability-runs
+  ci_runs: harness/ci-runs
   docs: docs
 
 commands:
@@ -166,6 +170,7 @@ context:
     - pyproject.toml
     - package.json
     - docs/contracts/capability-schema.md
+    - docs/contracts/ci-provider-schema.md
     - docs/contracts/planner-output-schema.md
     - docs/contracts/session-adapter-schema.md
     - docs/contracts/task-schema.md
@@ -224,7 +229,7 @@ Provider input 包含 `repository_context`，由 Attestflow 确定性生成：
 - `files`：任务 `files.read` / `files.write` 指向的文本片段
 - `limits`：实际使用的上下文限制
 
-默认排除 `.git`、`node_modules`、`__pycache__`、`harness/runs` 和 `harness/capability-runs`，避免把运行证据、缓存和依赖目录传给编程 Agent。
+默认排除 `.git`、`node_modules`、`__pycache__`、`harness/runs`、`harness/capability-runs` 和 `harness/ci-runs`，避免把运行证据、缓存和依赖目录传给编程 Agent。
 
 ## 每任务独立会话
 
@@ -417,6 +422,8 @@ python -m attestflow unblock TASK --blocker BLK --resolution RESOLUTION
 python -m attestflow evidence TASK
 python -m attestflow verify
 python -m attestflow verify --task TASK
+python -m attestflow ci providers
+python -m attestflow ci status
 python -m attestflow close TASK
 python -m attestflow resume
 python -m attestflow secret-scan
@@ -438,9 +445,21 @@ python -m attestflow secret-scan
 - `evidence`：写入或验证 evidence packet。
 - `verify`：执行配置的质量门禁，用于临时或 CI 验证。
 - `verify --task`：执行配置的质量门禁，并把命令结果写入当前 task run。
+- `ci providers`：列出内置 CI provider preset。
+- `ci status`：执行 CI provider contract，保存外部 CI 状态 evidence。
 - `close`：校验当前 run 的 DoD evidence，释放锁，写最终证据并移动到 `done`。
 - `resume`：读取未完成 run，输出下一步动作。
 - `secret-scan`：扫描已跟踪或项目文件中的明显密钥。
+
+## CI Provider
+
+CI provider 和编程 Agent provider 一样走 contract，不把 GitHub Actions、Buildkite 或自建 CI 写进 core：
+
+```text
+CI system -> provider command -> CI output JSON -> harness/ci-runs evidence
+```
+
+`integrations.ci_provider.provider: command` 调用项目配置的任意命令；`provider: github-actions` 使用内置 adapter 调用 `gh run list` 并映射到统一 `status`。`ci status` 只采集外部 CI 状态快照，不替代本地 `verify --task` 的 DoD evidence；release gate 可以同时引用本地 run evidence 和 CI evidence。
 
 ## Run Ledger
 
@@ -465,6 +484,12 @@ harness/runs/
       typecheck.log
       secret_scan.log
       project_verify.log
+harness/ci-runs/
+  ci-2026-05-29T20-00-00Z/
+    input.json
+    stdout.log
+    stderr.log
+    output.json
 ```
 
 `ledger.jsonl` 只追加，不重写。`resume` 必须能回答：
@@ -549,8 +574,9 @@ python -m attestflow verify
 9. 运行 `python -m attestflow transition TASK-* review`。
 10. 运行 `python -m attestflow verify --task TASK-*`，把验证结果绑定到当前 run。
 11. 运行 `python -m attestflow transition TASK-* verified` 和 `python -m attestflow transition TASK-* accepted`。
-12. 运行 `python -m attestflow close TASK-*`。
-13. 重复 `next -> dispatch -> verify --task -> close`。
+12. 如配置了外部 CI，运行 `python -m attestflow ci status` 保存 CI evidence。
+13. 运行 `python -m attestflow close TASK-*`。
+14. 重复 `next -> dispatch -> verify --task -> close`。
 
 ## 验收标准
 

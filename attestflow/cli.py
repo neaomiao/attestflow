@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from .capabilities import get_capability, list_capabilities, run_planner_capability, run_task_capability
+from .ci import BUILTIN_CI_PROVIDERS, list_ci_providers, run_ci_status
 from .config import load_config, validate_config
 from .io import dump_data, load_data
 from .planner import import_planner_tasks
@@ -63,6 +64,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         (target / "harness" / "tasks" / state).mkdir(parents=True, exist_ok=True)
     (target / "harness" / "runs").mkdir(parents=True, exist_ok=True)
     (target / "harness" / "capability-runs").mkdir(parents=True, exist_ok=True)
+    (target / "harness" / "ci-runs").mkdir(parents=True, exist_ok=True)
     (target / "harness" / "locks").mkdir(parents=True, exist_ok=True)
     print(f"initialized attestflow harness in {target}")
     return 0
@@ -117,6 +119,7 @@ def _configure_initialized_agent_provider(target: Path, agent_provider: str, age
 def _doctor_errors(root: Path, config: dict) -> list[str]:
     errors = validate_config(config)
     errors.extend(_doctor_provider_errors(root, config))
+    errors.extend(_doctor_ci_provider_errors(config))
     if (root / "harness.yml").exists():
         errors.extend(_doctor_runtime_layout_errors(root, config))
     return errors
@@ -254,7 +257,12 @@ def _doctor_runtime_layout_errors(root: Path, config: dict) -> list[str]:
     for state in TASK_STATES:
         if not (task_root / state).is_dir():
             errors.append(f"missing task state directory: {task_root / state}")
-    for key, default in (("runs", "harness/runs"), ("locks", "harness/locks"), ("capability_runs", "harness/capability-runs")):
+    for key, default in (
+        ("runs", "harness/runs"),
+        ("locks", "harness/locks"),
+        ("capability_runs", "harness/capability-runs"),
+        ("ci_runs", "harness/ci-runs"),
+    ):
         path = root / str(paths.get(key, default))
         if not path.is_dir():
             errors.append(f"missing {key} directory: {path}")
@@ -276,6 +284,38 @@ def _builtin_session_provider_commands() -> dict[str, str]:
 
 def _command_exists(command: str) -> bool:
     return bool(shutil.which(command) or Path(command).exists())
+
+
+def _doctor_ci_provider_errors(config: dict) -> list[str]:
+    ci_provider = _ci_provider_config(config)
+    if not ci_provider:
+        return []
+    provider = str(ci_provider.get("provider", "command"))
+    command = ci_provider.get("command")
+    if not command and provider in BUILTIN_CI_PROVIDERS:
+        provider_options = ci_provider.get("provider_options", {})
+        if isinstance(provider_options, dict):
+            command = provider_options.get("command")
+        command = command or BUILTIN_CI_PROVIDERS[provider]["command"]
+    if not command:
+        return [f"CI provider command must be configured for {provider}"]
+    if not _shell_command_exists(str(command)):
+        return [f"CI provider command not found for {provider}: {command}"]
+    return []
+
+
+def _ci_provider_config(config: dict) -> dict:
+    integrations = config.get("integrations", {})
+    ci_provider = integrations.get("ci_provider", {}) if isinstance(integrations, dict) else {}
+    return ci_provider if isinstance(ci_provider, dict) else {}
+
+
+def _shell_command_exists(command: str) -> bool:
+    try:
+        executable = shlex.split(command)[0]
+    except (ValueError, IndexError):
+        return False
+    return bool(shutil.which(executable) or Path(executable).exists())
 
 
 def cmd_validate_task(args: argparse.Namespace) -> int:
@@ -416,6 +456,22 @@ def cmd_session_resume(args: argparse.Namespace) -> int:
 
 def cmd_provider_list(_: argparse.Namespace) -> int:
     for provider in list_session_providers():
+        print(f"{provider['name']}\t{provider['command']}\t{provider['description']}")
+    return 0
+
+
+def cmd_ci_status(args: argparse.Namespace) -> int:
+    try:
+        result = run_ci_status(ROOT, load_config(ROOT), command=args.command)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    print(f"ci {result.status}: {result.run_path}")
+    return 0
+
+
+def cmd_ci_provider_list(_: argparse.Namespace) -> int:
+    for provider in list_ci_providers():
         print(f"{provider['name']}\t{provider['command']}\t{provider['description']}")
     return 0
 
@@ -566,6 +622,13 @@ def build_parser() -> argparse.ArgumentParser:
     provider = subparsers.add_parser("provider")
     provider_subparsers = provider.add_subparsers(dest="provider_command", required=True)
     provider_subparsers.add_parser("list").set_defaults(func=cmd_provider_list)
+
+    ci = subparsers.add_parser("ci")
+    ci_subparsers = ci.add_subparsers(dest="ci_command", required=True)
+    ci_status = ci_subparsers.add_parser("status")
+    ci_status.add_argument("--command")
+    ci_status.set_defaults(func=cmd_ci_status)
+    ci_subparsers.add_parser("providers").set_defaults(func=cmd_ci_provider_list)
 
     subparsers.add_parser("secret-scan").set_defaults(func=cmd_secret_scan)
     verify = subparsers.add_parser("verify")

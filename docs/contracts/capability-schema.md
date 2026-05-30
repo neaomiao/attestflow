@@ -170,7 +170,7 @@ Capability input 的 `repository_context` 由 Attestflow 确定性生成：
 - `documents` 来自 `context.documents`。
 - `files` 来自 task `files.read` / `files.write` 和 `context.focus_files`。
 - 二进制文件会被跳过。
-- `.git`、`node_modules`、`__pycache__`、`harness/runs`、`harness/capability-runs` 默认排除。
+- `.git`、`node_modules`、`__pycache__`、`harness/runs`、`harness/capability-runs`、`harness/ci-runs` 默认排除。
 - provider 不应自行递归扫描仓库；需要更多上下文时应通过 capability output 声明缺口。
 
 ## 非目标

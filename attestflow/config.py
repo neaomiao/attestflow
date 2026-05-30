@@ -15,6 +15,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "gates": "harness/gates",
         "locks": "harness/locks",
         "capability_runs": "harness/capability-runs",
+        "ci_runs": "harness/ci-runs",
         "docs": "docs",
     },
     "commands": {
@@ -65,11 +66,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "pyproject.toml",
             "package.json",
             "docs/contracts/capability-schema.md",
+            "docs/contracts/ci-provider-schema.md",
             "docs/contracts/planner-output-schema.md",
             "docs/contracts/session-adapter-schema.md",
             "docs/contracts/task-schema.md",
             "docs/design/universal-harness.md",
         ],
+    },
+    "integrations": {
+        "git_provider": "optional",
+        "ci_provider": "optional",
     },
 }
 
@@ -96,6 +102,9 @@ def validate_config(config: dict[str, Any]) -> list[str]:
     for key in ("tasks", "runs"):
         if not isinstance(config.get("paths", {}).get(key), str):
             errors.append(f"paths.{key} must be a string")
+    ci_runs = config.get("paths", {}).get("ci_runs")
+    if ci_runs is not None and not isinstance(ci_runs, str):
+        errors.append("paths.ci_runs must be a string")
     sessions = config.get("sessions", {})
     if sessions is not None and not isinstance(sessions, dict):
         errors.append("sessions must be a mapping")
@@ -142,6 +151,24 @@ def validate_config(config: dict[str, Any]) -> list[str]:
             value = context.get(key)
             if value is not None and not _is_string_or_string_list(value):
                 errors.append(f"context.{key} must be a string or list of strings")
+    integrations = config.get("integrations", {})
+    if integrations is not None and not isinstance(integrations, dict):
+        errors.append("integrations must be a mapping")
+    elif isinstance(integrations, dict):
+        ci_provider = integrations.get("ci_provider")
+        if ci_provider is not None and ci_provider != "optional":
+            if not isinstance(ci_provider, dict):
+                errors.append("integrations.ci_provider must be a mapping or optional")
+            else:
+                provider = ci_provider.get("provider")
+                if provider is not None and not isinstance(provider, str):
+                    errors.append("integrations.ci_provider.provider must be a string")
+                command = ci_provider.get("command")
+                if command is not None and not isinstance(command, str):
+                    errors.append("integrations.ci_provider.command must be a string or null")
+                provider_options = ci_provider.get("provider_options")
+                if provider_options is not None and not isinstance(provider_options, dict):
+                    errors.append("integrations.ci_provider.provider_options must be a mapping")
     return errors
 
 

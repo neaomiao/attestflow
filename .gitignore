@@ -11,5 +11,6 @@ build/
 
 # Attestflow runtime artifacts
 harness/runs/
+harness/capability-runs/
+harness/ci-runs/
 harness/locks/
-

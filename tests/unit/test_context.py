@@ -29,15 +29,18 @@ class RepositoryContextTests(unittest.TestCase):
             root = Path(tmp)
             (root / "harness" / "runs" / "run-1").mkdir(parents=True)
             (root / "harness" / "runs" / "run-1" / "metadata.yml").write_text("secret: no\n", encoding="utf-8")
+            (root / "harness" / "ci-runs" / "ci-1").mkdir(parents=True)
+            (root / "harness" / "ci-runs" / "ci-1" / "output.json").write_text('{"status":"passed"}\n', encoding="utf-8")
             (root / "asset.bin").write_bytes(b"\x00\x01binary")
 
             context = collect_repository_context(
                 root,
                 {"context": {"documents": ["asset.bin"], "max_tree_entries": 20, "max_file_bytes": 100}},
-                focus_files=["harness/runs/run-1/metadata.yml", "asset.bin"],
+                focus_files=["harness/runs/run-1/metadata.yml", "harness/ci-runs/ci-1/output.json", "asset.bin"],
             )
 
             self.assertNotIn("harness/runs/run-1/metadata.yml", context["tree"])
+            self.assertNotIn("harness/ci-runs/ci-1/output.json", context["tree"])
             self.assertEqual(context["documents"], [])
             self.assertEqual(context["files"], [])
 

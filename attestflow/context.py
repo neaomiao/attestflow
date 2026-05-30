@@ -22,6 +22,7 @@ DEFAULT_DOCUMENTS = [
     "pyproject.toml",
     "package.json",
     "docs/contracts/capability-schema.md",
+    "docs/contracts/ci-provider-schema.md",
     "docs/contracts/planner-output-schema.md",
     "docs/contracts/session-adapter-schema.md",
     "docs/contracts/task-schema.md",
@@ -163,6 +164,6 @@ def _excluded(rel_path: str) -> bool:
     parts = set(Path(rel_path).parts)
     if parts & DEFAULT_EXCLUDES:
         return True
-    return rel_path in {"harness/runs", "harness/capability-runs"} or rel_path.startswith(
-        ("harness/runs/", "harness/capability-runs/")
+    return rel_path in {"harness/runs", "harness/capability-runs", "harness/ci-runs"} or rel_path.startswith(
+        ("harness/runs/", "harness/capability-runs/", "harness/ci-runs/")
     )

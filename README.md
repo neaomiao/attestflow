@@ -56,7 +56,7 @@ python3 -m attestflow plan "实现登录功能"
 
 Attestflow 的内置 capabilities 借鉴 Superpowers 的强制技能流程和 gstack 的专业角色分工，但不依赖它们。外部 skill、编程 Agent CLI 或 API wrapper 只是可选 agent provider；稳定接口是 Attestflow 自己的 capability contract。
 
-Provider input 会自动带上受控仓库上下文：文件树、核心文档片段，以及任务 `files.read` / `files.write` 指向的文本片段。`harness/runs`、`harness/capability-runs`、`.git`、`node_modules` 等目录默认排除，避免把运行证据和噪音回灌给 Agent。
+Provider input 会自动带上受控仓库上下文：文件树、核心文档片段，以及任务 `files.read` / `files.write` 指向的文本片段。`harness/runs`、`harness/capability-runs`、`harness/ci-runs`、`.git`、`node_modules` 等目录默认排除，避免把运行证据和噪音回灌给 Agent。
 
 ## 本地验证
 
@@ -90,6 +90,8 @@ python3 -m attestflow evidence TASK-0001
 python3 -m attestflow resume
 python3 -m attestflow session resume TASK-0001
 python3 -m attestflow provider list
+python3 -m attestflow ci providers
+python3 -m attestflow ci status
 python3 -m attestflow secret-scan
 ```
 
@@ -100,6 +102,8 @@ python3 -m attestflow secret-scan
 `sessions.launch_command` / `sessions.resume_command` 是编程 Agent 适配点。命令从 stdin 读取 JSON，向 stdout 返回 JSON；Attestflow 会保存 `session-adapter-input.json`、`session-adapter-output.json`、stdout/stderr logs，并用 `attestflow session resume TASK-*` 恢复对应会话。
 
 如果 `sessions.agent_provider` 设为 `codex`、`claude-code` 或 `opencode`，且没有显式配置 `launch_command`，Attestflow 会自动使用内置 provider preset。`provider_options.command`、`provider_options.launch_args`、`provider_options.resume_args`、`provider_options.doctor_args` 和 `provider_options.doctor_failure_patterns` 可以覆盖底层 CLI 命令、运行参数和 preflight 规则；离线环境可设 `provider_options.doctor_enabled: false` 跳过 provider preflight。
+
+`integrations.ci_provider` 是 CI provider 适配点。`provider: command` 会调用任意输出统一 CI JSON 的命令；`provider: github-actions` 会使用内置 adapter 调用 `gh run list`，并把结果保存到 `harness/ci-runs/ci-*/`。
 
 ## 当前能力
 
@@ -119,6 +123,7 @@ python3 -m attestflow secret-scan
 - `dispatch` 自动创建每任务独立 agent session、prompt packet、锁和 run evidence，并可调用编程 Agent session adapter
 - `session resume` 通过同一 session adapter 合同恢复外部编程 Agent 会话
 - 内置 session provider preset：Codex、Claude Code、OpenCode
+- CI provider contract：`ci status` 保存外部 CI 状态 evidence；内置 GitHub Actions preset
 - `start` 低层状态推进入口，也会创建 session packet
 - 结构化 blocker 协议：`blockers[]` 记录 reason、unblock condition、owner、source；`block` / `unblock` 推进阻塞生命周期
 - session adapter 或 capability output 返回 `blocked` 时，自动把任务移入 `blocked` 并写入 active blocker
@@ -130,4 +135,4 @@ python3 -m attestflow secret-scan
 - 保守 secret scan
 - 可安装包内置 base 模板和 planner 输出示例
 
-后续重点是 CI provider 抽象、更完整的多 Agent 调度，以及可安装包的端到端接入体验。
+后续重点是更完整的多 Agent 调度，以及可安装包的端到端接入体验。

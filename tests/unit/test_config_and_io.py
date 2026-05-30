@@ -242,6 +242,25 @@ sys.exit(0)
             self.assertEqual(exit_code, 1)
             self.assertIn("session provider command not found", error.getvalue())
 
+    def test_doctor_rejects_missing_ci_provider_command(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cmd_init(SimpleNamespace(path=str(root), adapter="generic", agent_provider="command", agent_command=None))
+            config = load_data(root / "harness.yml")
+            config["integrations"]["ci_provider"] = {"provider": "command", "command": str(root / "missing-ci")}
+            dump_data(config, root / "harness.yml")
+            original_root = cli.ROOT
+            cli.ROOT = root
+            try:
+                error = io.StringIO()
+                with redirect_stderr(error):
+                    exit_code = cmd_doctor(SimpleNamespace())
+            finally:
+                cli.ROOT = original_root
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("CI provider command not found", error.getvalue())
+
     def test_validate_config_rejects_invalid_session_fields(self) -> None:
         config = {
             "schema_version": 1,
@@ -289,6 +308,29 @@ sys.exit(0)
         self.assertIn("context.max_file_bytes must be a positive integer", errors)
         self.assertIn("context.documents must be a string or list of strings", errors)
         self.assertIn("context.focus_files must be a string or list of strings", errors)
+
+    def test_validate_config_rejects_invalid_ci_provider_fields(self) -> None:
+        config = {
+            "schema_version": 1,
+            "project": {"name": "demo"},
+            "paths": {"tasks": "harness/tasks", "runs": "harness/runs", "ci_runs": 123},
+            "commands": {},
+            "policies": {},
+            "integrations": {
+                "ci_provider": {
+                    "provider": ["github-actions"],
+                    "command": False,
+                    "provider_options": [],
+                }
+            },
+        }
+
+        errors = validate_config(config)
+
+        self.assertIn("paths.ci_runs must be a string", errors)
+        self.assertIn("integrations.ci_provider.provider must be a string", errors)
+        self.assertIn("integrations.ci_provider.command must be a string or null", errors)
+        self.assertIn("integrations.ci_provider.provider_options must be a mapping", errors)
 
     def test_run_verification_uses_configured_commands_and_skips_nulls(self) -> None:
         with TemporaryDirectory() as tmp:

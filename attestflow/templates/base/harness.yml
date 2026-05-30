@@ -8,6 +8,7 @@ paths:
   gates: harness/gates
   locks: harness/locks
   capability_runs: harness/capability-runs
+  ci_runs: harness/ci-runs
   docs: docs
 commands:
   bdd: python -m unittest discover -s tests/bdd
@@ -66,6 +67,7 @@ context:
     - pyproject.toml
     - package.json
     - docs/contracts/capability-schema.md
+    - docs/contracts/ci-provider-schema.md
     - docs/contracts/planner-output-schema.md
     - docs/contracts/session-adapter-schema.md
     - docs/contracts/task-schema.md
