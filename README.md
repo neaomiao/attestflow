@@ -79,6 +79,7 @@ python3 -m attestflow task import --from-json plan.json
 python3 -m attestflow tasks
 python3 -m attestflow next
 python3 -m attestflow dispatch TASK-0001
+python3 -m attestflow dispatch --limit 3
 python3 -m attestflow transition TASK-0001 review
 python3 -m attestflow verify --task TASK-0001
 python3 -m attestflow transition TASK-0001 verified
@@ -97,7 +98,7 @@ python3 -m attestflow secret-scan
 
 接入后先让编程 Agent 审核 `harness.yml` 和项目命令，再生成 planner JSON 并导入任务。只有凭证、业务取舍和不可自动判断的外部决策需要人工确认。任务进入开发前必须满足 `ready` 门禁；完成前必须有当前 run 的 evidence。
 
-`dispatch` 是 AI-first 执行入口。它会把 `ready` 任务移到 `in_progress`，创建 run、locks、独立 agent session、`prompt.md` 和 `session.yml`。如果 `harness.yml` 配置了 `sessions.launch_command`，Attestflow 会按 `docs/contracts/session-adapter-schema.md` 执行 command adapter 来启动真实外部 AI 会话；否则会生成可恢复的 session packet，等待接入层消费。
+`dispatch` 是 AI-first 执行入口。它会把 `ready` 任务移到 `in_progress`，创建 run、locks、独立 agent session、`prompt.md` 和 `session.yml`。`dispatch --limit N` 会按依赖、现有锁和同批次 `files.write` 冲突自动挑选可并行任务。如果 `harness.yml` 配置了 `sessions.launch_command`，Attestflow 会按 `docs/contracts/session-adapter-schema.md` 执行 command adapter 来启动真实外部 AI 会话；否则会生成可恢复的 session packet，等待接入层消费。
 
 `sessions.launch_command` / `sessions.resume_command` 是编程 Agent 适配点。命令从 stdin 读取 JSON，向 stdout 返回 JSON；Attestflow 会保存 `session-adapter-input.json`、`session-adapter-output.json`、stdout/stderr logs，并用 `attestflow session resume TASK-*` 恢复对应会话。
 
@@ -119,8 +120,8 @@ python3 -m attestflow secret-scan
 - 自动仓库上下文：收集文件树、核心文档和任务 focus files，写入 capability provider input
 - AI planner JSON 导入为 runtime task JSON
 - task schema 校验
-- `next` 调度
-- `dispatch` 自动创建每任务独立 agent session、prompt packet、锁和 run evidence，并可调用编程 Agent session adapter
+- `next` 调度单个最高优先级任务
+- `dispatch --limit N` 批量调度依赖已满足、写范围不冲突且未被锁定的 ready 任务；每个任务自动创建独立 agent session、prompt packet、锁和 run evidence，并可调用编程 Agent session adapter
 - `session resume` 通过同一 session adapter 合同恢复外部编程 Agent 会话
 - 内置 session provider preset：Codex、Claude Code、OpenCode
 - CI provider contract：`ci status` 保存外部 CI 状态 evidence；内置 GitHub Actions preset

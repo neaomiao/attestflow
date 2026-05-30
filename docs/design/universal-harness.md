@@ -233,13 +233,13 @@ Provider input 包含 `repository_context`，由 Attestflow 确定性生成：
 
 ## 每任务独立会话
 
-`dispatch TASK` 是 AI-first 执行入口：
+`dispatch TASK` 是 AI-first 执行入口；`dispatch --limit N` 是批量入口：
 
 ```text
 ready task -> dispatch -> run -> agent_session -> prompt packet -> external AI session
 ```
 
-Dispatch 必须原子完成：
+单个 task dispatch 必须原子完成：
 
 - 校验 task 处于 `ready`
 - 创建 task/file locks
@@ -254,6 +254,16 @@ Dispatch 必须原子完成：
 核心不绑定 Codex、Claude Code、OpenCode 或其他平台。项目可以用 `sessions.launch_command` / `sessions.resume_command` 适配任意编程 Agent CLI。没有配置启动命令时，dispatch 至少生成独立 session packet；接入层可以读取 packet 后启动会话。
 
 当 `sessions.agent_provider` 是 `codex`、`claude-code` 或 `opencode` 时，Attestflow 会使用内置 provider preset 生成 adapter command。项目可以通过 `sessions.provider_options.command`、`launch_args`、`resume_args` 覆盖底层 CLI；`doctor_args`、`doctor_timeout_seconds` 和 `doctor_failure_patterns` 覆盖 provider preflight。默认 preflight 不执行项目任务，只检查 provider 是否具备可运行的登录、授权或凭证状态。
+
+批量 dispatch 不依赖人工挑任务。Attestflow 先按 `priority, id` 排序，再选择满足以下条件的 ready 任务：
+
+- 依赖已 `done` 或 `archived`
+- task schema 和 ready 门禁有效
+- 没有 active blocker 或外部输入缺口
+- `files.write` 未被现有 lock 占用
+- 和本批次已选任务的 `files.write` 没有重叠
+
+每个被选任务仍然单独创建 run、locks、session packet 和 evidence；如果某个 session 启动失败，CLI 返回非零并保留已写入 evidence。
 
 ## AI Planning 和任务落盘
 
@@ -416,6 +426,7 @@ python -m attestflow task import --from-json PLAN.json
 python -m attestflow tasks
 python -m attestflow next
 python -m attestflow dispatch TASK
+python -m attestflow dispatch --limit 3
 python -m attestflow start TASK
 python -m attestflow block TASK --reason REASON
 python -m attestflow unblock TASK --blocker BLK --resolution RESOLUTION
@@ -439,6 +450,7 @@ python -m attestflow secret-scan
 - `tasks`：按状态和优先级列出任务。
 - `next`：返回最高优先级、依赖已完成、文件未锁定的 `ready` 任务。
 - `dispatch`：AI-first 执行入口，创建 run、locks、独立 agent session、prompt packet，并按配置启动外部 AI 会话。
+- `dispatch --limit N`：批量选择依赖满足、写范围不冲突且未被锁定的 ready 任务，并逐个创建独立 session。
 - `start`：低层生命周期入口，仍会创建 session packet，保留给脚本和兼容场景。
 - `block`：写入结构化 active blocker，记录 reason / unblock condition / owner / source，并移动到 `blocked`。
 - `unblock`：解决指定 blocker；没有 active blocker 后把任务转回 `ready`。
@@ -569,7 +581,7 @@ python -m attestflow verify
 4. 让编程 Agent 根据目标和仓库上下文输出 planner JSON。
 5. 运行 `python -m attestflow task import --from-json plan.json`。
 6. 用 `python -m attestflow next` 选择下一个 ready 任务。
-7. 运行 `python -m attestflow dispatch TASK-*`，自动创建独立 agent session。
+7. 运行 `python -m attestflow dispatch TASK-*`，或用 `python -m attestflow dispatch --limit N` 自动创建多个互不冲突的独立 agent session。
 8. Agent 按 BDD -> unit -> implementation 执行。
 9. 运行 `python -m attestflow transition TASK-* review`。
 10. 运行 `python -m attestflow verify --task TASK-*`，把验证结果绑定到当前 run。

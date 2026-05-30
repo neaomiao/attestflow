@@ -23,6 +23,7 @@ from .tasks import (
     block_task,
     close_task,
     iter_tasks,
+    select_dispatchable_tasks,
     select_next_task,
     start_task,
     transition_task,
@@ -362,6 +363,28 @@ def cmd_start(args: argparse.Namespace) -> int:
 
 def cmd_dispatch(args: argparse.Namespace) -> int:
     config = load_config(ROOT)
+    if not args.task:
+        if args.limit < 1:
+            print("ERROR: --limit must be at least 1", file=sys.stderr)
+            return 1
+        records = select_dispatchable_tasks(ROOT, config, limit=args.limit)
+        if not records:
+            print("ERROR: no dispatchable tasks", file=sys.stderr)
+            return 1
+        dispatched: list[str] = []
+        for record in records:
+            task_id = str(record.task["id"])
+            run = start_task(ROOT, config, task_id, actor_role=args.actor)
+            session = load_data(run.path / "session.yml")
+            if session.get("status") not in {"prepared", "launched"}:
+                print(f"ERROR: session launch for {task_id} ended with {session.get('status')}", file=sys.stderr)
+                return 1
+            dispatched.append(task_id)
+        print(f"dispatched {len(dispatched)} task(s): {', '.join(dispatched)}")
+        return 0
+    if args.limit != 1:
+        print("ERROR: --limit can only be used without an explicit task", file=sys.stderr)
+        return 1
     run = start_task(ROOT, config, args.task, actor_role=args.actor)
     session = load_data(run.path / "session.yml")
     if session.get("status") not in {"prepared", "launched"}:
@@ -581,8 +604,9 @@ def build_parser() -> argparse.ArgumentParser:
     start.set_defaults(func=cmd_start)
 
     dispatch = subparsers.add_parser("dispatch")
-    dispatch.add_argument("task")
+    dispatch.add_argument("task", nargs="?")
     dispatch.add_argument("--actor", default="orchestrator")
+    dispatch.add_argument("--limit", type=int, default=1)
     dispatch.set_defaults(func=cmd_dispatch)
 
     block = subparsers.add_parser("block")

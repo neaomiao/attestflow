@@ -13,6 +13,7 @@ from attestflow.resume import resume_summary
 from attestflow.tasks import (
     block_task,
     close_task,
+    select_dispatchable_tasks,
     select_next_task,
     start_task,
     transition_task,
@@ -194,6 +195,37 @@ class TaskLifecycleTests(unittest.TestCase):
 
             self.assertIsNotNone(selected)
             self.assertEqual(selected.task["id"], "TASK-0003")
+
+    def test_select_dispatchable_tasks_skips_dependencies_locks_and_batch_write_conflicts(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = DEFAULT_CONFIG.copy()
+            config["root"] = root
+            done = ready_task("TASK-0000", priority=1)
+            done["state"] = "done"
+            write_task(root, "done", "TASK-0000", done)
+            first = ready_task("TASK-0001", priority=1)
+            first["files"]["write"] = ["src/a.py"]
+            second = ready_task("TASK-0002", priority=2)
+            second["dependencies"] = ["TASK-0000"]
+            second["files"]["write"] = ["src/b.py"]
+            same_write_scope = ready_task("TASK-0003", priority=3)
+            same_write_scope["files"]["write"] = ["src/a.py"]
+            missing_dependency = ready_task("TASK-0004", priority=4)
+            missing_dependency["dependencies"] = ["TASK-9999"]
+            locked = ready_task("TASK-0005", priority=5)
+            locked["files"]["write"] = ["src/locked.py"]
+            write_task(root, "ready", "TASK-0001", first)
+            write_task(root, "ready", "TASK-0002", second)
+            write_task(root, "ready", "TASK-0003", same_write_scope)
+            write_task(root, "ready", "TASK-0004", missing_dependency)
+            write_task(root, "ready", "TASK-0005", locked)
+            (root / "harness" / "locks" / "files").mkdir(parents=True)
+            (root / "harness" / "locks" / "files" / "src.locked.py.lock").write_text("TASK-9998\n", encoding="utf-8")
+
+            selected = select_dispatchable_tasks(root, config, limit=10)
+
+            self.assertEqual([record.task["id"] for record in selected], ["TASK-0001", "TASK-0002"])
 
     def test_unblock_resolves_blocker_and_returns_task_to_ready(self) -> None:
         with TemporaryDirectory() as tmp:

@@ -269,17 +269,18 @@ blocked -> ready
 
 ## 调度规则
 
-`next` 只能选择满足以下条件的任务：
+`next` 只能选择满足以下条件的单个任务；`dispatch --limit N` 使用同一规则选择一批可并行任务：
 
 - `state` 是 `ready`
 - 依赖已完成
 - `files.write` 未被锁定
 - 没有 active blocker
 - `external_inputs` 为空；否则任务必须先进入 `blocked`
+- 同一批次内 `files.write` 不重叠
 - `priority` 最小
 - 优先级相同按 `id` 字典序排序
 
-`start` 必须原子执行：
+每个被 dispatch 的 task 必须原子执行：
 
 - 验证任务
 - 创建 run id

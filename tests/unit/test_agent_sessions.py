@@ -453,6 +453,82 @@ json.dump(
             active = load_data(root / "harness" / "tasks" / "in_progress" / "TASK-0001.json")
             self.assertTrue(active["evidence"]["session"].endswith("session.yml"))
 
+    def test_cli_dispatch_limit_starts_parallel_safe_ready_tasks(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = ready_task("TASK-0001", priority=1)
+            first["files"]["write"] = ["src/a.py"]
+            second = ready_task("TASK-0002", priority=2)
+            second["files"]["write"] = ["src/b.py"]
+            conflicting = ready_task("TASK-0003", priority=3)
+            conflicting["files"]["write"] = ["src/a.py"]
+            write_task(root, "ready", "TASK-0001", first)
+            write_task(root, "ready", "TASK-0002", second)
+            write_task(root, "ready", "TASK-0003", conflicting)
+            original_root = cli.ROOT
+            cli.ROOT = root
+            try:
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    exit_code = cli.main(["dispatch", "--limit", "3"])
+            finally:
+                cli.ROOT = original_root
+
+            self.assertEqual(exit_code, 0)
+            self.assertIn("dispatched 2 task(s): TASK-0001, TASK-0002", output.getvalue())
+            self.assertTrue((root / "harness" / "tasks" / "in_progress" / "TASK-0001.json").exists())
+            self.assertTrue((root / "harness" / "tasks" / "in_progress" / "TASK-0002.json").exists())
+            self.assertTrue((root / "harness" / "tasks" / "ready" / "TASK-0003.json").exists())
+            self.assertTrue((root / "harness" / "locks" / "files" / "src.a.py.lock").exists())
+            self.assertTrue((root / "harness" / "locks" / "files" / "src.b.py.lock").exists())
+
+    def test_cli_dispatch_without_task_reports_no_dispatchable_tasks(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_root = cli.ROOT
+            cli.ROOT = root
+            try:
+                error = io.StringIO()
+                with redirect_stderr(error):
+                    exit_code = cli.main(["dispatch"])
+            finally:
+                cli.ROOT = original_root
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("no dispatchable tasks", error.getvalue())
+
+    def test_cli_dispatch_rejects_non_positive_batch_limit(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_root = cli.ROOT
+            cli.ROOT = root
+            try:
+                error = io.StringIO()
+                with redirect_stderr(error):
+                    exit_code = cli.main(["dispatch", "--limit", "0"])
+            finally:
+                cli.ROOT = original_root
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("--limit must be at least 1", error.getvalue())
+
+    def test_cli_dispatch_rejects_limit_with_explicit_task(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_task(root, "ready", "TASK-0001", ready_task("TASK-0001"))
+            original_root = cli.ROOT
+            cli.ROOT = root
+            try:
+                error = io.StringIO()
+                with redirect_stderr(error):
+                    exit_code = cli.main(["dispatch", "TASK-0001", "--limit", "2"])
+            finally:
+                cli.ROOT = original_root
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("--limit can only be used without an explicit task", error.getvalue())
+            self.assertTrue((root / "harness" / "tasks" / "ready" / "TASK-0001.json").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

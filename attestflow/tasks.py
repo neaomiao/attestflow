@@ -122,6 +122,11 @@ def iter_tasks(root: Path, config: dict[str, Any]) -> list[TaskRecord]:
 
 
 def select_next_task(root: Path, config: dict[str, Any]) -> TaskRecord | None:
+    selected = select_dispatchable_tasks(root, config, limit=1)
+    return selected[0] if selected else None
+
+
+def select_dispatchable_tasks(root: Path, config: dict[str, Any], *, limit: int | None = None) -> list[TaskRecord]:
     completed = {
         str(record.task.get("id"))
         for record in iter_tasks(root, config)
@@ -142,7 +147,17 @@ def select_next_task(root: Path, config: dict[str, Any]) -> TaskRecord | None:
             continue
         candidates.append(record)
     candidates.sort(key=lambda record: (int(record.task.get("priority", 999)), str(record.task["id"])))
-    return candidates[0] if candidates else None
+    selected: list[TaskRecord] = []
+    reserved_write_files: set[str] = set()
+    for record in candidates:
+        if limit is not None and len(selected) >= limit:
+            break
+        write_files = [str(item) for item in record.task.get("files", {}).get("write", [])]
+        if any(file_name in reserved_write_files for file_name in write_files):
+            continue
+        selected.append(record)
+        reserved_write_files.update(write_files)
+    return selected
 
 
 def start_task(root: Path, config: dict[str, Any], task_id: str, actor_role: str) -> RunRecord:
