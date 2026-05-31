@@ -31,7 +31,7 @@ integrations:
     command: your-ci-status-command
 ```
 
-`command` 从 stdin 读取 JSON object，向 stdout 输出 CI output JSON。stderr/stdout 会保存到 `harness/ci-runs/ci-*/`。
+`command` 从 stdin 读取 JSON object，向 stdout 输出 CI output JSON。stderr/stdout 会保存到 `harness/ci-runs/ci-*/`。`timeout_seconds` 可放在 provider 顶层或 `provider_options` 中；超时会终止 provider process group，写入 stderr log，并让本次 status 失败。
 
 ## Provider Input
 
@@ -78,6 +78,7 @@ integrations:
 - `status` 只能是 `passed`、`failed`、`running`、`queued`、`cancelled`、`skipped`、`blocked` 或 `unknown`。
 - `summary` 必须非空。
 - `checks` 如果存在，必须是 list。
+- `running`、`queued` 和 `unknown` 表示外部 CI 尚未收敛；autopilot 会记录 evidence，暂停为 `status: paused` / `pause_reason: external_status_pending`，并允许 `--resume` 重新采集状态。
 - `blocked` 表示 CI provider 无法读取状态，例如 CLI 缺失、未授权、网络不可达或外部服务不可用。
 
 ## GitHub Actions Preset
@@ -119,4 +120,4 @@ harness/ci-runs/ci-<timestamp>/
   output.json
 ```
 
-CI evidence 是外部状态快照，不替代本地 `verify --task` 的任务完成证据。后续 release gate 可以引用这些 CI runs，但 task close 仍以当前 run 的 DoD evidence 为准。
+CI evidence 是外部状态快照，不替代本地 `verify --task` 的任务完成证据。后续 release gate 可以引用这些 CI runs，但 task close 仍以当前 run 的 DoD evidence 为准。手动接入流程需要把 CI evidence 绑定到任务时，使用 `attestflow ci status --task TASK-*`，它会把 `output.json` 的相对路径写入 `task.evidence.ci`。

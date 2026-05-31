@@ -59,10 +59,13 @@ sessions:
       - doctor
       - --json
     doctor_timeout_seconds: 20
+    timeout_seconds: 300
     doctor_failure_patterns: []
 ```
 
 `doctor` 会在检查命令存在后执行 provider preflight。内置默认值是 `codex doctor --json`、`claude auth status` 和 `opencode providers list`；OpenCode 默认把 `0 credentials` 视为未就绪。项目可以用 `provider_options.doctor_args`、`doctor_timeout_seconds` 和 `doctor_failure_patterns` 覆盖；离线或受限环境可以设 `provider_options.doctor_enabled: false` 跳过 preflight。
+
+`provider_options.timeout_seconds` 用于 launch/resume adapter 本身。超时会终止 adapter process group，把 session 标记为 `launch_failed` 或 `resume_failed`，并把超时原因写入 stderr log。
 
 ## Adapter Input
 
@@ -71,7 +74,15 @@ sessions:
   "schema_version": 1,
   "action": "launch",
   "agent_provider": "codex",
-  "root": "/absolute/project",
+  "root": "/absolute/project-or-task-worktree",
+  "control_root": "/absolute/project",
+  "workspace": {
+    "root": "/absolute/project-or-task-worktree",
+    "branch": null,
+    "worktree": null,
+    "commit_before": null,
+    "commit_after": null
+  },
   "session": {
     "session_id": "session-2026-05-30T00-00-00Z-TASK-0001",
     "task_id": "TASK-0001",
@@ -100,7 +111,7 @@ sessions:
 }
 ```
 
-`action` 为 `launch` 或 `resume`。恢复时 `session.external_session_id` 会带上上一次 adapter 返回的外部会话 id。
+`action` 为 `launch` 或 `resume`。恢复时 `session.external_session_id` 会带上上一次 adapter 返回的外部会话 id。`root` 是 adapter 应该运行编程 Agent 的工作目录；启用 `sessions.worktree.enabled` 时它是任务 worktree。`control_root` 是保存 `harness/` 证据和任务状态的原项目目录。adapter 不应把运行证据写进 `root`，除非它本身就是控制目录；代码改动留在 `root`，由 Attestflow 在 close 阶段用 ff-only merge 合回控制仓库。
 
 ## Adapter Output
 
@@ -161,4 +172,4 @@ Resume 会写入：
 - `metadata.yml`
 - `ledger.jsonl`
 
-非零退出码、stdout 不是 JSON object、schema 不合法都会把 session 标记为 `launch_failed` 或 `resume_failed`，并保留失败原因。Attestflow 不把失败静默吞掉，也不要求人工补写任务文档。
+非零退出码、超时、stdout 不是 JSON object、schema 不合法都会把 session 标记为 `launch_failed` 或 `resume_failed`，并保留失败原因。adapter 明确返回 `status: blocked` 时，任务会带结构化 blocker 进入 `blocked`，autopilot 会把该 task 计入 blocked 而不是 failed。Attestflow 不把失败静默吞掉，也不要求人工补写任务文档。

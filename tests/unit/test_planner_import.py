@@ -1,4 +1,4 @@
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 import io
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -8,7 +8,7 @@ import attestflow.cli as cli
 from attestflow.config import DEFAULT_CONFIG
 from attestflow.io import load_data
 from attestflow.planner import import_planner_tasks
-from tests.unit.test_task_lifecycle import ready_task, write_task
+from tests.unit.test_task_lifecycle import completed_task, ready_task, write_task
 
 
 class PlannerImportTests(unittest.TestCase):
@@ -17,7 +17,7 @@ class PlannerImportTests(unittest.TestCase):
             root = Path(tmp)
             config = DEFAULT_CONFIG.copy()
             config["root"] = root
-            write_task(root, "done", "TASK-0001", ready_task("TASK-0001"))
+            write_task(root, "done", "TASK-0001", completed_task(ready_task("TASK-0001")))
             plan = {
                 "schema_version": 1,
                 "goal": "Improve AI-first planning.",
@@ -127,6 +127,25 @@ class PlannerImportTests(unittest.TestCase):
             self.assertIn("imported 1 task(s): TASK-0001", output.getvalue())
             task = load_data(root / "harness" / "tasks" / "ready" / "TASK-0001.json")
             self.assertEqual(task["title"], "Import planner JSON")
+
+    def test_cli_task_import_reports_invalid_planner_json_without_traceback(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plan_path = root / "invalid-plan.json"
+            plan_path.write_text('{"schema_version": 1, "tasks": []}\n', encoding="utf-8")
+            original_root = cli.ROOT
+            cli.ROOT = root
+            try:
+                error = io.StringIO()
+                with redirect_stderr(error):
+                    exit_code = cli.main(["task", "import", "--from-json", str(plan_path)])
+            finally:
+                cli.ROOT = original_root
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("ERROR: planner output must include a non-empty tasks list", error.getvalue())
+            self.assertNotIn("Traceback", error.getvalue())
+            self.assertEqual(list((root / "harness" / "tasks" / "ready").glob("TASK-*.json")), [])
 
 
 if __name__ == "__main__":

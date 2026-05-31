@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import posixpath
 from typing import Any
 
 
@@ -13,8 +14,13 @@ def task_lock_path(root: Path, config: dict[str, Any], task_id: str) -> Path:
 
 
 def file_lock_path(root: Path, config: dict[str, Any], file_path: str) -> Path:
-    safe = file_path.replace("/", ".").replace("\\", ".")
+    safe = normalize_file_path(file_path).replace("/", ".")
     return locks_root(root, config) / "files" / f"{safe}.lock"
+
+
+def normalize_file_path(file_path: str) -> str:
+    normalized = posixpath.normpath(str(file_path).replace("\\", "/"))
+    return "" if normalized == "." else normalized.removeprefix("/")
 
 
 def acquire_task_lock(root: Path, config: dict[str, Any], task_id: str, run_id: str) -> Path:

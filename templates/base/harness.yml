@@ -8,6 +8,10 @@ paths:
   gates: harness/gates
   locks: harness/locks
   capability_runs: harness/capability-runs
+  autopilot_runs: harness/autopilot-runs
+  ci_runs: harness/ci-runs
+  pr_runs: harness/pr-runs
+  release_runs: harness/release-runs
   docs: docs
 commands:
   bdd: python -m unittest discover -s tests/bdd
@@ -32,7 +36,17 @@ sessions:
   provider_options: {}
   worktree:
     enabled: false
-    path_template: null
+    path_template: ../.attestflow-worktrees/{project}/{task_id}-{run_id}
+autopilot:
+  max_repair_attempts: 1
+  default_limit: 1
+  max_steps: 1
+  max_loop_cycles: 1
+  loop_interval_seconds: 0
+  resources:
+    model_concurrency: 1
+    max_test_cost: 1
+    ci_queue: 1
 capabilities:
   planner:
     agent_provider: command
@@ -66,7 +80,10 @@ context:
     - pyproject.toml
     - package.json
     - docs/contracts/capability-schema.md
+    - docs/contracts/ci-provider-schema.md
     - docs/contracts/planner-output-schema.md
+    - docs/contracts/pr-provider-schema.md
+    - docs/contracts/release-provider-schema.md
     - docs/contracts/session-adapter-schema.md
     - docs/contracts/task-schema.md
     - docs/design/universal-harness.md
@@ -77,3 +94,5 @@ execution:
 integrations:
   git_provider: optional
   ci_provider: optional
+  pr_provider: optional
+  release_provider: optional

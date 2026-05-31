@@ -9,6 +9,10 @@ build/
 *.egg-info/
 .DS_Store
 
+# Local analysis artifacts
+.graphify_detect.json
+graphify-out/
+
 # Attestflow runtime artifacts
 harness/runs/
 harness/capability-runs/

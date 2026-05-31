@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import subprocess
 from typing import Any
 
 from .io import dump_data, load_data
@@ -67,6 +68,24 @@ def create_run(
         {"state": "in_progress"},
     )
     return RunRecord(run_id=run_id, path=run_path)
+
+
+def update_run_workspace(run_path: Path, workspace: dict[str, Any]) -> None:
+    metadata_path = run_path / "metadata.yml"
+    metadata = load_data(metadata_path)
+    current = metadata.get("workspace", {})
+    metadata["workspace"] = {**current, **workspace} if isinstance(current, dict) else workspace
+    dump_data(metadata, metadata_path)
+
+
+def workspace_root_for_run(run_path: Path, default_root: Path) -> Path:
+    metadata_path = run_path / "metadata.yml"
+    if not metadata_path.exists():
+        return default_root
+    metadata = load_data(metadata_path)
+    workspace = metadata.get("workspace", {})
+    worktree = workspace.get("worktree") if isinstance(workspace, dict) else None
+    return Path(str(worktree)).resolve() if worktree else default_root
 
 
 def append_ledger(
@@ -165,15 +184,24 @@ def record_verification_results(run_path: Path, result: VerificationResult) -> N
         append_ledger(run_path, gate_event, task_id, run_id, actor_role, data)
 
 
-def validate_close_evidence(run_path: Path, config: dict[str, Any], task_id: str) -> list[str]:
+def validate_close_evidence(
+    run_path: Path,
+    config: dict[str, Any],
+    task_id: str,
+    packet_path: Path | None = None,
+) -> list[str]:
     metadata_path = run_path / "metadata.yml"
     if not metadata_path.exists():
         return ["run metadata does not exist"]
 
     metadata = load_data(metadata_path)
     errors: list[str] = []
+    if str(metadata.get("run_id")) != run_path.name:
+        errors.append("run metadata run_id does not match evidence reference")
     if str(metadata.get("task_id")) != task_id:
         errors.append("run metadata task_id does not match task")
+    if packet_path is not None:
+        errors.extend(_validate_evidence_packet(packet_path, task_id, run_path.name))
     if config.get("policies", {}).get("require_agent_session_for_task", True):
         session = metadata.get("agent_session", {})
         if not isinstance(session, dict) or not session.get("session_id"):
@@ -206,6 +234,28 @@ def validate_close_evidence(run_path: Path, config: dict[str, Any], task_id: str
     return errors
 
 
+def _validate_evidence_packet(packet_path: Path, task_id: str, run_id: str) -> list[str]:
+    if not packet_path.exists():
+        return ["evidence packet does not exist"]
+    text = packet_path.read_text(encoding="utf-8")
+    errors: list[str] = []
+    packet_task_id = _markdown_field(text, "ID")
+    packet_run_id = _markdown_field(text, "Run")
+    if packet_task_id != task_id:
+        errors.append("evidence packet task_id does not match task")
+    if packet_run_id != run_id:
+        errors.append("evidence packet run_id does not match evidence reference")
+    return errors
+
+
+def _markdown_field(text: str, label: str) -> str | None:
+    prefix = f"- {label}:"
+    for line in text.splitlines():
+        if line.startswith(prefix):
+            return line[len(prefix):].strip()
+    return None
+
+
 def required_verification_commands(config: dict[str, Any]) -> list[str]:
     commands = config.get("commands", {})
     return [name for name in VERIFICATION_COMMANDS if commands.get(name)]
@@ -214,6 +264,13 @@ def required_verification_commands(config: dict[str, Any]) -> list[str]:
 def close_run(run_path: Path, task_id: str) -> None:
     metadata_path = run_path / "metadata.yml"
     metadata = load_data(metadata_path)
+    workspace = metadata.get("workspace", {})
+    if isinstance(workspace, dict):
+        workspace_root = workspace.get("worktree") or workspace.get("root")
+        commit_after = _git_head(Path(str(workspace_root))) if workspace_root else None
+        if commit_after:
+            workspace["commit_after"] = commit_after
+            metadata["workspace"] = workspace
     metadata["ended_at"] = datetime.now(timezone.utc).isoformat()
     metadata["status"] = "closed"
     result = dict(metadata.get("result", {}))
@@ -256,3 +313,19 @@ def _log_exists(run_path: Path, log_ref: str) -> bool:
     if not log_path.is_absolute():
         log_path = run_path / log_path
     return log_path.exists()
+
+
+def _git_head(cwd: Path) -> str | None:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=cwd,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.strip() or None

@@ -1,0 +1,43 @@
+name: Attestflow PR
+
+on:
+  pull_request:
+
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Attestflow
+        run: python -m pip install .
+
+      - name: Verify harness and project evidence
+        run: python -m attestflow verify
+
+      - name: Export completed task evidence
+        run: |
+          mkdir -p attestflow-artifacts
+          found=0
+          for file in harness/tasks/done/TASK-*.json; do
+            if [ ! -e "$file" ]; then
+              continue
+            fi
+            task="$(basename "$file" .json)"
+            python -m attestflow evidence export "$task" --out "attestflow-artifacts/$task"
+            found=1
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "No completed Attestflow task evidence found"
+            exit 1
+          fi
+
+      - name: Upload Attestflow evidence bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: attestflow-evidence
+          path: attestflow-artifacts/

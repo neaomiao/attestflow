@@ -3,13 +3,24 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 from typing import Any
 
-from .evidence import RunRecord, close_run, create_run, record_verification_results, validate_close_evidence
+from .evidence import (
+    RunRecord,
+    append_ledger,
+    close_run,
+    create_run,
+    record_verification_results,
+    update_run_workspace,
+    validate_close_evidence,
+    workspace_root_for_run,
+)
 from .io import dump_data, load_data
-from .locks import acquire_file_locks, acquire_task_lock, release_locks_for_task, write_scope_locked
+from .locks import acquire_file_locks, acquire_task_lock, normalize_file_path, release_locks_for_task, write_scope_locked
 from .runner import VerificationResult, run_verification
 from .sessions import create_agent_session
+from .worktrees import apply_task_worktree, provision_task_worktree
 
 
 TASK_STATES = {
@@ -24,7 +35,9 @@ TASK_STATES = {
     "done",
     "archived",
 }
+TASK_ID_RE = re.compile(r"^TASK-\d+$")
 EXECUTABLE_STATES = {"ready", "in_progress", "review", "verified", "accepted", "done"}
+RUN_EVIDENCE_STATES = {"in_progress", "review", "verified", "accepted"}
 ALLOWED_TRANSITIONS = {
     ("proposed", "needs_clarification"),
     ("proposed", "ready"),
@@ -37,6 +50,7 @@ ALLOWED_TRANSITIONS = {
     ("review", "in_progress"),
     ("review", "verified"),
     ("verified", "accepted"),
+    ("accepted", "in_progress"),
     ("accepted", "done"),
     ("done", "archived"),
     ("blocked", "needs_clarification"),
@@ -78,11 +92,51 @@ def validate_task(task: dict[str, Any], directory_state: str | None = None) -> l
     if missing:
         errors.append(f"missing required fields: {', '.join(missing)}")
 
+    if "schema_version" in task and task.get("schema_version") != 1:
+        errors.append("schema_version must be 1")
+    if "id" in task and not TASK_ID_RE.match(str(task.get("id", ""))):
+        errors.append("id must match TASK-<number>")
     state = task.get("state")
     if state not in TASK_STATES:
         errors.append(f"invalid state: {state!r}")
     if directory_state and state != directory_state:
         errors.append(f"directory state {directory_state!r} does not match task state {state!r}")
+    if "priority" in task and type(task.get("priority")) is not int:
+        errors.append("priority must be an integer")
+    if "blockers" in task and not isinstance(task.get("blockers"), list):
+        errors.append("blockers must be a list")
+    _validate_optional_string_list(task, "context", "context", errors)
+    _validate_optional_string_list(task, "blocks", "blocks", errors)
+    _validate_optional_string_list(task, "risks", "risks", errors)
+    _validate_optional_string_list(task, "notes", "notes", errors)
+    requirements = task.get("requirements")
+    if "requirements" in task and not isinstance(requirements, dict):
+        errors.append("requirements must be a mapping")
+        requirements = {}
+    if isinstance(requirements, dict):
+        for key in ("confirmed", "unresolved", "assumptions"):
+            _validate_optional_string_list(requirements, key, f"requirements.{key}", errors)
+    files = task.get("files")
+    if "files" in task and not isinstance(files, dict):
+        errors.append("files must be a mapping")
+        files = {}
+    agents = task.get("agents")
+    if "agents" in task and not isinstance(agents, dict):
+        errors.append("agents must be a mapping")
+        agents = {}
+    links = task.get("links")
+    if "links" in task and not isinstance(links, dict):
+        errors.append("links must be a mapping")
+        links = {}
+    if isinstance(files, dict):
+        _validate_optional_string_list(files, "read", "files.read", errors)
+    if isinstance(agents, dict):
+        if "owner" in agents and not str(agents.get("owner", "")).strip():
+            errors.append("agents.owner must be non-empty")
+        _validate_optional_string_list(agents, "allowed_roles", "agents.allowed_roles", errors)
+    if isinstance(links, dict):
+        for key in ("issues", "prs", "docs"):
+            _validate_optional_string_list(links, key, f"links.{key}", errors)
 
     active_blockers = _active_blockers(task)
     if state == "blocked":
@@ -92,19 +146,45 @@ def validate_task(task: dict[str, Any], directory_state: str | None = None) -> l
     elif active_blockers:
         errors.append(f"active blockers require state blocked, got {state}")
 
+    evidence = task.get("evidence", {})
+    if "evidence" in task and not isinstance(evidence, dict):
+        errors.append("evidence must be a mapping")
+        evidence = {}
+    if state in RUN_EVIDENCE_STATES:
+        if not isinstance(evidence, dict) or not evidence.get("run_id"):
+            errors.append(f"{state} task requires evidence.run_id")
+        if not isinstance(evidence, dict) or not evidence.get("session"):
+            errors.append(f"{state} task requires evidence.session")
+        if state in {"review", "verified", "accepted"} and (not isinstance(evidence, dict) or not evidence.get("packet")):
+            errors.append(f"{state} task requires evidence.packet")
+    if state in {"done", "archived"}:
+        if not isinstance(evidence, dict) or not evidence.get("run_id") or not evidence.get("packet"):
+            errors.append("completed task requires evidence.run_id and evidence.packet")
+
     if state in EXECUTABLE_STATES:
-        if _required_external_inputs(task):
-            errors.append("external_inputs must be empty when state is ready; move task to blocked until inputs exist")
+        external_inputs = task.get("external_inputs")
+        if not isinstance(external_inputs, dict):
+            errors.append(f"external_inputs must be a mapping when state is {state}")
+        else:
+            external_input_errors = _external_inputs_shape_errors(external_inputs)
+            if external_input_errors:
+                errors.extend(external_input_errors)
+            elif _required_external_inputs(task):
+                errors.append("external_inputs must be empty when state is ready; move task to blocked until inputs exist")
         _require_text(task, "purpose", state, errors)
-        _require_list(task, "scope", state, errors)
-        _require_list(task, "out_of_scope", state, errors)
-        _require_list(task, "bdd_scenarios", state, errors)
-        _require_list(task, "unit_tests", state, errors)
-        _require_list(task, "acceptance", state, errors)
-        write_files = task.get("files", {}).get("write") if isinstance(task.get("files"), dict) else None
+        _require_non_empty_string_list(task, "scope", state, errors)
+        _require_non_empty_string_list(task, "out_of_scope", state, errors)
+        _require_non_empty_string_list(task, "bdd_scenarios", state, errors)
+        _require_non_empty_string_list(task, "unit_tests", state, errors)
+        _require_non_empty_string_list(task, "acceptance", state, errors)
+        _require_list_field(task, "dependencies", state, errors)
+        _require_non_empty_string_entries(task.get("dependencies"), "dependencies", errors)
+        write_files = files.get("write") if isinstance(files, dict) else None
         if not isinstance(write_files, list) or not write_files:
             errors.append(f"files.write must be a non-empty list when state is {state}")
-        unresolved = task.get("requirements", {}).get("unresolved", [])
+        elif not _all_non_empty_strings(write_files):
+            errors.append("files.write entries must be non-empty strings")
+        unresolved = requirements.get("unresolved", []) if isinstance(requirements, dict) and isinstance(requirements.get("unresolved"), list) else []
         if task.get("type") != "spike" and unresolved:
             errors.append(f"requirements.unresolved must be empty when state is {state}")
     return errors
@@ -115,8 +195,20 @@ def iter_tasks(root: Path, config: dict[str, Any]) -> list[TaskRecord]:
     records: list[TaskRecord] = []
     if not base.exists():
         return records
+    seen: set[str] = set()
     for path in sorted(base.glob("*/*.json")):
+        directory_state = path.parent.name
+        if directory_state not in TASK_STATES:
+            raise ValueError(f"unknown task state directory: {directory_state}")
         task = load_data(path)
+        task_id = task.get("id")
+        if task_id is not None and str(task_id) != path.stem:
+            raise ValueError(f"task id {str(task_id)!r} does not match filename {path.stem!r}")
+        if task_id is not None:
+            normalized_id = str(task_id)
+            if normalized_id in seen:
+                raise ValueError(f"duplicate task id: {normalized_id}")
+            seen.add(normalized_id)
         records.append(TaskRecord(path=path, task=task))
     return records
 
@@ -127,13 +219,15 @@ def select_next_task(root: Path, config: dict[str, Any]) -> TaskRecord | None:
 
 
 def select_dispatchable_tasks(root: Path, config: dict[str, Any], *, limit: int | None = None) -> list[TaskRecord]:
+    records = iter_tasks(root, config)
     completed = {
         str(record.task.get("id"))
-        for record in iter_tasks(root, config)
+        for record in records
         if record.task.get("state") in {"done", "archived"}
+        and not validate_task(record.task, directory_state=record.path.parent.name)
     }
     candidates: list[TaskRecord] = []
-    for record in iter_tasks(root, config):
+    for record in records:
         task = record.task
         if task.get("state") != "ready":
             continue
@@ -152,7 +246,7 @@ def select_dispatchable_tasks(root: Path, config: dict[str, Any], *, limit: int 
     for record in candidates:
         if limit is not None and len(selected) >= limit:
             break
-        write_files = [str(item) for item in record.task.get("files", {}).get("write", [])]
+        write_files = [normalize_file_path(str(item)) for item in record.task.get("files", {}).get("write", [])]
         if any(file_name in reserved_write_files for file_name in write_files):
             continue
         selected.append(record)
@@ -172,14 +266,37 @@ def start_task(root: Path, config: dict[str, Any], task_id: str, actor_role: str
     file_locks = acquire_file_locks(root, config, write_files, task_id)
     run = create_run(root, config, record.task, actor_role, task_lock, file_locks)
     task_lock.write_text(run.run_id + "\n", encoding="utf-8")
+    workspace_root = root
+    worktree = provision_task_worktree(root, config, record.task, run.run_id)
+    if worktree:
+        workspace_root = worktree.path
+        update_run_workspace(
+            run.path,
+            {
+                "root": str(workspace_root),
+                "branch": worktree.branch,
+                "worktree": str(worktree.path),
+                "commit_before": worktree.commit_before,
+            },
+        )
+        append_ledger(
+            run.path,
+            "worktree_created",
+            task_id,
+            run.run_id,
+            actor_role,
+            {"path": str(worktree.path), "commit_before": worktree.commit_before},
+        )
 
     updated = dict(record.task)
     updated["state"] = "in_progress"
     evidence = dict(updated.get("evidence", {}))
     evidence["run_id"] = run.run_id
     evidence["packet"] = str((run.path / "evidence.md").relative_to(root))
+    if worktree:
+        evidence["worktree"] = str(worktree.path)
     updated["evidence"] = evidence
-    session = create_agent_session(root, config, updated, run)
+    session = create_agent_session(root, config, updated, run, workspace_root=workspace_root)
     evidence["session"] = str(session.path.relative_to(root))
     updated["evidence"] = evidence
     target_state = "in_progress"
@@ -214,6 +331,9 @@ def block_task(
     source: str = "cli",
 ) -> TaskRecord:
     record = _find_task(root, config, task_id, expected_state=None)
+    current = str(record.task.get("state"))
+    if (current, "blocked") not in ALLOWED_TRANSITIONS:
+        raise ValueError(f"invalid transition: {current} -> blocked")
     updated = _add_blocker(
         record.task,
         reason=reason,
@@ -267,6 +387,8 @@ def transition_task(root: Path, config: dict[str, Any], task_id: str, new_state:
     errors = validate_task(updated, directory_state=new_state)
     if errors:
         raise ValueError("; ".join(errors))
+    if new_state in {"verified", "accepted"}:
+        _require_passing_verification_evidence(root, config, updated, new_state)
     return _move_task(root, config, record, updated, new_state)
 
 
@@ -279,9 +401,35 @@ def close_task(root: Path, config: dict[str, Any], task_id: str) -> TaskRecord:
     if not packet_path.exists():
         raise ValueError("evidence.packet does not exist")
     run_path = root / config.get("paths", {}).get("runs", "harness/runs") / str(evidence["run_id"])
-    evidence_errors = validate_close_evidence(run_path, config, task_id)
+    evidence_errors = validate_close_evidence(run_path, config, task_id, packet_path=packet_path)
     if evidence_errors:
         raise ValueError("; ".join(evidence_errors))
+    applied_worktree = apply_task_worktree(root, run_path, task_id)
+    if applied_worktree:
+        update_run_workspace(
+            run_path,
+            {
+                "root": str(applied_worktree.path),
+                "worktree": str(applied_worktree.path),
+                "commit_before": applied_worktree.commit_before,
+                "commit_after": applied_worktree.commit_after,
+                "applied_to_control": applied_worktree.applied_to_control,
+                "worktree_finalized": True,
+            },
+        )
+        append_ledger(
+            run_path,
+            "worktree_applied",
+            task_id,
+            str(evidence["run_id"]),
+            str(record.task.get("agents", {}).get("owner", "orchestrator")),
+            {
+                "path": str(applied_worktree.path),
+                "commit_before": applied_worktree.commit_before,
+                "commit_after": applied_worktree.commit_after,
+                "applied_to_control": applied_worktree.applied_to_control,
+            },
+        )
     close_run(run_path, task_id)
     release_locks_for_task(root, config, task_id)
     updated = dict(record.task)
@@ -297,7 +445,7 @@ def verify_task(root: Path, config: dict[str, Any], task_id: str) -> Verificatio
     if not run_path.exists():
         raise ValueError("task evidence.run_id does not reference an existing run")
 
-    result = run_verification(root, config, run_path / "commands")
+    result = run_verification(workspace_root_for_run(run_path, root), config, run_path / "commands")
     record_verification_results(run_path, result)
 
     updated = dict(record.task)
@@ -308,10 +456,54 @@ def verify_task(root: Path, config: dict[str, Any], task_id: str) -> Verificatio
     return result
 
 
+def record_task_evidence_reference(
+    root: Path,
+    config: dict[str, Any],
+    task_id: str,
+    key: str,
+    path: Path,
+) -> TaskRecord:
+    record = _find_task(root, config, task_id, expected_state=None)
+    absolute_path = path if path.is_absolute() else root / path
+    if not absolute_path.exists():
+        raise ValueError(f"evidence reference does not exist: {path}")
+    try:
+        reference = str(absolute_path.relative_to(root))
+    except ValueError:
+        reference = str(absolute_path)
+    updated = dict(record.task)
+    evidence = dict(updated.get("evidence", {}))
+    evidence[key] = reference
+    updated["evidence"] = evidence
+    return _move_task(root, config, record, updated, str(record.task.get("state")))
+
+
+def _require_passing_verification_evidence(
+    root: Path,
+    config: dict[str, Any],
+    task: dict[str, Any],
+    target_state: str,
+) -> None:
+    task_id = str(task.get("id"))
+    evidence = task.get("evidence", {})
+    if not isinstance(evidence, dict) or not evidence.get("run_id") or not evidence.get("packet"):
+        raise ValueError(f"verification evidence required before transition to {target_state}")
+    run_path = root / config.get("paths", {}).get("runs", "harness/runs") / str(evidence["run_id"])
+    packet_path = root / str(evidence["packet"])
+    errors = validate_close_evidence(run_path, config, task_id, packet_path=packet_path)
+    if errors:
+        raise ValueError(
+            f"verification evidence required before transition to {target_state}: " + "; ".join(errors)
+        )
+
+
 def _find_task(root: Path, config: dict[str, Any], task_id: str, expected_state: str | None) -> TaskRecord:
     for record in iter_tasks(root, config):
         if record.task.get("id") != task_id:
             continue
+        directory_state = record.path.parent.name
+        if record.task.get("state") != directory_state:
+            raise ValueError(f"directory state {directory_state!r} does not match task state {record.task.get('state')!r}")
         if expected_state and record.task.get("state") != expected_state:
             raise ValueError(f"{task_id} is {record.task.get('state')}, expected {expected_state}")
         return record
@@ -328,6 +520,9 @@ def _move_task(
     if new_state not in TASK_STATES:
         raise ValueError(f"invalid state: {new_state}")
     updated["state"] = new_state
+    errors = validate_task(updated, directory_state=new_state)
+    if errors:
+        raise ValueError("; ".join(errors))
     target = task_root(root, config) / new_state / f"{record.task['id']}.json"
     dump_data(updated, target)
     if record.path != target and record.path.exists():
@@ -344,6 +539,37 @@ def _require_list(task: dict[str, Any], field: str, state: str, errors: list[str
     value = task.get(field)
     if not isinstance(value, list) or not value:
         errors.append(f"{field} must be a non-empty list when state is {state}")
+
+
+def _require_non_empty_string_list(task: dict[str, Any], field: str, state: str, errors: list[str]) -> None:
+    value = task.get(field)
+    _require_list(task, field, state, errors)
+    _require_non_empty_string_entries(value, field, errors)
+
+
+def _require_list_field(task: dict[str, Any], field: str, state: str, errors: list[str]) -> None:
+    if not isinstance(task.get(field), list):
+        errors.append(f"{field} must be a list when state is {state}")
+
+
+def _require_non_empty_string_entries(value: Any, field: str, errors: list[str]) -> None:
+    if isinstance(value, list) and not _all_non_empty_strings(value):
+        errors.append(f"{field} entries must be non-empty strings")
+
+
+def _validate_optional_string_list(mapping: dict[str, Any], key: str, label: str, errors: list[str]) -> None:
+    if key not in mapping:
+        return
+    value = mapping.get(key)
+    if not isinstance(value, list):
+        errors.append(f"{label} must be a list")
+        return
+    if not _all_non_empty_strings(value):
+        errors.append(f"{label} entries must be non-empty strings")
+
+
+def _all_non_empty_strings(value: list[Any]) -> bool:
+    return all(isinstance(item, str) and item.strip() for item in value)
 
 
 def _add_blocker(
@@ -416,6 +642,17 @@ def _required_external_inputs(task: dict[str, Any]) -> list[str]:
         elif str(value or "").strip():
             required.append(str(value))
     return required
+
+
+def _external_inputs_shape_errors(external_inputs: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    for key, value in external_inputs.items():
+        if not isinstance(value, list):
+            errors.append(f"external_inputs.{key} must be a list")
+            continue
+        if not _all_non_empty_strings(value):
+            errors.append(f"external_inputs.{key} entries must be non-empty strings")
+    return errors
 
 
 def _empty_external_inputs() -> dict[str, list[str]]:

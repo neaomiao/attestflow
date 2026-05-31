@@ -3,14 +3,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import shlex
+import signal
 import subprocess
 import sys
 from typing import Any
 
+from .contracts import contract_validation_hint, validate_session_output
 from .evidence import RunRecord, append_ledger
 from .io import dump_data, load_data
+from .provider_commands import provider_command_argv, provider_timeout_seconds
+from .provider_failures import classify_provider_failure, redact_text
 
 
 BUILTIN_SESSION_PROVIDERS: dict[str, dict[str, str]] = {
@@ -35,7 +40,15 @@ def list_session_providers() -> list[dict[str, str]]:
     ]
 
 
-def create_agent_session(root: Path, config: dict[str, Any], task: dict[str, Any], run: RunRecord) -> AgentSessionRecord:
+def create_agent_session(
+    root: Path,
+    config: dict[str, Any],
+    task: dict[str, Any],
+    run: RunRecord,
+    *,
+    workspace_root: Path | None = None,
+) -> AgentSessionRecord:
+    workspace_root = workspace_root or root
     session_config = _session_config(config)
     agent_provider = str(session_config.get("agent_provider", "command"))
     role = str(session_config.get("role", task.get("agents", {}).get("owner", "worker_agent")))
@@ -44,7 +57,7 @@ def create_agent_session(root: Path, config: dict[str, Any], task: dict[str, Any
     session_path = run.path / "session.yml"
     created_at = datetime.now(timezone.utc).isoformat()
 
-    prompt_path.write_text(_prompt_packet(root, config, task, run, session_id, role), encoding="utf-8")
+    prompt_path.write_text(_prompt_packet(workspace_root, config, task, run, session_id, role), encoding="utf-8")
     resume_command_template = session_config.get("resume_command") or _builtin_adapter_command(agent_provider)
     session = {
         "schema_version": 1,
@@ -59,6 +72,7 @@ def create_agent_session(root: Path, config: dict[str, Any], task: dict[str, Any
         "launched_at": None,
         "resumed_at": None,
         "external_session_id": None,
+        "workspace_root": str(workspace_root),
         "prompt_packet": "prompt.md",
         "adapter_input": None,
         "adapter_output": None,
@@ -87,6 +101,7 @@ def create_agent_session(root: Path, config: dict[str, Any], task: dict[str, Any
             session,
             action="launch",
             command_template=str(launch_command_template),
+            workspace_root=workspace_root,
         )
 
     dump_data(session, session_path)
@@ -106,6 +121,7 @@ def resume_agent_session(root: Path, config: dict[str, Any], run_path: Path) -> 
     task_id = str(session.get("task_id"))
     task = _load_task(root, config, task_id)
     run = RunRecord(run_id=str(session["run_id"]), path=run_path)
+    workspace_root = Path(str(session.get("workspace_root") or root))
     command_template = _session_config(config).get("resume_command") or session.get("resume_command")
     if not command_template:
         raise ValueError("sessions.resume_command or session.resume_command must be configured")
@@ -118,6 +134,7 @@ def resume_agent_session(root: Path, config: dict[str, Any], run_path: Path) -> 
         session,
         action="resume",
         command_template=str(command_template),
+        workspace_root=workspace_root,
     )
     dump_data(session, session_path)
     _record_session_metadata(run_path, session)
@@ -220,13 +237,14 @@ def _apply_adapter_result(
     *,
     action: str,
     command_template: str,
+    workspace_root: Path,
 ) -> None:
     command = _render_session_command(command_template, root, run, str(session["session_id"]))
     if command is None:
         return
     started_at = datetime.now(timezone.utc).isoformat()
-    payload = _adapter_input(root, config, task, run, session, action)
-    result = _run_adapter_command(root, run.path, action, command, payload)
+    payload = _adapter_input(root, config, task, run, session, action, workspace_root)
+    result = _run_adapter_command(workspace_root, run.path, action, command, payload)
     ended_at = datetime.now(timezone.utc).isoformat()
     session[f"{action}_command"] = command
     session[f"{action}_exit_code"] = result["exit_code"]
@@ -266,14 +284,18 @@ def _adapter_input(
     run: RunRecord,
     session: dict[str, Any],
     action: str,
+    workspace_root: Path,
 ) -> dict[str, Any]:
     prompt_ref = str(session.get("prompt_packet", "prompt.md"))
     prompt_path = run.path / prompt_ref
+    workspace = _run_workspace(run.path)
     return {
         "schema_version": 1,
         "action": action,
         "agent_provider": session.get("agent_provider"),
-        "root": str(root),
+        "root": str(workspace_root),
+        "control_root": str(root),
+        "workspace": workspace,
         "session": {
             "session_id": session.get("session_id"),
             "task_id": session.get("task_id"),
@@ -299,6 +321,15 @@ def _adapter_input(
     }
 
 
+def _run_workspace(run_path: Path) -> dict[str, Any]:
+    metadata_path = run_path / "metadata.yml"
+    if not metadata_path.exists():
+        return {}
+    metadata = load_data(metadata_path)
+    workspace = metadata.get("workspace", {})
+    return workspace if isinstance(workspace, dict) else {}
+
+
 def _provider_options(config: dict[str, Any]) -> dict[str, Any]:
     options = _session_config(config).get("provider_options", {})
     return options if isinstance(options, dict) else {}
@@ -317,19 +348,8 @@ def _run_adapter_command(
     stdout_path = run_path / f"session-{action}.stdout.log"
     stderr_path = run_path / f"session-{action}.stderr.log"
     dump_data(payload, input_path)
-    completed = subprocess.run(
-        command,
-        cwd=root,
-        shell=True,
-        text=True,
-        input=json.dumps(payload, ensure_ascii=False),
-        capture_output=True,
-        check=False,
-    )
-    stdout_path.write_text(completed.stdout or "", encoding="utf-8")
-    stderr_path.write_text(completed.stderr or "", encoding="utf-8")
     result: dict[str, Any] = {
-        "exit_code": completed.returncode,
+        "exit_code": None,
         "input": input_path.name,
         "output_path": None,
         "stdout_log": stdout_path.name,
@@ -337,37 +357,123 @@ def _run_adapter_command(
         "output": None,
         "failure": None,
     }
-    if completed.returncode != 0:
-        result["failure"] = f"adapter command failed with exit code {completed.returncode}"
+    process = subprocess.Popen(
+        provider_command_argv(command),
+        cwd=root,
+        text=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    timeout_seconds = provider_timeout_seconds({"provider_options": payload.get("provider_options", {})})
+    try:
+        stdout, stderr = process.communicate(
+            input=json.dumps(payload, ensure_ascii=False),
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        _terminate_process_group(process)
+        stdout, stderr = _collect_after_timeout(process)
+        stdout = stdout or _adapter_output_text(exc.stdout)
+        stderr = stderr or _adapter_output_text(exc.stderr)
+        message = f"adapter command timed out after {timeout_seconds:g} seconds"
+        stdout_path.write_text(redact_text(stdout), encoding="utf-8")
+        stderr_path.write_text(redact_text(_append_stderr_message(stderr, message)), encoding="utf-8")
+        _write_adapter_failure(run_path, action, "timeout", -1, stdout, stderr, message)
+        result["exit_code"] = -1
+        result["failure"] = message
+        return result
+    stdout_path.write_text(redact_text(stdout), encoding="utf-8")
+    stderr_path.write_text(redact_text(stderr), encoding="utf-8")
+    result["exit_code"] = process.returncode
+    if process.returncode != 0:
+        message = f"adapter command failed with exit code {process.returncode}"
+        failure = _write_adapter_failure(run_path, action, None, process.returncode, stdout, stderr, message)
+        result["failure"] = f"{failure['type']}: {message}"
         return result
     try:
-        output = json.loads(completed.stdout)
+        output = json.loads(stdout or "")
     except json.JSONDecodeError as exc:
-        result["failure"] = f"adapter command did not return valid JSON: {exc}"
+        message = f"adapter command did not return valid JSON: {exc}"
+        _write_adapter_failure(run_path, action, "invalid_output", process.returncode, stdout, stderr, message)
+        result["failure"] = message
         return result
     if not isinstance(output, dict):
-        result["failure"] = "adapter command must return a JSON object"
-        return result
-    errors = _validate_adapter_output(output, action)
-    if errors:
-        result["failure"] = "; ".join(errors)
+        message = "adapter command must return a JSON object"
+        _write_adapter_failure(run_path, action, "invalid_output", process.returncode, stdout, stderr, message)
+        result["failure"] = message
         return result
     dump_data(output, output_path)
+    errors = _validate_adapter_output(output, action)
+    if errors:
+        contract_type = "session-launch-output" if action == "launch" else "session-resume-output"
+        result["output_path"] = output_path.name
+        message = "; ".join(errors) + "\n" + contract_validation_hint(contract_type, output_path)
+        _write_adapter_failure(run_path, action, "invalid_output", process.returncode, stdout, stderr, message)
+        result["failure"] = message
+        return result
     result["output_path"] = output_path.name
     result["output"] = output
     return result
 
 
+def _terminate_process_group(process: subprocess.Popen[str]) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    except PermissionError:
+        process.kill()
+
+
+def _collect_after_timeout(process: subprocess.Popen[str]) -> tuple[str, str]:
+    try:
+        stdout, stderr = process.communicate(timeout=1)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            process.kill()
+        stdout, stderr = process.communicate()
+    return _adapter_output_text(stdout), _adapter_output_text(stderr)
+
+
+def _adapter_output_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
+def _append_stderr_message(stderr: str, message: str) -> str:
+    return (stderr.rstrip() + "\n" if stderr.strip() else "") + message + "\n"
+
+
+def _write_adapter_failure(
+    run_path: Path,
+    action: str,
+    reason: str | None,
+    returncode: int | None,
+    stdout: str,
+    stderr: str,
+    error: str,
+) -> dict[str, Any]:
+    failure = classify_provider_failure(
+        f"session-{action}",
+        reason=reason,
+        returncode=returncode,
+        stdout=stdout,
+        stderr=stderr,
+        error=error,
+    )
+    dump_data(failure, run_path / f"session-{action}-failure.json")
+    return failure
+
+
 def _validate_adapter_output(output: dict[str, Any], action: str) -> list[str]:
-    errors: list[str] = []
-    if output.get("schema_version") != 1:
-        errors.append("adapter output schema_version must be 1")
-    allowed = {"launch": {"launched", "blocked"}, "resume": {"resumed", "blocked"}}.get(action, set())
-    if output.get("status") not in allowed:
-        errors.append(f"adapter output status must be one of: {', '.join(sorted(allowed))}")
-    if not str(output.get("summary", "")).strip():
-        errors.append("adapter output summary must be non-empty")
-    return errors
+    return validate_session_output(output, action, label="adapter output")
 
 
 def _record_session_metadata(run_path: Path, session: dict[str, Any]) -> None:

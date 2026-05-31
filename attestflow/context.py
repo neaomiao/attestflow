@@ -24,6 +24,8 @@ DEFAULT_DOCUMENTS = [
     "docs/contracts/capability-schema.md",
     "docs/contracts/ci-provider-schema.md",
     "docs/contracts/planner-output-schema.md",
+    "docs/contracts/pr-provider-schema.md",
+    "docs/contracts/release-provider-schema.md",
     "docs/contracts/session-adapter-schema.md",
     "docs/contracts/task-schema.md",
     "docs/design/universal-harness.md",
@@ -164,6 +166,19 @@ def _excluded(rel_path: str) -> bool:
     parts = set(Path(rel_path).parts)
     if parts & DEFAULT_EXCLUDES:
         return True
-    return rel_path in {"harness/runs", "harness/capability-runs", "harness/ci-runs"} or rel_path.startswith(
-        ("harness/runs/", "harness/capability-runs/", "harness/ci-runs/")
+    runtime_roots = {
+        "harness/runs",
+        "harness/capability-runs",
+        "harness/ci-runs",
+        "harness/pr-runs",
+        "harness/release-runs",
+    }
+    return rel_path in runtime_roots or rel_path.startswith(
+        (
+            "harness/runs/",
+            "harness/capability-runs/",
+            "harness/ci-runs/",
+            "harness/pr-runs/",
+            "harness/release-runs/",
+        )
     )

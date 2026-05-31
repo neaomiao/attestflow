@@ -60,7 +60,7 @@ agent_session:
 
 workspace:
   root: /absolute/path/to/project
-  branch: task/TASK-0001-example
+  branch: task/TASK-0001
   worktree: null
   commit_before: null
   commit_after: null
@@ -108,6 +108,8 @@ result:
 
 ```text
 task_started
+worktree_created
+worktree_applied
 state_changed
 lock_acquired
 lock_released
@@ -123,7 +125,7 @@ resumed
 closed
 ```
 
-`resume` 从 `metadata.yml` 和 `ledger.jsonl` 重建状态，不能依赖聊天历史。
+`workspace.root` 是该 run 的实际执行目录；未启用 worktree 时等于控制项目根目录。启用 `sessions.worktree.enabled` 时，`workspace.worktree` 是独立 Git worktree，`commit_before` 是创建 worktree 时的 HEAD，`commit_after` 在 close 时记录任务 worktree 的最终 HEAD。`applied_to_control: true` 表示 close 已用 `git merge --ff-only` 把 task commit 合回控制仓库。`resume` 从 `metadata.yml` 和 `ledger.jsonl` 重建状态，不能依赖聊天历史。
 
 ## `evidence.md`
 
@@ -269,6 +271,16 @@ ci_url: null
 ```
 
 `fresh` 表示命令在当前任务进入 `in_progress` 后执行。
+
+## 外部交付 Evidence
+
+外部系统 evidence 不写进任务 run 目录，而是写入独立 provider run：
+
+- `task.evidence.ci`：`harness/ci-runs/ci-*/output.json`
+- `task.evidence.pr_request`：`harness/pr-runs/pr-*/output.json`，来自 `pr ensure`
+- `task.evidence.pr`：`harness/pr-runs/pr-*/output.json`，来自 `pr status`
+
+这些 evidence 证明外部系统状态，不替代当前 task run 的本地 verification evidence。release evidence 属于顶层 autopilot run，写入 `harness/autopilot-runs/*/metadata.json.release`。
 
 ## 关闭规则
 

@@ -1,6 +1,8 @@
+from copy import deepcopy
 from contextlib import redirect_stderr, redirect_stdout
 import io
 from pathlib import Path
+import subprocess
 from tempfile import TemporaryDirectory
 import unittest
 
@@ -38,6 +40,60 @@ class AgentSessionTests(unittest.TestCase):
             self.assertEqual(active["evidence"]["session"], str((run.path / "session.yml").relative_to(root)))
             ledger = (run.path / "ledger.jsonl").read_text(encoding="utf-8")
             self.assertIn('"event": "session_created"', ledger)
+
+    def test_start_task_with_worktree_runs_session_adapter_in_task_worktree(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            _init_git_repo(root)
+            provider = root / "session_provider.py"
+            cwd_file = root.parent / "adapter-cwd.txt"
+            provider.write_text(
+                f"""
+import json
+import pathlib
+import sys
+
+payload = json.load(sys.stdin)
+cwd = pathlib.Path.cwd()
+pathlib.Path({str(cwd_file)!r}).write_text(str(cwd), encoding="utf-8")
+assert payload["root"] == str(cwd)
+assert payload["control_root"] == {str(root)!r}
+assert payload["workspace"]["worktree"] == str(cwd)
+json.dump(
+    {{
+        "schema_version": 1,
+        "status": "launched",
+        "external_session_id": "codex-session-123",
+        "summary": "started in worktree",
+    }},
+    sys.stdout,
+)
+""".lstrip(),
+                encoding="utf-8",
+            )
+            worktree_template = str(root.parent / "worktrees" / "{task_id}-{run_id}")
+            config = deepcopy(DEFAULT_CONFIG)
+            config["root"] = root
+            config["sessions"]["agent_provider"] = "codex"
+            config["sessions"]["launch_command"] = f"python3 {provider}"
+            config["sessions"]["worktree"] = {"enabled": True, "path_template": worktree_template}
+            write_task(root, "ready", "TASK-0001", ready_task("TASK-0001"))
+
+            run = start_task(root, config, "TASK-0001", actor_role="orchestrator")
+
+            metadata = load_data(run.path / "metadata.yml")
+            worktree = Path(metadata["workspace"]["worktree"])
+            self.assertTrue(worktree.exists())
+            self.assertEqual(cwd_file.read_text(encoding="utf-8"), str(worktree))
+            session = load_data(run.path / "session.yml")
+            self.assertEqual(session["status"], "launched")
+            self.assertEqual(session["workspace_root"], str(worktree))
+            active = load_data(root / "harness" / "tasks" / "in_progress" / "TASK-0001.json")
+            self.assertEqual(active["evidence"]["worktree"], str(worktree))
+            adapter_input = load_data(run.path / "session-adapter-input.json")
+            self.assertEqual(adapter_input["root"], str(worktree))
+            self.assertEqual(adapter_input["control_root"], str(root))
 
     def test_start_task_runs_configured_session_launch_command(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -170,6 +226,39 @@ print(json.dumps({"type": "item.completed", "item": {"type": "agent_message", "t
             self.assertEqual(session["launch_exit_code"], 0)
             self.assertTrue((run.path / "session-launch.stdout.log").exists())
 
+    def test_session_launch_timeout_records_failed_session_and_logs(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider = root / "slow_session_provider.py"
+            provider.write_text(
+                """
+import json
+import time
+
+time.sleep(0.3)
+print(json.dumps({"schema_version": 1, "status": "launched", "summary": "too late"}))
+""".lstrip(),
+                encoding="utf-8",
+            )
+            config = DEFAULT_CONFIG.copy()
+            config["root"] = root
+            config["sessions"] = {
+                "agent_provider": "codex",
+                "role": "worker_agent",
+                "launch_command": f"python3 {provider}",
+                "provider_options": {"timeout_seconds": 0.05},
+            }
+            write_task(root, "ready", "TASK-0001", ready_task("TASK-0001"))
+
+            run = start_task(root, config, "TASK-0001", actor_role="orchestrator")
+
+            session = load_data(run.path / "session.yml")
+            self.assertEqual(session["status"], "launch_failed")
+            self.assertIn("timed out", session["failure"])
+            self.assertEqual(session["launch_exit_code"], -1)
+            self.assertIn("timed out", (run.path / "session-launch.stderr.log").read_text(encoding="utf-8"))
+            self.assertTrue((run.path / "session-adapter-input.json").exists())
+
     def test_session_launch_blocked_moves_task_to_blocked_with_structured_blocker(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -285,6 +374,60 @@ json.dump(
             self.assertEqual(resume_input["action"], "resume")
             ledger = (run.path / "ledger.jsonl").read_text(encoding="utf-8")
             self.assertIn('"event": "session_resumed"', ledger)
+
+    def test_session_resume_timeout_records_failed_session_and_logs(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            launch_provider = root / "launch_provider.py"
+            launch_provider.write_text(
+                """
+import json
+import sys
+
+json.load(sys.stdin)
+json.dump(
+    {
+        "schema_version": 1,
+        "status": "launched",
+        "external_session_id": "codex-session-123",
+        "summary": "started codex session",
+    },
+    sys.stdout,
+)
+""".lstrip(),
+                encoding="utf-8",
+            )
+            resume_provider = root / "slow_resume_provider.py"
+            resume_provider.write_text(
+                """
+import json
+import time
+
+time.sleep(0.3)
+print(json.dumps({"schema_version": 1, "status": "resumed", "summary": "too late"}))
+""".lstrip(),
+                encoding="utf-8",
+            )
+            config = DEFAULT_CONFIG.copy()
+            config["root"] = root
+            config["sessions"] = {
+                "agent_provider": "codex",
+                "role": "worker_agent",
+                "launch_command": f"python3 {launch_provider}",
+                "resume_command": f"python3 {resume_provider}",
+                "provider_options": {"timeout_seconds": 0.05},
+            }
+            write_task(root, "ready", "TASK-0001", ready_task("TASK-0001"))
+            run = start_task(root, config, "TASK-0001", actor_role="orchestrator")
+
+            resumed = resume_agent_session(root, config, run.path)
+
+            self.assertEqual(resumed.status, "resume_failed")
+            session = load_data(run.path / "session.yml")
+            self.assertIn("timed out", session["failure"])
+            self.assertEqual(session["resume_exit_code"], -1)
+            self.assertIn("timed out", (run.path / "session-resume.stderr.log").read_text(encoding="utf-8"))
+            self.assertTrue((run.path / "session-resume-adapter-input.json").exists())
 
     def test_cli_session_resume_uses_task_run_evidence(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -528,6 +671,47 @@ json.dump(
             self.assertEqual(exit_code, 1)
             self.assertIn("--limit can only be used without an explicit task", error.getvalue())
             self.assertTrue((root / "harness" / "tasks" / "ready" / "TASK-0001.json").exists())
+
+    def test_cli_dispatch_missing_task_reports_error_without_traceback(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_root = cli.ROOT
+            cli.ROOT = root
+            try:
+                error = io.StringIO()
+                with redirect_stderr(error):
+                    exit_code = cli.main(["dispatch", "TASK-4040"])
+            finally:
+                cli.ROOT = original_root
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("ERROR: task not found: TASK-4040", error.getvalue())
+            self.assertNotIn("Traceback", error.getvalue())
+
+    def test_cli_start_missing_task_reports_error_without_traceback(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_root = cli.ROOT
+            cli.ROOT = root
+            try:
+                error = io.StringIO()
+                with redirect_stderr(error):
+                    exit_code = cli.main(["start", "TASK-4040"])
+            finally:
+                cli.ROOT = original_root
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("ERROR: task not found: TASK-4040", error.getvalue())
+            self.assertNotIn("Traceback", error.getvalue())
+
+
+def _init_git_repo(root: Path) -> None:
+    subprocess.run(["git", "init"], cwd=root, check=True, stdout=subprocess.DEVNULL)
+    subprocess.run(["git", "config", "user.email", "attestflow@example.com"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "Attestflow Tests"], cwd=root, check=True)
+    (root / "README.md").write_text("test repo\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=root, check=True, stdout=subprocess.DEVNULL)
 
 
 if __name__ == "__main__":

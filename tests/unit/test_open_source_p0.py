@@ -1,0 +1,173 @@
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+class OpenSourceP0Tests(unittest.TestCase):
+    def test_local_provider_emits_planner_and_capability_contracts(self) -> None:
+        provider = ROOT / "examples" / "providers" / "local_agent.py"
+        self.assertTrue(provider.exists())
+
+        planner_payload = {
+            "schema_version": 1,
+            "goal": "Add greeting support",
+            "root": str(ROOT / "examples" / "python-basic"),
+            "project": {"name": "python-basic", "adapter": "python"},
+            "capability": {"name": "planner"},
+        }
+        planner = _run_provider(provider, planner_payload)
+        self.assertEqual(planner["schema_version"], 1)
+        self.assertEqual(planner["goal"], "Add greeting support")
+        self.assertEqual(len(planner["tasks"]), 1)
+        self.assertEqual(planner["tasks"][0]["files"]["write"][0], "greeter.py")
+
+        capability_payload = {
+            "schema_version": 1,
+            "root": str(ROOT / "examples" / "python-basic"),
+            "capability": {"name": "reviewer"},
+            "task": {"id": "TASK-0001", "title": "Add greeting support"},
+        }
+        capability = _run_provider(provider, capability_payload)
+        self.assertEqual(capability["schema_version"], 1)
+        self.assertEqual(capability["status"], "passed")
+        self.assertTrue(capability["summary"])
+        self.assertIsInstance(capability["evidence"], list)
+
+    def test_python_example_runs_local_autopilot_to_done(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            shutil.copytree(ROOT / "examples", tmp_root / "examples")
+            example_root = tmp_root / "examples" / "python-basic"
+            env = dict(os.environ)
+            env["PYTHONPATH"] = str(ROOT)
+
+            doctor = subprocess.run(
+                [sys.executable, "-m", "attestflow", "doctor"],
+                cwd=example_root,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(doctor.returncode, 0, doctor.stderr + doctor.stdout)
+
+            run = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "attestflow",
+                    "autopilot",
+                    "--run",
+                    "--goal",
+                    "Add greeting support",
+                    "--loop",
+                    "--max-cycles",
+                    "12",
+                    "--max-steps",
+                    "1",
+                ],
+                cwd=example_root,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(run.returncode, 0, run.stderr + run.stdout)
+            done_tasks = sorted((example_root / "harness" / "tasks" / "done").glob("TASK-*.json"))
+            self.assertEqual(len(done_tasks), 1)
+            task = json.loads(done_tasks[0].read_text(encoding="utf-8"))
+            self.assertEqual(task["state"], "done")
+            self.assertEqual(task["title"], "Add greeting helper")
+
+    def test_node_example_runs_local_autopilot_to_done_when_node_is_available(self) -> None:
+        if shutil.which("node") is None:
+            self.skipTest("node is not available")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            shutil.copytree(ROOT / "examples", tmp_root / "examples")
+            example_root = tmp_root / "examples" / "node-basic"
+            env = dict(os.environ)
+            env["PYTHONPATH"] = str(ROOT)
+
+            run = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "attestflow",
+                    "autopilot",
+                    "--run",
+                    "--goal",
+                    "Add greeting support",
+                    "--loop",
+                    "--max-cycles",
+                    "12",
+                    "--max-steps",
+                    "1",
+                ],
+                cwd=example_root,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(run.returncode, 0, run.stderr + run.stdout)
+            done_tasks = sorted((example_root / "harness" / "tasks" / "done").glob("TASK-*.json"))
+            self.assertEqual(len(done_tasks), 1)
+            self.assertTrue((example_root / "greeter.js").exists())
+
+    def test_open_source_onboarding_docs_and_project_files_exist(self) -> None:
+        required = [
+            "docs/getting-started.md",
+            "docs/providers.md",
+            "CONTRIBUTING.md",
+            "SECURITY.md",
+            "CHANGELOG.md",
+            "examples/python-basic/README.md",
+            "examples/node-basic/README.md",
+        ]
+        missing = [path for path in required if not (ROOT / path).exists()]
+        self.assertEqual(missing, [])
+
+    def test_ci_verifies_supported_python_versions_and_build_artifact(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        for version in ("3.11", "3.12", "3.13"):
+            self.assertIn(version, workflow)
+        self.assertIn("python -m build", workflow)
+        self.assertIn("python -m pip install", workflow)
+        self.assertIn("attestflow init --path /tmp/attestflow-smoke --adapter python", workflow)
+        self.assertIn("attestflow doctor", workflow)
+
+    def test_source_distribution_manifest_includes_open_source_onboarding_assets(self) -> None:
+        manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
+        self.assertIn("include CHANGELOG.md CONTRIBUTING.md SECURITY.md", manifest)
+        self.assertIn("recursive-include docs *.md", manifest)
+        self.assertIn("recursive-include examples *", manifest)
+
+
+def _run_provider(provider: Path, payload: dict) -> dict:
+    completed = subprocess.run(
+        [sys.executable, str(provider)],
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise AssertionError(completed.stderr + completed.stdout)
+    try:
+        output = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise AssertionError(completed.stdout) from exc
+    if not isinstance(output, dict):
+        raise AssertionError(f"provider output must be an object: {output!r}")
+    return output

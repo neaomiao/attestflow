@@ -3,16 +3,19 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import json
 from pathlib import Path
 import shlex
 import subprocess
 import sys
 from typing import Any
 
+from .contracts import raise_contract_errors, validate_planner_output, validate_typed_capability_output
 from .context import collect_repository_context
-from .io import dump_data
+from .evidence import workspace_root_for_run
+from .io import dump_data, load_data
 from .planner import import_planner_tasks
+from .provider_commands import provider_timeout_seconds, run_provider_json_command
+from .release import release_task_summaries
 from .sessions import BUILTIN_SESSION_PROVIDERS
 from .tasks import TaskRecord, block_task, iter_tasks
 
@@ -29,6 +32,13 @@ class TaskCapabilityRunResult:
     task_id: str
     output: dict[str, Any]
     run_path: Path
+
+
+@dataclass(frozen=True)
+class ReleaseCapabilityRunResult:
+    output: dict[str, Any]
+    run_path: Path
+    done_tasks: list[str]
 
 
 BUILTIN_CAPABILITIES: list[dict[str, Any]] = [
@@ -143,6 +153,29 @@ def get_capability(name: str) -> dict[str, Any]:
     raise ValueError(f"unknown capability: {name}")
 
 
+def is_capability_configured(config: dict[str, Any], capability_name: str) -> bool:
+    return _configured_command(config, capability_name) is not None
+
+
+def run_release_capability(
+    root: Path,
+    config: dict[str, Any],
+    done_tasks: list[str],
+    *,
+    command: str | None = None,
+) -> ReleaseCapabilityRunResult:
+    capability = get_capability("releaser")
+    capability_command = command or _configured_command(config, "releaser")
+    if not capability_command:
+        raise ValueError("capabilities.releaser.command must be configured or passed with --command")
+
+    run_path = _new_capability_run_path(root, config, "releaser")
+    capability_input = build_release_capability_input(root, config, capability, done_tasks)
+    output = _run_json_command(root, config, "releaser", capability_command, capability_input, run_path)
+    _validate_task_capability_output(output, "releaser", run_path / "output.json")
+    return ReleaseCapabilityRunResult(output=output, run_path=run_path, done_tasks=done_tasks)
+
+
 def run_planner_capability(
     root: Path,
     config: dict[str, Any],
@@ -156,7 +189,13 @@ def run_planner_capability(
 
     run_path = _new_capability_run_path(root, config, "planner")
     capability_input = build_planner_input(root, config, goal)
-    planner_output = _run_json_command(root, planner_command, capability_input, run_path, "planner")
+    planner_output = _run_json_command(root, config, "planner", planner_command, capability_input, run_path)
+    raise_contract_errors(
+        "planner output",
+        "planner-output",
+        validate_planner_output(planner_output, label="planner output"),
+        run_path / "output.json",
+    )
     records = import_planner_tasks(root, config, planner_output)
     return CapabilityRunResult(records=records, run_path=run_path)
 
@@ -171,16 +210,28 @@ def run_task_capability(
 ) -> TaskCapabilityRunResult:
     if capability_name == "planner":
         raise ValueError("planner is goal-scoped; use attestflow plan")
+    if capability_name == "releaser":
+        raise ValueError("releaser is release-scoped; use autopilot release gate")
     capability = get_capability(capability_name)
     capability_command = command or _configured_command(config, capability_name)
     if not capability_command:
         raise ValueError(f"capabilities.{capability_name}.command must be configured or passed with --command")
 
     record = _find_task(root, config, task_id)
+    workspace_root = _task_workspace_root(root, config, record.task)
     run_path = _new_capability_run_path(root, config, f"{capability_name}-{task_id}")
-    capability_input = build_task_capability_input(root, config, capability, record)
-    output = _run_json_command(root, capability_command, capability_input, run_path, capability_name)
-    _validate_task_capability_output(output, capability_name)
+    capability_input = build_task_capability_input(root, config, capability, record, workspace_root=workspace_root)
+    before_status = _git_status_paths(workspace_root)
+    output = _run_json_command(workspace_root, config, capability_name, capability_command, capability_input, run_path)
+    _validate_task_capability_output(
+        output,
+        capability_name,
+        run_path / "output.json",
+        task=record.task,
+        workspace_root=workspace_root,
+        config=config,
+        before_status=before_status,
+    )
     _record_task_capability_evidence(root, record, capability_name, run_path)
     if output.get("status") == "blocked":
         block_task(
@@ -239,7 +290,10 @@ def build_task_capability_input(
     config: dict[str, Any],
     capability: dict[str, Any],
     record: TaskRecord,
+    *,
+    workspace_root: Path | None = None,
 ) -> dict[str, Any]:
+    workspace_root = workspace_root or _task_workspace_root(root, config, record.task)
     task = record.task
     files = task.get("files", {}) if isinstance(task.get("files"), dict) else {}
     focus_files = []
@@ -252,17 +306,45 @@ def build_task_capability_input(
         "capability": capability,
         "agent_provider": _capability_agent_provider(config, str(capability["name"])),
         "provider_options": _provider_options(config, str(capability["name"])),
-        "root": str(root),
+        "root": str(workspace_root),
+        "control_root": str(root),
+        "workspace": _task_workspace(root, config, task),
         "project": config.get("project", {}),
         "commands": config.get("commands", {}),
         "task": task,
         "task_path": str(record.path.relative_to(root)),
-        "repository_context": collect_repository_context(root, config, focus_files=focus_files),
+        "repository_context": collect_repository_context(workspace_root, config, focus_files=focus_files),
         "instructions": [
             "Return only JSON.",
             "Do not edit task files directly; Attestflow records capability evidence.",
             "Report blocking external inputs instead of assuming credentials, services, or business decisions.",
             "Keep findings and evidence scoped to the provided task.",
+        ],
+    }
+
+
+def build_release_capability_input(
+    root: Path,
+    config: dict[str, Any],
+    capability: dict[str, Any],
+    done_tasks: list[str],
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "capability": capability,
+        "agent_provider": _capability_agent_provider(config, "releaser"),
+        "provider_options": _provider_options(config, "releaser"),
+        "root": str(root),
+        "project": config.get("project", {}),
+        "commands": config.get("commands", {}),
+        "done_tasks": done_tasks,
+        "tasks": release_task_summaries(root, config, done_tasks),
+        "repository_context": collect_repository_context(root, config),
+        "instructions": [
+            "Return only JSON.",
+            "Prepare release handoff evidence from completed tasks and delivery evidence.",
+            "Report blocking external inputs instead of assuming credentials, services, or business decisions.",
+            "Do not perform irreversible release actions; release provider handles the external release boundary.",
         ],
     }
 
@@ -318,50 +400,255 @@ def _find_task(root: Path, config: dict[str, Any], task_id: str) -> TaskRecord:
     raise FileNotFoundError(f"task not found: {task_id}")
 
 
+def _task_workspace_root(root: Path, config: dict[str, Any], task: dict[str, Any]) -> Path:
+    run_path = _task_run_path(root, config, task)
+    return workspace_root_for_run(run_path, root) if run_path else root
+
+
+def _task_workspace(root: Path, config: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]:
+    run_path = _task_run_path(root, config, task)
+    if not run_path:
+        return {"root": str(root), "worktree": None}
+    metadata_path = run_path / "metadata.yml"
+    if not metadata_path.exists():
+        return {"root": str(root), "worktree": None}
+    metadata = load_data(metadata_path)
+    workspace = metadata.get("workspace", {})
+    if not isinstance(workspace, dict):
+        return {"root": str(root), "worktree": None}
+    normalized = dict(workspace)
+    for key in ("root", "worktree"):
+        if normalized.get(key):
+            normalized[key] = str(Path(str(normalized[key])).resolve())
+    return normalized
+
+
+def _task_run_path(root: Path, config: dict[str, Any], task: dict[str, Any]) -> Path | None:
+    evidence = task.get("evidence", {})
+    run_id = evidence.get("run_id") if isinstance(evidence, dict) else None
+    if not run_id:
+        return None
+    return root / str(config.get("paths", {}).get("runs", "harness/runs")) / str(run_id)
+
+
 def _run_json_command(
-    root: Path,
+    cwd: Path,
+    config: dict[str, Any],
+    capability_name: str,
     command: str,
     payload: dict[str, Any],
     run_path: Path,
-    capability_name: str,
 ) -> dict[str, Any]:
-    dump_data(payload, run_path / "input.json")
-    completed = subprocess.run(
+    output = run_provider_json_command(
+        cwd,
         command,
-        cwd=root,
-        shell=True,
-        text=True,
-        input=json.dumps(payload, ensure_ascii=False),
-        capture_output=True,
-        check=False,
+        payload,
+        run_path,
+        capability_name,
+        timeout_seconds=_capability_timeout_seconds(config, capability_name),
     )
-    (run_path / "stderr.log").write_text(completed.stderr or "", encoding="utf-8")
-    (run_path / "stdout.log").write_text(completed.stdout or "", encoding="utf-8")
-    if completed.returncode != 0:
-        raise ValueError(f"{capability_name} command failed with exit code {completed.returncode}")
-    try:
-        output = json.loads(completed.stdout)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"{capability_name} command did not return valid JSON: {exc}") from exc
-    if not isinstance(output, dict):
-        raise ValueError(f"{capability_name} command must return a JSON object")
     dump_data(output, run_path / "output.json")
     return output
 
 
-def _validate_task_capability_output(output: dict[str, Any], capability_name: str) -> None:
-    if output.get("schema_version") != 1:
-        raise ValueError(f"{capability_name} output schema_version must be 1")
-    if output.get("status") not in {"passed", "failed", "blocked"}:
-        raise ValueError(f"{capability_name} output status must be one of: passed, failed, blocked")
-    if not str(output.get("summary", "")).strip():
-        raise ValueError(f"{capability_name} output summary must be non-empty")
-    findings = output.get("findings", [])
-    if not isinstance(findings, list):
-        raise ValueError(f"{capability_name} output findings must be a list")
-    evidence = output.get("evidence", [])
-    if not isinstance(evidence, list):
-        raise ValueError(f"{capability_name} output evidence must be a list")
+def _capability_timeout_seconds(config: dict[str, Any], capability_name: str) -> float | None:
+    capability_config = _capability_config(config, capability_name)
+    return provider_timeout_seconds(
+        {
+            "timeout_seconds": capability_config.get("timeout_seconds"),
+            "provider_options": _provider_options(config, capability_name),
+        }
+    )
+
+
+def _validate_task_capability_output(
+    output: dict[str, Any],
+    capability_name: str,
+    path: Path | None = None,
+    *,
+    task: dict[str, Any] | None = None,
+    workspace_root: Path | None = None,
+    config: dict[str, Any] | None = None,
+    before_status: set[str] | None = None,
+) -> None:
+    errors = validate_typed_capability_output(output, capability_name, label=f"{capability_name} output")
+    if task is not None:
+        errors.extend(_capability_write_scope_errors(output, capability_name, task, label=f"{capability_name} output"))
+    if (
+        output.get("status") == "passed"
+        and task is not None
+        and workspace_root is not None
+        and before_status is not None
+    ):
+        errors.extend(
+            _actual_write_scope_errors(
+                workspace_root,
+                config or {},
+                task,
+                before_status,
+                label=f"{capability_name} output",
+            )
+        )
+    raise_contract_errors(
+        f"{capability_name} output",
+        "capability-output",
+        errors,
+        path,
+    )
+
+
+def _capability_write_scope_errors(
+    output: dict[str, Any],
+    capability_name: str,
+    task: dict[str, Any],
+    *,
+    label: str,
+) -> list[str]:
+    if output.get("status") == "blocked":
+        return []
+    artifacts = output.get("artifacts")
+    if not isinstance(artifacts, dict):
+        return []
+    field_by_capability = {
+        "bdd": "updated_files",
+        "tdd": "test_files",
+        "implementer": "written_files",
+    }
+    field = field_by_capability.get(capability_name)
+    if field is None:
+        return []
+    files = artifacts.get(field, [])
+    if not isinstance(files, list):
+        return []
+    return _files_write_scope_errors(files, task, label=f"{label}.artifacts.{field}")
+
+
+def _actual_write_scope_errors(
+    workspace_root: Path,
+    config: dict[str, Any],
+    task: dict[str, Any],
+    before_status: set[str],
+    *,
+    label: str,
+) -> list[str]:
+    after_status = _git_status_paths(workspace_root)
+    if after_status is None:
+        return []
+    runtime_paths = _runtime_status_paths(config)
+    changed = sorted(
+        path
+        for path in (after_status - before_status)
+        if path and not _path_matches_any(path, runtime_paths)
+    )
+    return _files_write_scope_errors(changed, task, label=f"{label}.actual_writes", prefix="wrote outside files.write")
+
+
+def _files_write_scope_errors(
+    files: list[Any],
+    task: dict[str, Any],
+    *,
+    label: str,
+    prefix: str = "must stay within files.write",
+) -> list[str]:
+    write_scope = _task_write_scope(task)
+    outside = []
+    for item in files:
+        normalized = _normalize_repo_path(str(item))
+        if not normalized or not _path_matches_any(normalized, write_scope):
+            outside.append(str(item))
+    if not outside:
+        return []
+    return [f"{label} {prefix}: {', '.join(outside)}"]
+
+
+def _task_write_scope(task: dict[str, Any]) -> list[str]:
+    files = task.get("files", {}) if isinstance(task.get("files"), dict) else {}
+    write = files.get("write", []) if isinstance(files, dict) else []
+    if not isinstance(write, list):
+        return []
+    return [path for path in (_normalize_repo_path(str(item)) for item in write) if path]
+
+
+def _runtime_status_paths(config: dict[str, Any]) -> list[str]:
+    paths = config.get("paths", {}) if isinstance(config.get("paths"), dict) else {}
+    defaults = (
+        "tasks",
+        "runs",
+        "locks",
+        "capability_runs",
+        "autopilot_runs",
+        "ci_runs",
+        "pr_runs",
+        "release_runs",
+    )
+    values = []
+    for key in defaults:
+        value = paths.get(key)
+        if value:
+            normalized = _normalize_repo_path(str(value))
+            if normalized:
+                values.append(normalized)
+    if not values:
+        values.append("harness")
+    return values
+
+
+def _normalize_repo_path(value: str) -> str | None:
+    path = value.strip().replace("\\", "/")
+    if not path:
+        return None
+    if path.startswith('"') and path.endswith('"'):
+        path = path[1:-1]
+    if path.startswith("/") or path.startswith("../") or "/../" in path or path == "..":
+        return None
+    while path.startswith("./"):
+        path = path[2:]
+    return path.rstrip("/")
+
+
+def _path_matches_any(path: str, scopes: list[str]) -> bool:
+    normalized = _normalize_repo_path(path)
+    if not normalized:
+        return False
+    for scope in scopes:
+        if normalized == scope or normalized.startswith(scope.rstrip("/") + "/"):
+            return True
+    return False
+
+
+def _git_status_paths(root: Path) -> set[str] | None:
+    try:
+        inside = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if inside.returncode != 0 or inside.stdout.strip() != "true":
+        return None
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all", "--", "."],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if status.returncode != 0:
+        return None
+    paths: set[str] = set()
+    for line in status.stdout.splitlines():
+        if len(line) < 4:
+            continue
+        raw_path = line[3:].strip()
+        if " -> " in raw_path:
+            raw_path = raw_path.split(" -> ", 1)[1].strip()
+        normalized = _normalize_repo_path(raw_path)
+        if normalized:
+            paths.add(normalized)
+    return paths
 
 
 def _record_task_capability_evidence(

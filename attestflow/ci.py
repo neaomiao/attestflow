@@ -2,23 +2,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import json
 import shlex
-import shutil
-import subprocess
 import sys
 from typing import Any
 
+from .contracts import CI_STATUSES, raise_contract_errors, validate_ci_output
 from .evidence import utc_timestamp
 from .io import dump_data
+from .provider_commands import provider_timeout_seconds, run_provider_json_command, shell_command_exists
 
 
 BUILTIN_CI_PROVIDERS: dict[str, dict[str, str]] = {
     "github-actions": {"command": "gh", "description": "GitHub Actions via attestflow.ci_adapters."},
 }
-
-CI_STATUSES = {"passed", "failed", "running", "queued", "cancelled", "skipped", "blocked", "unknown"}
-
 
 @dataclass(frozen=True)
 class CIStatusResult:
@@ -42,14 +38,21 @@ def run_ci_status(root: Path, config: dict[str, Any], *, command: str | None = N
     ci_command = command or _configured_command(provider, provider_config)
     if not ci_command:
         raise ValueError(f"CI provider command must be configured for {provider}")
-    if not _shell_command_exists(ci_command):
+    if not shell_command_exists(ci_command):
         raise ValueError(f"CI provider command not found for {provider}: {ci_command}")
 
     run_path = _new_ci_run_path(root, config)
     payload = _ci_input(root, config, provider, provider_config)
-    output = _run_json_command(root, ci_command, payload, run_path)
-    _validate_ci_output(output)
+    output = run_provider_json_command(
+        root,
+        ci_command,
+        payload,
+        run_path,
+        "CI",
+        timeout_seconds=provider_timeout_seconds(provider_config),
+    )
     dump_data(output, run_path / "output.json")
+    _validate_ci_output(output, run_path / "output.json")
     return CIStatusResult(status=str(output["status"]), output=output, run_path=run_path)
 
 
@@ -87,40 +90,8 @@ def _provider_options(provider_config: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
-def _run_json_command(root: Path, command: str, payload: dict[str, Any], run_path: Path) -> dict[str, Any]:
-    dump_data(payload, run_path / "input.json")
-    completed = subprocess.run(
-        command,
-        cwd=root,
-        shell=True,
-        text=True,
-        input=json.dumps(payload, ensure_ascii=False),
-        capture_output=True,
-        check=False,
-    )
-    (run_path / "stdout.log").write_text(completed.stdout or "", encoding="utf-8")
-    (run_path / "stderr.log").write_text(completed.stderr or "", encoding="utf-8")
-    if completed.returncode != 0:
-        raise ValueError(f"CI provider command failed with exit code {completed.returncode}")
-    try:
-        output = json.loads(completed.stdout)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"CI provider command did not return valid JSON: {exc}") from exc
-    if not isinstance(output, dict):
-        raise ValueError("CI provider command must return a JSON object")
-    return output
-
-
-def _validate_ci_output(output: dict[str, Any]) -> None:
-    if output.get("schema_version") != 1:
-        raise ValueError("CI output schema_version must be 1")
-    if output.get("status") not in CI_STATUSES:
-        raise ValueError("CI output status must be one of: " + ", ".join(sorted(CI_STATUSES)))
-    if not str(output.get("summary", "")).strip():
-        raise ValueError("CI output summary must be non-empty")
-    checks = output.get("checks", [])
-    if not isinstance(checks, list):
-        raise ValueError("CI output checks must be a list")
+def _validate_ci_output(output: dict[str, Any], path: Path | None = None) -> None:
+    raise_contract_errors("CI output", "ci-output", validate_ci_output(output, label="CI output"), path)
 
 
 def _new_ci_run_path(root: Path, config: dict[str, Any]) -> Path:
@@ -138,11 +109,3 @@ def _new_ci_run_path(root: Path, config: dict[str, Any]) -> Path:
 def _builtin_ci_adapter_command() -> str:
     adapter_path = Path(__file__).resolve().parent / "ci_adapters.py"
     return f"{shlex.quote(sys.executable)} {shlex.quote(str(adapter_path))}"
-
-
-def _shell_command_exists(command: str) -> bool:
-    try:
-        executable = shlex.split(command)[0]
-    except (ValueError, IndexError):
-        return False
-    return bool(shutil.which(executable) or Path(executable).exists())

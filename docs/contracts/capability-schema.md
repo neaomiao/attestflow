@@ -75,6 +75,7 @@ Programming Agent Provider 要求：
 - 输出必须符合 `docs/contracts/planner-output-schema.md`。
 - stderr 会保存到 capability run 证据中。
 - 非零退出码会阻止任务导入。
+- provider 超时会阻止任务导入，并保留 `input.json`、`stdout.log`、`stderr.log`。
 
 配置：
 
@@ -83,9 +84,19 @@ capabilities:
   planner:
     agent_provider: codex
     command: null
+    provider_options:
+      timeout_seconds: 300
 ```
 
-当 `agent_provider` 是 `codex`、`claude-code` 或 `opencode` 且 `command` 为 `null` 时，Attestflow 会自动使用内置 capability adapter。Adapter 会把 capability input 转成编程 Agent prompt，调用对应 CLI，并从 stdout 中抽取符合 contract 的 JSON。显式 `--command` 或 `capabilities.<name>.command` 优先级更高。
+当 `agent_provider` 是 `codex`、`claude-code` 或 `opencode` 且 `command` 为 `null` 时，Attestflow 会自动使用内置 capability adapter。Adapter 会把 capability input 转成编程 Agent prompt，调用对应 CLI，并从 stdout 中抽取符合 contract 的 JSON；它会处理流式 JSON 行、日志噪声、嵌套 JSON 和 JSON 字符串。显式 `--command` 或 `capabilities.<name>.command` 优先级更高。`timeout_seconds` 可放在 capability 顶层或 `provider_options` 中；超时会终止 provider process group，写入 stderr log，并让本次 capability 失败。
+
+Provider contract suite：
+
+```bash
+python -m attestflow provider contract --provider codex
+```
+
+该命令用固定夹具验证 provider 能返回 `planner`、task/`implementer`、`reviewer`、`verifier` 和 release/`releaser` 五类合同 JSON。
 
 命令行覆盖：
 
@@ -114,6 +125,7 @@ Programming Agent Provider 要求：
 - 向 stdout 输出 JSON object。
 - stderr/stdout 会保存到 `harness/capability-runs/<capability>-<task>-*/`。
 - 非零退出码会阻止任务 evidence 更新。
+- provider 超时会阻止任务 evidence 更新，并保留 `input.json`、`stdout.log`、`stderr.log`。
 - stdout 必须满足 capability output schema。
 
 输出 schema：
@@ -136,6 +148,16 @@ Programming Agent Provider 要求：
 - `findings` 必须是数组。
 - `evidence` 必须是数组。
 
+Task-scoped typed artifact 规则：
+
+- `bdd.artifacts` 必须包含 `scenarios`、`updated_files`、`requirements_mapping` 和 `uncovered_behaviors`。
+- `tdd.artifacts` 必须包含 `red_log`、`green_log`、`test_files`、`failing_tests` 和 `coverage`。
+- `implementer.artifacts` 必须包含 `diff_summary`、`written_files`、`incomplete`、`risks` 和 `command_results`。
+- `reviewer.findings[]` 必须是对象，至少包含 `severity`、`blocking` 和 `summary`；`severity` 只能是 `blocker`、`major`、`minor` 或 `info`。
+- `verifier.artifacts` 必须包含 `commands`、`environment`、`duration_seconds`、`flake.detected` 和 `evidence`。
+
+`updated_files`、`test_files` 和 `written_files` 必须落在 task 的 `files.write` 范围内。若 capability 在 git workspace 中产生了新的实际文件变更，Attestflow 会把 provider 前后的 `git status --porcelain --untracked-files=all` 做差，并拒绝任何越过 `files.write` 的写入。
+
 当 task-scoped capability 返回 `blocked` 时，Attestflow 会先保存 `output.json` 并写回 `evidence.capabilities.<name>`，再把任务移入 `blocked`，追加 `type: capability`、`source: capability:<name>` 的 active blocker。Capability 不直接编辑 runtime task JSON。
 
 Attestflow 会把 `output.json` 的相对路径写回：
@@ -149,6 +171,16 @@ Attestflow 会把 `output.json` 的相对路径写回：
   }
 }
 ```
+
+## Release Capability 执行
+
+`releaser` 是 top-level release gate capability，不绑定单个 task。配置 `capabilities.releaser.command` 后，autopilot 会在 release provider 前运行它：
+
+```text
+done task summaries -> releaser capability input -> release handoff JSON -> release provider input
+```
+
+输入包含 `done_tasks`、已完成任务摘要、交付 evidence、repository context 和 release instructions。输出沿用 capability output schema；`status: passed` 会写入 autopilot metadata 的 `releaser` / `releaser_tasks`，并作为 `release_handoff` 传给 release provider。若 release provider 后续返回 `failed`，release repair planner 的 goal 也会包含该 handoff 路径和 summary，避免修复任务只看到 provider 失败摘要。`blocked` 会让 top-level run blocked；`failed` 会让本轮 failed。
 
 ## Repository Context
 
@@ -172,6 +204,8 @@ Capability input 的 `repository_context` 由 Attestflow 确定性生成：
 - 二进制文件会被跳过。
 - `.git`、`node_modules`、`__pycache__`、`harness/runs`、`harness/capability-runs`、`harness/ci-runs` 默认排除。
 - provider 不应自行递归扫描仓库；需要更多上下文时应通过 capability output 声明缺口。
+
+Task-scoped capability input 的 `root` 是执行 cwd。启用 `sessions.worktree.enabled` 时，`root` 指向任务 worktree，`control_root` 指向保存 `harness/` 状态和 evidence 的原项目目录，`workspace` 携带 worktree、branch、`commit_before` 和 `commit_after` 快照。Provider 只能把代码变更写到 `root`，不能直接修改 runtime task JSON；close 阶段由 Attestflow 把 worktree 变更提交并 ff-only merge 回 `control_root`。
 
 ## 非目标
 

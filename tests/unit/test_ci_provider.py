@@ -1,6 +1,7 @@
 from contextlib import redirect_stderr, redirect_stdout
 import io
 from pathlib import Path
+import sys
 from tempfile import TemporaryDirectory
 import unittest
 
@@ -110,6 +111,56 @@ integrations:
 
             with self.assertRaisesRegex(ValueError, "CI output status"):
                 run_ci_status(root, config)
+
+    def test_ci_provider_rejects_missing_python_module_before_creating_run(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = {
+                "paths": {"ci_runs": "harness/ci-runs"},
+                "integrations": {
+                    "ci_provider": {
+                        "provider": "command",
+                        "command": f"{sys.executable} -m definitely_missing_attestflow_ci_provider",
+                    }
+                },
+            }
+
+            with self.assertRaisesRegex(ValueError, "CI provider command not found"):
+                run_ci_status(root, config)
+
+            self.assertFalse((root / "harness" / "ci-runs").exists())
+
+    def test_ci_provider_command_timeout_writes_evidence_logs(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider = root / "ci-provider.py"
+            provider.write_text(
+                """
+import json
+import time
+
+time.sleep(0.3)
+print(json.dumps({"schema_version": 1, "status": "passed", "summary": "too late"}))
+""".lstrip(),
+                encoding="utf-8",
+            )
+            config = {
+                "paths": {"ci_runs": "harness/ci-runs"},
+                "integrations": {
+                    "ci_provider": {
+                        "provider": "command",
+                        "command": f"python3 {provider}",
+                        "timeout_seconds": 0.05,
+                    }
+                },
+            }
+
+            with self.assertRaisesRegex(ValueError, "timed out"):
+                run_ci_status(root, config)
+
+            run_dirs = sorted((root / "harness" / "ci-runs").glob("ci-*"))
+            self.assertEqual(len(run_dirs), 1)
+            self.assertIn("timed out", (run_dirs[0] / "stderr.log").read_text(encoding="utf-8"))
 
     def test_github_actions_ci_provider_uses_builtin_adapter(self) -> None:
         with TemporaryDirectory() as tmp:
