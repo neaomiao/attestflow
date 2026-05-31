@@ -125,6 +125,61 @@ class OpenSourceP0Tests(unittest.TestCase):
             self.assertEqual(len(done_tasks), 1)
             self.assertTrue((example_root / "greeter.js").exists())
 
+    def test_repository_harness_runs_local_dogfood_autopilot_to_done(self) -> None:
+        self.assertTrue((ROOT / "harness.yml").exists())
+        for state in ("proposed", "needs_clarification", "ready", "in_progress", "blocked", "review", "verified", "accepted", "done", "archived"):
+            self.assertTrue((ROOT / "harness" / "tasks" / state).is_dir())
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp) / "attestflow"
+            shutil.copytree(
+                ROOT,
+                repo_root,
+                ignore=shutil.ignore_patterns(
+                    ".git",
+                    ".venv",
+                    "__pycache__",
+                    ".pytest_cache",
+                    "harness/runs",
+                    "harness/capability-runs",
+                    "harness/autopilot-runs",
+                    "harness/ci-runs",
+                    "harness/pr-runs",
+                    "harness/release-runs",
+                    "harness/locks",
+                ),
+            )
+            env = dict(os.environ)
+            env["PYTHONPATH"] = str(repo_root)
+
+            run = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "attestflow",
+                    "autopilot",
+                    "--run",
+                    "--goal",
+                    "Dogfood Attestflow by adding the deterministic dogfood marker.",
+                    "--until",
+                    "terminal",
+                    "--max-cycles",
+                    "20",
+                    "--max-steps",
+                    "1",
+                ],
+                cwd=repo_root,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(run.returncode, 0, run.stderr + run.stdout)
+            done_tasks = sorted((repo_root / "harness" / "tasks" / "done").glob("TASK-*.json"))
+            self.assertTrue(done_tasks)
+            self.assertTrue((repo_root / "attestflow" / "dogfood_marker.py").exists())
+            self.assertTrue(sorted((repo_root / "harness" / "autopilot-runs").glob("*/metadata.json")))
+
     def test_open_source_onboarding_docs_and_project_files_exist(self) -> None:
         required = [
             "docs/getting-started.md",
@@ -144,8 +199,7 @@ class OpenSourceP0Tests(unittest.TestCase):
             self.assertIn(version, workflow)
         self.assertIn("python -m build", workflow)
         self.assertIn("python -m pip install", workflow)
-        self.assertIn("attestflow init --path /tmp/attestflow-smoke --adapter python", workflow)
-        self.assertIn("attestflow doctor", workflow)
+        self.assertIn("attestflow install-smoke --offline", workflow)
 
     def test_source_distribution_manifest_includes_open_source_onboarding_assets(self) -> None:
         manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")

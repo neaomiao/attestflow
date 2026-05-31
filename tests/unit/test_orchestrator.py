@@ -6,6 +6,8 @@ from pathlib import Path
 import shlex
 import subprocess
 import sys
+import threading
+import time
 from tempfile import TemporaryDirectory
 import unittest
 
@@ -384,6 +386,166 @@ class OrchestratorTests(unittest.TestCase):
             self.assertEqual(metadata["planned"], ["TASK-0001"])
             self.assertIn("autopilot:plan", metadata["actions"])
 
+    def test_autopilot_runs_intake_before_planner_when_configured(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intake_script = root / "intake_stub.py"
+            planner_script = root / "planner_stub.py"
+            intake_script.write_text(
+                "\n".join(
+                    [
+                        "import json, pathlib, sys",
+                        "payload = json.load(sys.stdin)",
+                        "assert payload['goal'] == 'ship login'",
+                        "pathlib.Path('intake-seen.txt').write_text('yes', encoding='utf-8')",
+                        "print(json.dumps({",
+                        "    'schema_version': 1,",
+                        "    'status': 'passed',",
+                        "    'summary': 'requirements are clear',",
+                        "    'findings': [],",
+                        "    'evidence': ['intake brief'],",
+                        "    'artifacts': {'confirmed': ['login works'], 'decision_blockers': []}",
+                        "}))",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            planner_script.write_text(
+                "\n".join(
+                    [
+                        "import json, pathlib, sys",
+                        "payload = json.load(sys.stdin)",
+                        "assert payload['goal'] == 'ship login'",
+                        "assert pathlib.Path('intake-seen.txt').exists()",
+                        "print(json.dumps({",
+                        "    'schema_version': 1,",
+                        "    'tasks': [{",
+                        "        'key': 'login',",
+                        "        'title': 'Implement login',",
+                        "        'priority': 1,",
+                        "        'type': 'feature',",
+                        "        'purpose': 'Exercise intake before planning.',",
+                        "        'context': [],",
+                        "        'scope': ['Add login flow'],",
+                        "        'out_of_scope': ['Billing'],",
+                        "        'requirements': {'confirmed': ['login works'], 'unresolved': [], 'assumptions': []},",
+                        "        'bdd_scenarios': ['User can log in.'],",
+                        "        'unit_tests': ['tests/unit/test_login.py'],",
+                        "        'acceptance': ['login task imported'],",
+                        "        'dependencies': [],",
+                        "        'files': {'read': [], 'write': ['src/login.py']},",
+                        "        'external_inputs': {'credentials': [], 'services': [], 'user_decisions': []}",
+                        "    }]",
+                        "}))",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            config = deepcopy(DEFAULT_CONFIG)
+            config["capabilities"]["intake"]["command"] = f"{shlex.quote(sys.executable)} {shlex.quote(str(intake_script))}"
+            config["capabilities"]["planner"]["command"] = f"{shlex.quote(sys.executable)} {shlex.quote(str(planner_script))}"
+
+            result = run_autopilot(root, config, limit=1, max_steps=2, actor_role="orchestrator", goal="ship login")
+
+            self.assertEqual(result.planned, ["TASK-0001"])
+            self.assertEqual(result.actions[:2], ["autopilot:intake", "autopilot:plan"])
+            metadata = load_data(result.path / "metadata.json")
+            self.assertTrue(metadata["intake"].startswith("harness/capability-runs/intake-"))
+            self.assertEqual(metadata["intake_status"], "passed")
+
+    def test_autopilot_pauses_after_intake_when_planner_is_still_pending(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intake_script = root / "intake_stub.py"
+            planner_script = root / "planner_stub.py"
+            intake_script.write_text(
+                "import json, sys\n"
+                "json.load(sys.stdin)\n"
+                "json.dump({'schema_version': 1, 'status': 'passed', 'summary': 'clear', 'findings': [], 'evidence': ['intake']}, sys.stdout)\n",
+                encoding="utf-8",
+            )
+            planner_script.write_text(
+                "\n".join(
+                    [
+                        "import json, sys",
+                        "json.load(sys.stdin)",
+                        "print(json.dumps({",
+                        "    'schema_version': 1,",
+                        "    'tasks': [{",
+                        "        'key': 'login',",
+                        "        'title': 'Implement login',",
+                        "        'priority': 1,",
+                        "        'type': 'feature',",
+                        "        'purpose': 'Exercise resumed planning after intake.',",
+                        "        'context': [],",
+                        "        'scope': ['Add login flow'],",
+                        "        'out_of_scope': ['Billing'],",
+                        "        'requirements': {'confirmed': ['login works'], 'unresolved': [], 'assumptions': []},",
+                        "        'bdd_scenarios': ['User can log in.'],",
+                        "        'unit_tests': ['tests/unit/test_login.py'],",
+                        "        'acceptance': ['login task imported'],",
+                        "        'dependencies': [],",
+                        "        'files': {'read': [], 'write': ['src/login.py']},",
+                        "        'external_inputs': {'credentials': [], 'services': [], 'user_decisions': []}",
+                        "    }]",
+                        "}))",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            config = deepcopy(DEFAULT_CONFIG)
+            config["capabilities"]["intake"]["command"] = f"{shlex.quote(sys.executable)} {shlex.quote(str(intake_script))}"
+            config["capabilities"]["planner"]["command"] = f"{shlex.quote(sys.executable)} {shlex.quote(str(planner_script))}"
+
+            first = run_autopilot(root, config, limit=1, max_steps=1, actor_role="orchestrator", goal="ship login")
+            second = run_autopilot(root, config, limit=1, max_steps=1, actor_role="orchestrator", resume_path=first.path)
+
+            self.assertEqual(first.status, "paused")
+            self.assertEqual(first.pause_reason, "max_steps_reached")
+            self.assertEqual(first.actions, ["autopilot:intake"])
+            self.assertEqual(second.planned, ["TASK-0001"])
+            self.assertIn("autopilot:plan", second.actions)
+
+    def test_autopilot_blocks_vague_goal_when_intake_returns_decision_blocker(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            intake_script = root / "intake_blocker.py"
+            planner_script = root / "planner_should_not_run.py"
+            intake_script.write_text(
+                "\n".join(
+                    [
+                        "import json, sys",
+                        "json.load(sys.stdin)",
+                        "print(json.dumps({",
+                        "    'schema_version': 1,",
+                        "    'status': 'blocked',",
+                        "    'summary': 'goal needs a product decision',",
+                        "    'findings': [{'severity': 'blocker', 'blocking': True, 'summary': 'Choose target user'}],",
+                        "    'evidence': ['decision blocker'],",
+                        "    'artifacts': {'decision_blockers': [{'id': 'DECISION-1', 'question': 'Who is the target user?'}]}",
+                        "}))",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            planner_script.write_text(
+                "from pathlib import Path\nPath('planner-ran.txt').write_text('bad', encoding='utf-8')\n",
+                encoding="utf-8",
+            )
+            config = deepcopy(DEFAULT_CONFIG)
+            config["capabilities"]["intake"]["command"] = f"{shlex.quote(sys.executable)} {shlex.quote(str(intake_script))}"
+            config["capabilities"]["planner"]["command"] = f"{shlex.quote(sys.executable)} {shlex.quote(str(planner_script))}"
+
+            result = run_autopilot(root, config, limit=1, max_steps=3, actor_role="orchestrator", goal="make it better")
+
+            self.assertEqual(result.status, "blocked")
+            self.assertEqual(result.blocked, ["intake"])
+            self.assertEqual(result.planned, [])
+            self.assertFalse((root / "planner-ran.txt").exists())
+            metadata = load_data(result.path / "metadata.json")
+            self.assertEqual(metadata["intake_status"], "blocked")
+            self.assertEqual(metadata["planner"], None)
+
     def test_cli_autopilot_run_dispatches_first_batch_and_writes_ledger(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -430,6 +592,204 @@ class OrchestratorTests(unittest.TestCase):
             )
             dispatched = [event for event in ledger_events if event["event"] == "task_dispatched"][0]
             self.assertEqual(dispatched["task_id"], "TASK-0001")
+
+    def test_autopilot_dispatches_ready_batch_concurrently(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider = root / "slow_session_provider.py"
+            starts_log = root.parent / f"{root.name}-starts.jsonl"
+            provider.write_text(
+                "\n".join(
+                    [
+                        "import json, pathlib, sys, time",
+                        "payload = json.load(sys.stdin)",
+                        "task_id = payload['session']['task_id']",
+                        f"log = pathlib.Path({str(starts_log)!r})",
+                        "with log.open('a', encoding='utf-8') as handle:",
+                        "    handle.write(json.dumps({'task_id': task_id, 'started': time.time()}) + '\\n')",
+                        "time.sleep(0.45)",
+                        "json.dump({",
+                        "    'schema_version': 1,",
+                        "    'status': 'launched',",
+                        "    'external_session_id': f'session-{task_id}',",
+                        "    'summary': f'launched {task_id}',",
+                        "}, sys.stdout)",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            config = deepcopy(DEFAULT_CONFIG)
+            config["sessions"]["agent_provider"] = "codex"
+            config["sessions"]["launch_command"] = f"{shlex.quote(sys.executable)} {shlex.quote(str(provider))}"
+            first = ready_task("TASK-0001", priority=1)
+            first["files"]["write"] = ["src/a.py"]
+            second = ready_task("TASK-0002", priority=2)
+            second["files"]["write"] = ["src/b.py"]
+            write_task(root, "ready", "TASK-0001", first)
+            write_task(root, "ready", "TASK-0002", second)
+
+            started_at = time.perf_counter()
+            result = run_autopilot(root, config, limit=2, max_steps=1)
+            elapsed = time.perf_counter() - started_at
+
+            self.assertLess(elapsed, 0.8)
+            self.assertEqual(result.dispatched, ["TASK-0001", "TASK-0002"])
+            starts = [json.loads(line) for line in starts_log.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual({item["task_id"] for item in starts}, {"TASK-0001", "TASK-0002"})
+            self.assertLess(max(item["started"] for item in starts) - min(item["started"] for item in starts), 0.25)
+            metadata = load_data(result.path / "metadata.json")
+            batch_execution = metadata["batch_executions"][0]
+            self.assertEqual(batch_execution["status"], "passed")
+            self.assertEqual(batch_execution["mode"], "concurrent")
+            self.assertEqual({item["task_id"] for item in batch_execution["tasks"]}, {"TASK-0001", "TASK-0002"})
+            self.assertEqual(batch_execution["merge_queue"], ["TASK-0001", "TASK-0002"])
+            batch_log = result.path / batch_execution["log"]
+            log_events = [json.loads(line) for line in batch_log.read_text(encoding="utf-8").splitlines()]
+            self.assertIn("task_heartbeat", {event["event"] for event in log_events})
+            self.assertEqual(batch_execution["resource_budget"]["max_workers"], 2)
+
+    def test_autopilot_batch_dispatch_isolates_failed_task_from_other_tasks(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider = root / "mixed_session_provider.py"
+            provider.write_text(
+                "\n".join(
+                    [
+                        "import json, sys",
+                        "payload = json.load(sys.stdin)",
+                        "task_id = payload['session']['task_id']",
+                        "if task_id == 'TASK-0001':",
+                        "    print('not json')",
+                        "else:",
+                        "    json.dump({",
+                        "        'schema_version': 1,",
+                        "        'status': 'launched',",
+                        "        'external_session_id': f'session-{task_id}',",
+                        "        'summary': f'launched {task_id}',",
+                        "    }, sys.stdout)",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            config = deepcopy(DEFAULT_CONFIG)
+            config["sessions"]["agent_provider"] = "codex"
+            config["sessions"]["launch_command"] = f"{shlex.quote(sys.executable)} {shlex.quote(str(provider))}"
+            first = ready_task("TASK-0001", priority=1)
+            first["files"]["write"] = ["src/a.py"]
+            second = ready_task("TASK-0002", priority=2)
+            second["files"]["write"] = ["src/b.py"]
+            write_task(root, "ready", "TASK-0001", first)
+            write_task(root, "ready", "TASK-0002", second)
+
+            result = run_autopilot(root, config, limit=2, max_steps=1)
+
+            self.assertEqual(result.failed, ["TASK-0001"])
+            self.assertEqual(result.dispatched, ["TASK-0002"])
+            self.assertTrue((root / "harness" / "tasks" / "in_progress" / "TASK-0001.json").exists())
+            self.assertTrue((root / "harness" / "tasks" / "in_progress" / "TASK-0002.json").exists())
+            metadata = load_data(result.path / "metadata.json")
+            batch_execution = metadata["batch_executions"][0]
+            self.assertEqual(batch_execution["status"], "failed")
+            self.assertEqual(batch_execution["merge_queue"], ["TASK-0002"])
+            self.assertEqual(
+                {item["task_id"]: item["status"] for item in batch_execution["tasks"]},
+                {"TASK-0001": "failed", "TASK-0002": "dispatched"},
+            )
+
+    def test_cli_autopilot_cancel_stops_running_session_and_marks_run_cancelled(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider = root / "slow_cancel_provider.py"
+            started_marker = root.parent / f"{root.name}-started.txt"
+            finished_marker = root.parent / f"{root.name}-finished.txt"
+            provider.write_text(
+                "\n".join(
+                    [
+                        "import json, pathlib, sys, time",
+                        "json.load(sys.stdin)",
+                        f"pathlib.Path({str(started_marker)!r}).write_text('started', encoding='utf-8')",
+                        "time.sleep(5)",
+                        f"pathlib.Path({str(finished_marker)!r}).write_text('finished', encoding='utf-8')",
+                        "json.dump({'schema_version': 1, 'status': 'launched', 'summary': 'too late'}, sys.stdout)",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            config = deepcopy(DEFAULT_CONFIG)
+            config["sessions"]["agent_provider"] = "codex"
+            config["sessions"]["launch_command"] = f"{shlex.quote(sys.executable)} {shlex.quote(str(provider))}"
+            write_task(root, "ready", "TASK-0001", ready_task("TASK-0001", priority=1))
+            result_holder: dict[str, object] = {}
+
+            def run() -> None:
+                result_holder["result"] = run_autopilot(root, config, limit=1, max_steps=1)
+
+            thread = threading.Thread(target=run)
+            thread.start()
+            deadline = time.time() + 3
+            run_path: Path | None = None
+            while time.time() < deadline:
+                runs = sorted((root / "harness" / "autopilot-runs").glob("*/metadata.json"))
+                if runs and started_marker.exists():
+                    run_path = runs[-1].parent
+                    break
+                time.sleep(0.05)
+            self.assertIsNotNone(run_path)
+
+            original_root = cli.ROOT
+            cli.ROOT = root
+            try:
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    exit_code = cli.main(["autopilot", "--cancel", "--run-path", str(run_path), "--reason", "test cancellation"])
+            finally:
+                cli.ROOT = original_root
+
+            thread.join(timeout=3)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(exit_code, 0)
+            self.assertIn("cancel requested", output.getvalue())
+            result = result_holder["result"]
+            self.assertEqual(getattr(result, "status"), "cancelled")
+            self.assertEqual(getattr(result, "cancelled"), ["TASK-0001"])
+            self.assertFalse(finished_marker.exists())
+            metadata = load_data(run_path / "metadata.json")
+            self.assertEqual(metadata["status"], "cancelled")
+            self.assertEqual(metadata["cancelled"], ["TASK-0001"])
+            self.assertTrue((run_path / "cancel.json").exists())
+            batch_execution = metadata["batch_executions"][0]
+            self.assertEqual(batch_execution["status"], "cancelled")
+            self.assertEqual(batch_execution["tasks"][0]["status"], "cancelled")
+
+    def test_cli_autopilot_logs_streams_latest_batch_events(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider = root / "session_provider.py"
+            provider.write_text(
+                "import json, sys\n"
+                "json.load(sys.stdin)\n"
+                "json.dump({'schema_version': 1, 'status': 'launched', 'external_session_id': 's1', 'summary': 'ok'}, sys.stdout)\n",
+                encoding="utf-8",
+            )
+            config = deepcopy(DEFAULT_CONFIG)
+            config["sessions"]["agent_provider"] = "codex"
+            config["sessions"]["launch_command"] = f"{shlex.quote(sys.executable)} {shlex.quote(str(provider))}"
+            write_task(root, "ready", "TASK-0001", ready_task("TASK-0001", priority=1))
+            result = run_autopilot(root, config, limit=1, max_steps=1)
+            original_root = cli.ROOT
+            cli.ROOT = root
+            try:
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    exit_code = cli.main(["autopilot", "--logs", "--run-path", str(result.path)])
+            finally:
+                cli.ROOT = original_root
+
+            self.assertEqual(exit_code, 0)
+            text = output.getvalue()
+            self.assertIn("task_heartbeat", text)
+            self.assertIn("task_result", text)
+            self.assertIn("TASK-0001", text)
 
     def test_autopilot_marks_run_paused_when_max_steps_reached_with_work_remaining(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -600,6 +960,38 @@ class OrchestratorTests(unittest.TestCase):
             ledger_lines = (run_dirs[0] / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
             self.assertGreater(len(ledger_lines), len(first_ledger_lines))
             self.assertEqual(json.loads(ledger_lines[-1])["event"], "autopilot_finished")
+
+    def test_autopilot_repeated_resume_pressure_records_resume_count_and_finishes_same_run(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            capability_script = root / "capability_stub.py"
+            write_capability_stub(capability_script)
+            command = f"{shlex.quote(sys.executable)} {shlex.quote(str(capability_script))}"
+            config = deepcopy(DEFAULT_CONFIG)
+            for command_name in config["commands"]:
+                config["commands"][command_name] = None
+            for capability in ("bdd", "tdd", "implementer", "reviewer", "verifier"):
+                config["capabilities"][capability]["command"] = command
+            write_task(root, "ready", "TASK-0001", ready_task("TASK-0001", priority=1))
+
+            result = run_autopilot(root, config, limit=1, max_steps=1)
+            resume_count = 0
+            while result.status == "paused" and resume_count < 20:
+                resume_count += 1
+                result = run_autopilot(root, config, limit=1, max_steps=1, resume_path=result.path)
+
+            metadata = load_data(result.path / "metadata.json")
+            ledger_events = [
+                json.loads(line)["event"]
+                for line in (result.path / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(result.status, "finished")
+            self.assertEqual(metadata["status"], "finished")
+            self.assertEqual(metadata["resume_count"], resume_count)
+            self.assertGreaterEqual(metadata["resume_count"], 8)
+            self.assertEqual(ledger_events.count("autopilot_resumed"), metadata["resume_count"])
+            self.assertEqual(len(sorted((root / "harness" / "autopilot-runs").glob("*"))), 1)
 
     def test_autopilot_resume_migrates_legacy_metadata_defaults(self) -> None:
         with TemporaryDirectory() as tmp:

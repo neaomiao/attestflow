@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import shlex
+import sys
 from typing import Any
 
 from .contracts import RELEASE_STATUSES, raise_contract_errors, validate_release_output
@@ -11,11 +13,29 @@ from .provider_commands import provider_timeout_seconds, run_provider_json_comma
 from .tasks import iter_tasks, validate_task
 
 
+BUILTIN_RELEASE_PROVIDERS: dict[str, dict[str, str]] = {
+    "github-release": {"command": "gh", "description": "GitHub releases via attestflow.release_adapters."},
+    "gitlab-release": {"command": "glab", "description": "GitLab releases via attestflow.release_adapters."},
+    "linear": {"command": "linear", "description": "Linear release tracking via attestflow.release_adapters."},
+    "jira": {"command": "jira", "description": "Jira release tracking via attestflow.release_adapters."},
+    "buildkite": {"command": "buildkite-agent", "description": "Buildkite delivery status via attestflow.release_adapters."},
+    "circleci": {"command": "circleci", "description": "CircleCI delivery status via attestflow.release_adapters."},
+    "self-hosted-release": {"command": "attestflow-release", "description": "Self-hosted release systems via attestflow.release_adapters."},
+}
+
+
 @dataclass(frozen=True)
 class ReleaseStatusResult:
     status: str
     output: dict[str, Any]
     run_path: Path
+
+
+def list_release_providers() -> list[dict[str, str]]:
+    return [
+        {"name": name, "command": item["command"], "description": item["description"]}
+        for name, item in sorted(BUILTIN_RELEASE_PROVIDERS.items())
+    ]
 
 
 def run_release_status(
@@ -31,7 +51,7 @@ def run_release_status(
     provider = str(provider_config.get("provider") or ("command" if command else ""))
     if not provider:
         raise ValueError("integrations.release_provider must be configured or passed with --command")
-    release_command = command or _configured_command(provider_config)
+    release_command = command or _configured_command(provider, provider_config)
     if not release_command:
         raise ValueError(f"Release provider command must be configured for {provider}")
     if not shell_command_exists(release_command):
@@ -67,9 +87,13 @@ def _release_provider_config(config: dict[str, Any]) -> dict[str, Any]:
     return release_provider if isinstance(release_provider, dict) else {}
 
 
-def _configured_command(provider_config: dict[str, Any]) -> str | None:
+def _configured_command(provider: str, provider_config: dict[str, Any]) -> str | None:
     command = provider_config.get("command")
-    return str(command) if command else None
+    if command:
+        return str(command)
+    if provider in BUILTIN_RELEASE_PROVIDERS:
+        return _builtin_release_adapter_command()
+    return None
 
 
 def _release_input(
@@ -86,6 +110,7 @@ def _release_input(
         "schema_version": 1,
         "provider": provider,
         "provider_options": _provider_options(provider_config),
+        "security": config.get("security", {}),
         "root": str(root),
         "project": config.get("project", {}),
         "done_tasks": done_tasks,
@@ -200,7 +225,7 @@ def _evidence_value(root: Path, value: Any) -> Any:
 def _provider_options(provider_config: dict[str, Any]) -> dict[str, Any]:
     options = provider_config.get("provider_options", {})
     merged = dict(options) if isinstance(options, dict) else {}
-    for key in ("command", "release_args", "timeout_seconds"):
+    for key in ("command", "repository", "release_args", "timeout_seconds"):
         if key in provider_config and key not in merged:
             merged[key] = provider_config[key]
     return merged
@@ -225,3 +250,8 @@ def _new_release_run_path(root: Path, config: dict[str, Any]) -> Path:
         path = run_root / f"release-{utc_timestamp()}-{suffix}"
     path.mkdir(parents=True)
     return path
+
+
+def _builtin_release_adapter_command() -> str:
+    adapter_path = Path(__file__).resolve().parent / "release_adapters.py"
+    return f"{shlex.quote(sys.executable)} {shlex.quote(str(adapter_path))}"

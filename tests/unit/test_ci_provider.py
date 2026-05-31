@@ -196,6 +196,54 @@ json.dump(
             self.assertEqual(load_data(result.run_path / "input.json")["provider"], "github-actions")
             self.assertEqual(load_data(result.run_path / "output.json")["external_id"], "321")
 
+    def test_builtin_delivery_ci_providers_use_provider_specific_adapters(self) -> None:
+        fixtures = {
+            "gitlab-ci": {
+                "raw": {"id": 42, "status": "success", "web_url": "https://gitlab.example/pipelines/42", "ref": "main", "sha": "abc"},
+                "expected_status": "passed",
+                "expected_id": "42",
+            },
+            "buildkite": {
+                "raw": {"id": "bk-1", "state": "running", "web_url": "https://buildkite.example/builds/1", "branch": "main", "commit": "def"},
+                "expected_status": "running",
+                "expected_id": "bk-1",
+            },
+            "circleci": {
+                "raw": {"id": "cc-1", "status": "failed", "web_url": "https://circleci.example/workflow/1", "vcs": {"branch": "main", "revision": "ghi"}},
+                "expected_status": "failed",
+                "expected_id": "cc-1",
+            },
+        }
+        for provider_name, fixture in fixtures.items():
+            with self.subTest(provider=provider_name), TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                fake_cli = root / "fake-ci"
+                fake_cli.write_text(
+                    "#!/usr/bin/env python3\n"
+                    "import json, sys\n"
+                    f"json.dump({fixture['raw']!r}, sys.stdout)\n",
+                    encoding="utf-8",
+                )
+                fake_cli.chmod(0o755)
+                config = {
+                    "paths": {"ci_runs": "harness/ci-runs"},
+                    "integrations": {
+                        "ci_provider": {
+                            "provider": provider_name,
+                            "provider_options": {"command": str(fake_cli), "status_args": ["status", "--json"]},
+                        }
+                    },
+                }
+
+                result = run_ci_status(root, config)
+
+                self.assertEqual(result.status, fixture["expected_status"])
+                self.assertEqual(load_data(result.run_path / "input.json")["provider"], provider_name)
+                output = load_data(result.run_path / "output.json")
+                self.assertEqual(output["provider"], provider_name)
+                self.assertEqual(output["external_id"], fixture["expected_id"])
+                self.assertTrue(output["summary"].startswith(provider_name))
+
     def test_cli_ci_status_reports_missing_provider(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

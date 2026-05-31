@@ -11,6 +11,8 @@
 
 任务 JSON 是 runtime 的唯一任务文档格式，不是人工主编辑入口。主路径是 planner JSON 通过 `attestflow task import --from-json` 导入。
 
+外部系统入口通过 `attestflow source import --kind ... --from-json ...` 先保存来源证据，再创建 `proposed` task。它不是 ready 任务生成器；真正可执行的任务边界仍由 intake/planner 负责。
+
 ## 文件位置
 
 任务文件放在配置的任务根目录：
@@ -90,6 +92,14 @@ harness/tasks/
     "prs": [],
     "docs": []
   },
+  "source": {
+    "kind": "github_issue",
+    "external_id": "42",
+    "url": "https://example.invalid/issues/42",
+    "status": "open",
+    "priority": 20,
+    "evidence": "harness/sources/github-issue-42/source.json"
+  },
   "risks": [],
   "notes": [],
   "created_at": null,
@@ -155,6 +165,8 @@ archived
 `evidence`：`in_progress`、`review`、`verified` 和 `accepted` 必须包含 `evidence.run_id` 和 `evidence.session`，确保活跃任务能恢复到确定的 run 和 agent session；`review`、`verified`、`accepted`、`done` 和 `archived` 还必须引用真实 run packet。外部交付证据使用可选字段记录相对路径：`ci` 指向 CI provider output，`pr_request` 指向 `pr ensure` output，`pr` 指向 `pr status` output，`release` 不写入单任务 evidence，而写入顶层 autopilot metadata。
 
 `links.issues`、`links.prs`、`links.docs`：如果存在，必须是字符串 list。
+
+`source`：可选 mapping，只由 source import 或保留来源链路的自动化写入。`kind` 使用规范化值，例如 `github_issue`、`linear_ticket`、`jira_ticket`、`pr_review_comment`、`ci_failure`；`external_id` 是外部系统稳定 ID；`url` 指向原始对象；`evidence` 指向 `harness/sources/.../source.json`。带 `source` 的 `proposed` task 只表示“这个外部输入已入队”，不表示需求已经澄清或可执行。
 
 ## 分状态要求
 

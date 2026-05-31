@@ -115,12 +115,13 @@ json.dump(
     {
         "schema_version": 1,
         "status": "launched",
-        "external_session_id": "codex-session-123",
-        "resume_command": "codex resume codex-session-123",
-        "summary": "started codex session",
-    },
-    sys.stdout,
-)
+	        "external_session_id": "codex-session-123",
+	        "resume_command": "codex resume codex-session-123",
+	        "summary": "started codex session",
+	        "usage": {"provider": "codex", "model": "gpt-5", "input_tokens": 42, "output_tokens": 7, "total_tokens": 49},
+	    },
+	    sys.stdout,
+	)
 """.lstrip(),
                 encoding="utf-8",
             )
@@ -142,8 +143,10 @@ json.dump(
             self.assertEqual(session["external_session_id"], "codex-session-123")
             self.assertEqual(session["resume_command"], "codex resume codex-session-123")
             self.assertEqual(session["launch_exit_code"], 0)
+            self.assertEqual(session["launch_usage"], "session-launch-usage.json")
             self.assertTrue((run.path / "session-adapter-input.json").exists())
             self.assertTrue((run.path / "session-adapter-output.json").exists())
+            self.assertEqual(load_data(run.path / "session-launch-usage.json")["total_tokens"], 49)
             adapter_input = load_data(run.path / "session-adapter-input.json")
             self.assertEqual(adapter_input["action"], "launch")
             metadata = load_data(run.path / "metadata.yml")
@@ -258,6 +261,125 @@ print(json.dumps({"schema_version": 1, "status": "launched", "summary": "too lat
             self.assertEqual(session["launch_exit_code"], -1)
             self.assertIn("timed out", (run.path / "session-launch.stderr.log").read_text(encoding="utf-8"))
             self.assertTrue((run.path / "session-adapter-input.json").exists())
+
+    def test_session_launch_rejects_actual_writes_outside_task_scope(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider = root / "scope_breaking_session_provider.py"
+            provider.write_text(
+                """
+import json
+import pathlib
+import sys
+
+json.load(sys.stdin)
+pathlib.Path("outside.txt").write_text("not allowed", encoding="utf-8")
+json.dump(
+    {
+        "schema_version": 1,
+        "status": "launched",
+        "external_session_id": "codex-session-123",
+        "summary": "started but wrote outside scope",
+    },
+    sys.stdout,
+)
+""".lstrip(),
+                encoding="utf-8",
+            )
+            task = ready_task("TASK-0001")
+            task["files"]["write"] = ["allowed.txt"]
+            config = DEFAULT_CONFIG.copy()
+            config["root"] = root
+            config["sessions"] = {
+                "agent_provider": "codex",
+                "role": "worker_agent",
+                "launch_command": f"python3 {provider}",
+            }
+            write_task(root, "ready", "TASK-0001", task)
+
+            run = start_task(root, config, "TASK-0001", actor_role="orchestrator")
+
+            session = load_data(run.path / "session.yml")
+            self.assertEqual(session["status"], "launch_failed")
+            self.assertIn("write_scope", session["failure"])
+            report = load_data(run.path / "session-launch-write-scope.json")
+            self.assertEqual(report["status"], "failed")
+            self.assertEqual(report["violations"][0]["path"], "outside.txt")
+            self.assertEqual(report["violations"][0]["change_type"], "added")
+
+    def test_session_resume_rejects_delete_rename_and_binary_outside_task_scope(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text("before\n", encoding="utf-8")
+            (root / "old-name.txt").write_text("move me\n", encoding="utf-8")
+            launch_provider = root / "launch_provider.py"
+            launch_provider.write_text(
+                """
+import json
+import sys
+
+json.load(sys.stdin)
+json.dump(
+    {
+        "schema_version": 1,
+        "status": "launched",
+        "external_session_id": "codex-session-123",
+        "summary": "started codex session",
+    },
+    sys.stdout,
+)
+""".lstrip(),
+                encoding="utf-8",
+            )
+            resume_provider = root / "scope_breaking_resume_provider.py"
+            resume_provider.write_text(
+                """
+import json
+import pathlib
+import sys
+
+json.load(sys.stdin)
+pathlib.Path("README.md").unlink()
+pathlib.Path("old-name.txt").rename("new-name.txt")
+pathlib.Path("asset.bin").write_bytes(b"\\x00\\x01binary")
+json.dump(
+    {
+        "schema_version": 1,
+        "status": "resumed",
+        "external_session_id": "codex-session-123",
+        "summary": "resumed with bad writes",
+    },
+    sys.stdout,
+)
+""".lstrip(),
+                encoding="utf-8",
+            )
+            task = ready_task("TASK-0001")
+            task["files"]["write"] = ["allowed.txt"]
+            config = DEFAULT_CONFIG.copy()
+            config["root"] = root
+            config["sessions"] = {
+                "agent_provider": "codex",
+                "role": "worker_agent",
+                "launch_command": f"python3 {launch_provider}",
+                "resume_command": f"python3 {resume_provider}",
+            }
+            write_task(root, "ready", "TASK-0001", task)
+            run = start_task(root, config, "TASK-0001", actor_role="orchestrator")
+
+            resumed = resume_agent_session(root, config, run.path)
+
+            self.assertEqual(resumed.status, "resume_failed")
+            session = load_data(run.path / "session.yml")
+            self.assertIn("write_scope", session["failure"])
+            report = load_data(run.path / "session-resume-write-scope.json")
+            violations = {(item["path"], item["change_type"]) for item in report["violations"]}
+            self.assertIn(("README.md", "deleted"), violations)
+            self.assertIn(("old-name.txt", "renamed_from"), violations)
+            self.assertIn(("new-name.txt", "renamed_to"), violations)
+            self.assertIn(("asset.bin", "added"), violations)
+            binary_paths = {item["path"] for item in report["changes"] if item["binary"]}
+            self.assertIn("asset.bin", binary_paths)
 
     def test_session_launch_blocked_moves_task_to_blocked_with_structured_blocker(self) -> None:
         with TemporaryDirectory() as tmp:

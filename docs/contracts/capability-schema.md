@@ -136,17 +136,26 @@ Programming Agent Provider 要求：
   "status": "passed",
   "summary": "No blocking issues.",
   "findings": [],
-  "evidence": ["review report"]
+  "evidence": ["review report"],
+  "usage": {
+    "provider": "codex",
+    "model": "gpt-5",
+    "input_tokens": 1200,
+    "output_tokens": 300,
+    "total_tokens": 1500
+  }
 }
 ```
 
 字段规则：
 
 - `schema_version` 必须为 `1`。
+- `contract_version` 可选；如果出现，必须为 `1`。缺省值兼容现有 provider。
 - `status` 必须是 `passed`、`failed` 或 `blocked`。
 - `summary` 必须是非空字符串。
 - `findings` 必须是数组。
 - `evidence` 必须是数组。
+- `usage` 可选；如果 provider 能拿到真实模型消耗，必须用非负整数填写 `input_tokens`、`output_tokens`、`total_tokens`、`cached_input_tokens` 或 `reasoning_tokens`，可用非负数字填写 `cost_usd`。Attestflow 会保留原始 `output.json`，并把 `usage` 单独写为 `usage.json`，方便后续成本审计。
 
 Task-scoped typed artifact 规则：
 

@@ -254,7 +254,14 @@ def select_dispatchable_tasks(root: Path, config: dict[str, Any], *, limit: int 
     return selected
 
 
-def start_task(root: Path, config: dict[str, Any], task_id: str, actor_role: str) -> RunRecord:
+def start_task(
+    root: Path,
+    config: dict[str, Any],
+    task_id: str,
+    actor_role: str,
+    *,
+    launch_session: bool = True,
+) -> RunRecord:
     record = _find_task(root, config, task_id, expected_state="ready")
     errors = validate_task(record.task, directory_state="ready")
     if errors:
@@ -296,11 +303,11 @@ def start_task(root: Path, config: dict[str, Any], task_id: str, actor_role: str
     if worktree:
         evidence["worktree"] = str(worktree.path)
     updated["evidence"] = evidence
-    session = create_agent_session(root, config, updated, run, workspace_root=workspace_root)
+    session = create_agent_session(root, config, updated, run, workspace_root=workspace_root, launch=launch_session)
     evidence["session"] = str(session.path.relative_to(root))
     updated["evidence"] = evidence
     target_state = "in_progress"
-    if session.status == "blocked":
+    if launch_session and session.status == "blocked":
         session_data = load_data(session.path)
         updated = _add_blocker(
             updated,

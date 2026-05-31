@@ -15,6 +15,8 @@ PYTHONPATH=../.. python -m attestflow autopilot --run --goal "Add greeting suppo
 PYTHONPATH=../.. python -m attestflow tasks
 PYTHONPATH=../.. python -m attestflow evidence TASK-0001
 PYTHONPATH=../.. python -m attestflow evidence export TASK-0001 --out attestflow-artifacts/TASK-0001
+PYTHONPATH=../.. python -m attestflow evidence bundle --run <autopilot-run-id> --out attestflow-artifacts/run
+PYTHONPATH=../.. python -m attestflow evidence verify attestflow-artifacts/run
 ```
 
 成功后会看到一个 `done` 任务，以及这些产物：
@@ -40,10 +42,13 @@ PYTHONPATH=../.. python -m attestflow autopilot --run --goal "Add greeting suppo
 
 ```bash
 python -m pip install --user .
+python -m attestflow install-smoke --offline
 python -m attestflow init --path /path/to/project --adapter python --agent-provider command
 cd /path/to/project
 python -m attestflow doctor
 ```
+
+`install-smoke` 是安装层检查，不依赖模型账号。它会确认 Python 版本、CLI 是否在 `PATH`、包内模板、初始化流程和 `doctor` 都可用；源码仓库中可以运行 `python -m attestflow install-smoke --offline --check-template-mirror`，额外校验源码模板与打包模板一致。
 
 常用 adapter：
 
@@ -52,8 +57,23 @@ python -m attestflow doctor
 - `node`：读取 package manager 和 package scripts。
 - `go`：检测 `go.mod`，填入 `go test ./...`。
 - `rust`：检测 `Cargo.toml`，填入 `cargo test` / `cargo check` / `cargo build`。
+- `monorepo`：检测 `pnpm-workspace.yaml`、`turbo.json`、`nx.json`，把 package scripts 映射成 workspace 命令。
+- `docker`：检测 `Dockerfile` 和 Compose 文件，启用 Docker 执行策略并填入 `docker build .`。
+- `bazel`：检测 Bazel workspace，填入 `bazel test //...` / `bazel build //...`。
+- `java` / `kotlin`：检测 Maven 或 Gradle，填入对应 test/build 命令。
+- `dotnet` / `swift` / `dart` / `ruby` / `php`：检测各自标准项目文件并填入基础验证命令。
 
 ## 3. 最小闭环
+
+如果入口来自外部系统，先保存来源快照，再让 intake/planner 决定真正的任务边界：
+
+```bash
+python -m attestflow source import --kind github-issue --from-json issue.json
+python -m attestflow source import --kind pr-review-comment --from-json review-comment.json
+python -m attestflow source import --kind ci-failure --from-json ci-failure.json
+```
+
+导入后会生成 `harness/sources/.../source.json` 和 `harness/tasks/proposed/TASK-*.json`。`proposed` task 不是可执行开发任务；它保留外部来源、优先级和证据，后续仍走 `goal -> intake -> planner` 或配置好的 autopilot 流程。
 
 配置 `capabilities.planner.command`、`capabilities.bdd.command`、`capabilities.tdd.command`、`capabilities.implementer.command` 和 `capabilities.reviewer.command` 后，运行：
 
@@ -72,8 +92,14 @@ Attestflow 会：
 
 - `python -m attestflow doctor`：配置、目录、命令和 provider preflight。
 - `python -m attestflow autopilot --status --json`：最新 top-level run 状态。
+- `python -m attestflow inspect --run RUN`：把 run metadata、ledger、blocker 和 provider failure 汇总成 timeline、失败 drilldown 和下一步动作。
+- `python -m attestflow inspect --diff OLD_RUN NEW_RUN`：对比两次 top-level run 的状态、actions、planned/dispatched 和 release 变化。
+- `python -m attestflow recover`：诊断 orphan run、半写 task、stale worktree 和 provider 中断；加 `--apply` 才执行确定性修复并写 ledger snapshot，`--resume-interrupted` 会显式恢复被取消的 provider session。
 - `python -m attestflow contract validate capability-output output.json`：本地校验 provider 输出。
 - `python -m attestflow provider contract --provider codex`：用固定夹具检查 provider 是否能产出核心合同 JSON。
+- `python -m attestflow source import --kind ci-failure --from-json failure.json`：把外部 issue、review comment 或 CI failure 转成带来源证据的 proposed task。
+- `python -m attestflow evidence bundle --run RUN --out DIR`：导出顶层 autopilot bundle、release evidence、PR comment、manifest 和 audit report。
+- `python -m attestflow evidence verify DIR --check-source`：校验 bundle hash/size，并检查源 evidence 是否已经变化。
 - `python -m attestflow resume`：低层 task run 恢复提示。
 - `harness/runs/*/ledger.jsonl`：append-only 审计日志。
 - `harness/capability-runs/*/stderr.log`：provider 错误。

@@ -20,6 +20,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "ci_runs": "harness/ci-runs",
         "pr_runs": "harness/pr-runs",
         "release_runs": "harness/release-runs",
+        "sources": "harness/sources",
         "docs": "docs",
     },
     "commands": {
@@ -38,6 +39,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "require_disjoint_agent_write_scopes": True,
         "require_issue_triage_for_linked_issues": True,
         "docker_required": False,
+    },
+    "security": {
+        "provider_commands": {
+            "allowlist": [],
+            "max_output_bytes": 1048576,
+            "require_approval_for_irreversible": True,
+        },
+        "network": {"mode": "provider-owned"},
+        "filesystem": {"mode": "write-scope-validated"},
     },
     "sessions": {
         "agent_provider": "command",
@@ -58,6 +68,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "loop_interval_seconds": 0,
     },
     "capabilities": {
+        "intake": {
+            "agent_provider": "command",
+            "command": None,
+        },
         "planner": {
             "agent_provider": "command",
             "command": None,
@@ -94,6 +108,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "ci_provider": "optional",
         "pr_provider": "optional",
         "release_provider": "optional",
+    },
+    "plugins": {
+        "directories": ["harness/plugins"],
     },
 }
 
@@ -169,6 +186,34 @@ def validate_config(config: dict[str, Any]) -> list[str]:
             if path_template is not None and not isinstance(path_template, str):
                 errors.append("sessions.worktree.path_template must be a string or null")
     capabilities = config.get("capabilities", {})
+    security = config.get("security", {})
+    if security is not None and not isinstance(security, dict):
+        errors.append("security must be a mapping")
+    elif isinstance(security, dict):
+        provider_commands = security.get("provider_commands", {})
+        if provider_commands is not None and not isinstance(provider_commands, dict):
+            errors.append("security.provider_commands must be a mapping")
+        elif isinstance(provider_commands, dict):
+            allowlist = provider_commands.get("allowlist", [])
+            if allowlist is not None and (
+                not isinstance(allowlist, list) or not all(isinstance(item, str) for item in allowlist)
+            ):
+                errors.append("security.provider_commands.allowlist must be a list of strings")
+            max_output_bytes = provider_commands.get("max_output_bytes")
+            if max_output_bytes is not None and (type(max_output_bytes) is not int or max_output_bytes <= 0):
+                errors.append("security.provider_commands.max_output_bytes must be a positive integer")
+            require_approval = provider_commands.get("require_approval_for_irreversible")
+            if require_approval is not None and not isinstance(require_approval, bool):
+                errors.append("security.provider_commands.require_approval_for_irreversible must be a boolean")
+    plugins = config.get("plugins", {})
+    if plugins is not None and not isinstance(plugins, dict):
+        errors.append("plugins must be a mapping")
+    elif isinstance(plugins, dict):
+        directories = plugins.get("directories", [])
+        if directories is not None and (
+            not isinstance(directories, list) or not all(isinstance(item, str) for item in directories)
+        ):
+            errors.append("plugins.directories must be a list of strings")
     autopilot = config.get("autopilot", {})
     if autopilot is not None and not isinstance(autopilot, dict):
         errors.append("autopilot must be a mapping")
@@ -229,7 +274,7 @@ def validate_config(config: dict[str, Any]) -> list[str]:
         enabled = context.get("enabled")
         if enabled is not None and not isinstance(enabled, bool):
             errors.append("context.enabled must be a boolean")
-        for key in ("max_tree_entries", "max_file_bytes"):
+        for key in ("max_tree_entries", "max_file_bytes", "max_index_files"):
             value = context.get(key)
             if value is not None and (type(value) is not int or value <= 0):
                 errors.append(f"context.{key} must be a positive integer")

@@ -463,6 +463,92 @@ print(json.dumps({"schema_version": 1, "status": "released", "summary": "too lat
             self.assertEqual(len(run_dirs), 1)
             self.assertIn("timed out", (run_dirs[0] / "stderr.log").read_text(encoding="utf-8"))
 
+    def test_builtin_delivery_release_providers_use_provider_specific_adapters(self) -> None:
+        fixtures = {
+            "github-release": {
+                "raw": {"id": "gh-rel-1", "html_url": "https://github.example/releases/1", "tagName": "v1.0.0", "isDraft": False},
+                "expected_status": "released",
+                "expected_id": "gh-rel-1",
+            },
+            "gitlab-release": {
+                "raw": {"tag_name": "v1.0.0", "_links": {"self": "https://gitlab.example/releases/v1.0.0"}},
+                "expected_status": "released",
+                "expected_id": "v1.0.0",
+            },
+            "linear": {
+                "raw": {"id": "LIN-1", "url": "https://linear.example/issue/LIN-1", "state": {"name": "Done"}},
+                "expected_status": "released",
+                "expected_id": "LIN-1",
+            },
+            "jira": {
+                "raw": {"key": "REL-1", "self": "https://jira.example/rest/api/issue/REL-1", "fields": {"status": {"name": "Done"}}},
+                "expected_status": "released",
+                "expected_id": "REL-1",
+            },
+            "buildkite": {
+                "raw": {"id": "bk-build-1", "state": "passed", "web_url": "https://buildkite.example/builds/1"},
+                "expected_status": "released",
+                "expected_id": "bk-build-1",
+            },
+            "circleci": {
+                "raw": {"id": "cc-workflow-1", "status": "success", "web_url": "https://circleci.example/workflow/1"},
+                "expected_status": "released",
+                "expected_id": "cc-workflow-1",
+            },
+            "self-hosted-release": {
+                "raw": {"id": "deploy-1", "status": "released", "url": "https://deploy.example/releases/1"},
+                "expected_status": "released",
+                "expected_id": "deploy-1",
+            },
+        }
+        for provider_name, fixture in fixtures.items():
+            with self.subTest(provider=provider_name), TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                fake_cli = root / "fake-release"
+                fake_cli.write_text(
+                    "#!/usr/bin/env python3\n"
+                    "import json, sys\n"
+                    f"json.dump({fixture['raw']!r}, sys.stdout)\n",
+                    encoding="utf-8",
+                )
+                fake_cli.chmod(0o755)
+                config = {
+                    "paths": {"release_runs": "harness/release-runs"},
+                    "integrations": {
+                        "release_provider": {
+                            "provider": provider_name,
+                            "provider_options": {"command": str(fake_cli), "release_args": ["release", "status", "--json"]},
+                        }
+                    },
+                }
+
+                result = run_release_status(root, config, done_tasks=[])
+
+                self.assertEqual(result.status, fixture["expected_status"])
+                self.assertEqual(load_data(result.run_path / "input.json")["provider"], provider_name)
+                output = load_data(result.run_path / "output.json")
+                self.assertEqual(output["provider"], provider_name)
+                self.assertEqual(output["external_id"], fixture["expected_id"])
+                self.assertTrue(output["summary"].startswith(provider_name))
+
+    def test_cli_release_providers_lists_builtin_adapters(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output):
+            exit_code = cli.main(["release", "providers"])
+
+        self.assertEqual(exit_code, 0)
+        text = output.getvalue()
+        for provider_name in (
+            "github-release",
+            "gitlab-release",
+            "linear",
+            "jira",
+            "buildkite",
+            "circleci",
+            "self-hosted-release",
+        ):
+            self.assertIn(provider_name, text)
+
     def test_cli_release_status_reports_missing_provider(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

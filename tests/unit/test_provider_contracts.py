@@ -22,7 +22,16 @@ import sys
 
 prompt = sys.argv[-1]
 
-if "Capability: planner" in prompt:
+if "Capability: intake" in prompt:
+    output = {
+        "schema_version": 1,
+        "status": "passed",
+        "summary": "intake complete",
+        "findings": [],
+        "evidence": ["intake"],
+        "artifacts": {"confirmed": ["fixture runs"], "decision_blockers": []},
+    }
+elif "Capability: planner" in prompt:
     output = {
         "schema_version": 1,
         "tasks": [
@@ -117,7 +126,7 @@ print(json.dumps({"nested": {"contract": output}}))
             self.assertEqual(exit_code, 0)
             payload = json.loads(output.getvalue())
             self.assertEqual(payload["status"], "passed")
-            self.assertEqual([fixture["name"] for fixture in payload["fixtures"]], ["planner", "task", "reviewer", "verifier", "release"])
+            self.assertEqual([fixture["name"] for fixture in payload["fixtures"]], ["intake", "planner", "task", "reviewer", "verifier", "release"])
 
 
 if __name__ == "__main__":

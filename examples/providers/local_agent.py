@@ -27,6 +27,9 @@ def main() -> int:
     if name == "planner":
         print(json.dumps(_planner_output(payload, adapter), indent=2))
         return 0
+    if name == "intake":
+        print(json.dumps(_intake_output(payload)))
+        return 0
     if name == "bdd":
         _write_bdd(root, adapter)
         print(json.dumps(_bdd_output(payload, adapter)))
@@ -58,7 +61,17 @@ def _detect_adapter(root: Path) -> str:
 
 def _planner_output(payload: dict[str, Any], adapter: str) -> dict[str, Any]:
     goal = str(payload.get("goal") or "Add greeting support")
-    if adapter == "node":
+    if adapter == "attestflow":
+        unit_tests = ["tests/unit/test_attestflow_dogfood.py"]
+        files = {
+            "read": ["README.md", "harness.yml", "attestflow/context.py"],
+            "write": [
+                "attestflow/dogfood_marker.py",
+                "tests/bdd/test_attestflow_dogfood_behavior.py",
+                "tests/unit/test_attestflow_dogfood.py",
+            ],
+        }
+    elif adapter == "node":
         unit_tests = ["tests/unit/greeter.test.mjs"]
         files = {
             "read": ["README.md", "package.json"],
@@ -76,19 +89,35 @@ def _planner_output(payload: dict[str, Any], adapter: str) -> dict[str, Any]:
         "tasks": [
             {
                 "key": "greeting_helper",
-                "title": "Add greeting helper",
+                "title": "Dogfood Attestflow marker" if adapter == "attestflow" else "Add greeting helper",
                 "priority": 10,
                 "type": "feature",
-                "purpose": "Demonstrate the Attestflow local provider loop with a small greeting helper.",
+                "purpose": (
+                    "Demonstrate Attestflow managing its own repository with a deterministic marker change."
+                    if adapter == "attestflow"
+                    else "Demonstrate the Attestflow local provider loop with a small greeting helper."
+                ),
                 "context": ["Local example provider writes tests and implementation during capability runs."],
-                "scope": ["Create a greeting helper", "Create behavior and unit tests", "Verify locally"],
+                "scope": (
+                    ["Create a dogfood marker module", "Create behavior and unit tests", "Verify locally"]
+                    if adapter == "attestflow"
+                    else ["Create a greeting helper", "Create behavior and unit tests", "Verify locally"]
+                ),
                 "out_of_scope": ["External services", "Network access", "Real model calls"],
                 "requirements": {
-                    "confirmed": ["The helper returns a stable greeting for a supplied name."],
+                    "confirmed": (
+                        ["The marker returns a stable dogfood status string."]
+                        if adapter == "attestflow"
+                        else ["The helper returns a stable greeting for a supplied name."]
+                    ),
                     "unresolved": [],
                     "assumptions": ["This example is intentionally small so the harness workflow is visible."],
                 },
-                "bdd_scenarios": ["Given a name, the helper returns 'Hello, <name>!'."],
+                "bdd_scenarios": (
+                    ["Given the dogfood marker, it reports that Attestflow is self-managed."]
+                    if adapter == "attestflow"
+                    else ["Given a name, the helper returns 'Hello, <name>!'."]
+                ),
                 "unit_tests": unit_tests,
                 "acceptance": ["Autopilot moves the task to done with fresh verification evidence."],
                 "dependencies": [],
@@ -99,6 +128,25 @@ def _planner_output(payload: dict[str, Any], adapter: str) -> dict[str, Any]:
 
 
 def _write_bdd(root: Path, adapter: str) -> None:
+    if adapter == "attestflow":
+        path = root / "tests" / "bdd" / "test_attestflow_dogfood_behavior.py"
+        _write(
+            path,
+            """import unittest
+
+from attestflow.dogfood_marker import dogfood_status
+
+
+class AttestflowDogfoodBehaviorTests(unittest.TestCase):
+    def test_reports_self_managed_status(self) -> None:
+        self.assertEqual(dogfood_status(), "attestflow-self-managed")
+
+
+if __name__ == "__main__":
+    unittest.main()
+""",
+        )
+        return
     if adapter == "node":
         path = root / "tests" / "bdd" / "greeter.behavior.test.mjs"
         _write(
@@ -133,6 +181,25 @@ if __name__ == "__main__":
 
 
 def _write_unit_tests(root: Path, adapter: str) -> None:
+    if adapter == "attestflow":
+        path = root / "tests" / "unit" / "test_attestflow_dogfood.py"
+        _write(
+            path,
+            """import unittest
+
+from attestflow.dogfood_marker import dogfood_status
+
+
+class AttestflowDogfoodTests(unittest.TestCase):
+    def test_dogfood_status_is_stable(self) -> None:
+        self.assertEqual(dogfood_status(), "attestflow-self-managed")
+
+
+if __name__ == "__main__":
+    unittest.main()
+""",
+        )
+        return
     if adapter == "node":
         path = root / "tests" / "unit" / "greeter.test.mjs"
         _write(
@@ -174,6 +241,17 @@ if __name__ == "__main__":
 
 
 def _write_implementation(root: Path, adapter: str) -> None:
+    if adapter == "attestflow":
+        _write(
+            root / "attestflow" / "dogfood_marker.py",
+            '''"""Small deterministic artifact created by the Attestflow dogfood run."""
+
+
+def dogfood_status() -> str:
+    return "attestflow-self-managed"
+''',
+        )
+        return
     if adapter == "node":
         _write(
             root / "greeter.js",
@@ -201,6 +279,32 @@ def _capability_output(status: str, summary: str, evidence: list[str] | None = N
         "findings": [],
         "evidence": evidence or [],
     }
+
+
+def _intake_output(payload: dict[str, Any]) -> dict[str, Any]:
+    goal = str(payload.get("goal") or "").strip()
+    vague_goals = {"make it better", "improve this", "fix stuff", "do the thing"}
+    if goal.lower() in vague_goals:
+        output = _capability_output("blocked", "Goal needs a concrete product or engineering decision.", ["intake decision blocker"])
+        output["artifacts"] = {
+            "confirmed": [],
+            "assumptions": [],
+            "decision_blockers": [
+                {
+                    "id": "DECISION-1",
+                    "question": "What user-visible or engineering outcome should this run optimize for?",
+                    "owner": "user",
+                }
+            ],
+        }
+        return output
+    output = _capability_output("passed", "Goal is clear enough to plan.", ["intake brief"])
+    output["artifacts"] = {
+        "confirmed": [goal or "Run the local Attestflow dogfood task."],
+        "assumptions": ["Use the deterministic local provider for dogfood evidence."],
+        "decision_blockers": [],
+    }
+    return output
 
 
 def _bdd_output(payload: dict[str, Any], adapter: str) -> dict[str, Any]:
@@ -258,14 +362,20 @@ def _verifier_output(adapter: str) -> dict[str, Any]:
 
 
 def _bdd_files(adapter: str) -> list[str]:
+    if adapter == "attestflow":
+        return ["tests/bdd/test_attestflow_dogfood_behavior.py"]
     return ["tests/bdd/greeter.behavior.test.mjs"] if adapter == "node" else ["tests/bdd/test_greeter_behavior.py"]
 
 
 def _unit_test_files(adapter: str) -> list[str]:
+    if adapter == "attestflow":
+        return ["tests/unit/test_attestflow_dogfood.py"]
     return ["tests/unit/greeter.test.mjs"] if adapter == "node" else ["tests/unit/test_greeter.py"]
 
 
 def _implementation_files(adapter: str) -> list[str]:
+    if adapter == "attestflow":
+        return ["attestflow/dogfood_marker.py"]
     return ["greeter.js"] if adapter == "node" else ["greeter.py"]
 
 

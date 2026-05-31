@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from typing import Any
 
-from .io import dump_data
+from .io import dump_data, load_data
 from .provider_failures import classify_provider_failure, redact_text
 
 
@@ -84,8 +84,20 @@ def run_provider_json_command(
     *,
     timeout_seconds: float | None = None,
 ) -> dict[str, Any]:
-    dump_data(payload, run_path / "input.json")
     argv = provider_command_argv(command)
+    policy = _provider_command_policy(payload)
+    payload["security"] = _provider_security_payload(root, payload, policy)
+    dump_data(payload, run_path / "input.json")
+    command_error = _command_allowlist_error(argv, policy)
+    if command_error:
+        _write_provider_logs(run_path, "", command_error)
+        _write_provider_failure(run_path, label, "tool_denied", None, "", command_error, command_error)
+        raise ValueError(f"{label} provider failure tool_denied: {command_error}")
+    approval_error = _approval_error(payload)
+    if approval_error:
+        _write_provider_logs(run_path, "", approval_error)
+        _write_provider_failure(run_path, label, "approval_required", None, "", approval_error, approval_error)
+        raise ValueError(f"{label} provider failure approval_required: {approval_error}")
     process = subprocess.Popen(
         argv,
         cwd=root,
@@ -110,6 +122,13 @@ def run_provider_json_command(
         _write_provider_failure(run_path, label, "timeout", -1, stdout, stderr, message)
         raise ValueError(f"{label} provider failure timeout: {message}") from exc
 
+    max_output_bytes = _max_output_bytes(policy)
+    if max_output_bytes is not None and _output_size(stdout, stderr) > max_output_bytes:
+        message = f"{label} provider output too large: {_output_size(stdout, stderr)} bytes exceeds {max_output_bytes} bytes"
+        _write_provider_logs(run_path, _truncate_text(stdout, max_output_bytes), _append_stderr_message(_truncate_text(stderr, max_output_bytes), message))
+        _write_provider_failure(run_path, label, "output_too_large", process.returncode, stdout, stderr, message)
+        raise ValueError(f"{label} provider failure output_too_large: {message}")
+
     _write_provider_logs(run_path, stdout, stderr)
     if process.returncode != 0:
         message = f"{label} provider command failed with exit code {process.returncode}"
@@ -125,6 +144,7 @@ def run_provider_json_command(
         message = f"{label} provider command must return a JSON object"
         _write_provider_failure(run_path, label, "invalid_output", process.returncode, stdout, stderr, message)
         raise ValueError(f"{label} provider failure invalid_output: {message}")
+    _write_provider_usage(run_path, output)
     return output
 
 
@@ -185,3 +205,103 @@ def _write_provider_failure(
     )
     dump_data(failure, run_path / "failure.json")
     return failure
+
+
+def _write_provider_usage(run_path: Path, output: dict[str, Any]) -> None:
+    usage = output.get("usage")
+    if isinstance(usage, dict):
+        dump_data(usage, run_path / "usage.json")
+
+
+def _provider_command_policy(payload: dict[str, Any]) -> dict[str, Any]:
+    security = payload.get("security", {})
+    if not isinstance(security, dict):
+        return {}
+    provider_commands = security.get("provider_commands", {})
+    return provider_commands if isinstance(provider_commands, dict) else {}
+
+
+def _provider_security_payload(root: Path, payload: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
+    security = payload.get("security", {})
+    normalized = dict(security) if isinstance(security, dict) else {}
+    normalized["provider_commands"] = dict(policy)
+    normalized["approval"] = _approval_payload(root, payload, policy)
+    return normalized
+
+
+def _command_allowlist_error(argv: list[str], policy: dict[str, Any]) -> str | None:
+    allowlist = policy.get("allowlist", [])
+    if not allowlist:
+        return None
+    allowed = [str(item) for item in allowlist if str(item).strip()]
+    if not allowed:
+        return None
+    executable = argv[0] if argv else ""
+    executable_name = Path(executable).name
+    for item in allowed:
+        if executable == item or executable_name == item:
+            return None
+        if Path(item).is_absolute() and Path(executable).expanduser().resolve() == Path(item).expanduser().resolve():
+            return None
+    return f"provider command not allowed by security.provider_commands.allowlist: {executable}"
+
+
+def _approval_payload(root: Path, payload: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
+    options = payload.get("provider_options", {})
+    options = options if isinstance(options, dict) else {}
+    required = bool(options.get("irreversible") or options.get("irreversible_action"))
+    if not required or policy.get("require_approval_for_irreversible", True) is False:
+        return {"required": required, "approved": True, "path": None, "id": options.get("approval_id")}
+    approval_path = _approval_path(root, options)
+    approved = False
+    if approval_path and approval_path.exists():
+        try:
+            approval = load_data(approval_path)
+        except (OSError, ValueError):
+            approval = {}
+        approved = isinstance(approval, dict) and (approval.get("approved") is True or approval.get("status") == "approved")
+    return {
+        "required": True,
+        "approved": approved,
+        "path": str(approval_path.relative_to(root)) if approval_path and approval_path.exists() else (str(approval_path) if approval_path else None),
+        "id": options.get("approval_id"),
+    }
+
+
+def _approval_path(root: Path, options: dict[str, Any]) -> Path | None:
+    configured = options.get("approval_path")
+    if configured:
+        path = Path(str(configured))
+        return path if path.is_absolute() else root / path
+    approval_id = options.get("approval_id")
+    if approval_id:
+        return root / "harness" / "approvals" / f"{approval_id}.json"
+    return None
+
+
+def _approval_error(payload: dict[str, Any]) -> str | None:
+    security = payload.get("security", {})
+    approval = security.get("approval", {}) if isinstance(security, dict) else {}
+    if not isinstance(approval, dict):
+        return None
+    if approval.get("required") is True and approval.get("approved") is not True:
+        approval_id = approval.get("id") or "<missing>"
+        return f"approval required for irreversible provider action: {approval_id}"
+    return None
+
+
+def _max_output_bytes(policy: dict[str, Any]) -> int | None:
+    value = policy.get("max_output_bytes")
+    return int(value) if type(value) is int and value > 0 else None
+
+
+def _output_size(stdout: str, stderr: str) -> int:
+    return len(stdout.encode("utf-8")) + len(stderr.encode("utf-8"))
+
+
+def _truncate_text(text: str, max_bytes: int) -> str:
+    encoded = text.encode("utf-8")
+    if len(encoded) <= max_bytes:
+        return text
+    truncated = encoded[:max(0, max_bytes)].decode("utf-8", errors="ignore")
+    return truncated + "\n<truncated>\n"

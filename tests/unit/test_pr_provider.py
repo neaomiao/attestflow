@@ -257,6 +257,72 @@ print(json.dumps({"schema_version": 1, "status": "merged", "summary": "too late"
             self.assertEqual(len(run_dirs), 1)
             self.assertIn("timed out", (run_dirs[0] / "stderr.log").read_text(encoding="utf-8"))
 
+    def test_builtin_pr_providers_use_provider_specific_adapters(self) -> None:
+        fixtures = {
+            "github": {
+                "raw": {
+                    "number": 42,
+                    "url": "https://github.example/acme/repo/pull/42",
+                    "state": "OPEN",
+                    "isDraft": False,
+                    "headRefName": "feature/login",
+                    "baseRefName": "main",
+                },
+                "expected_status": "open",
+                "expected_id": "42",
+            },
+            "gitlab": {
+                "raw": {
+                    "iid": 7,
+                    "web_url": "https://gitlab.example/acme/repo/-/merge_requests/7",
+                    "state": "merged",
+                    "source_branch": "feature/login",
+                    "target_branch": "main",
+                },
+                "expected_status": "merged",
+                "expected_id": "7",
+            },
+        }
+        for provider_name, fixture in fixtures.items():
+            with self.subTest(provider=provider_name), TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                fake_cli = root / "fake-pr"
+                fake_cli.write_text(
+                    "#!/usr/bin/env python3\n"
+                    "import json, sys\n"
+                    f"json.dump({fixture['raw']!r}, sys.stdout)\n",
+                    encoding="utf-8",
+                )
+                fake_cli.chmod(0o755)
+                config = {
+                    "paths": {"pr_runs": "harness/pr-runs"},
+                    "integrations": {
+                        "pr_provider": {
+                            "provider": provider_name,
+                            "provider_options": {"command": str(fake_cli), "status_args": ["pr", "view", "--json"]},
+                        }
+                    },
+                }
+
+                result = run_pr_status(root, config, task_id="TASK-0001")
+
+                self.assertEqual(result.status, fixture["expected_status"])
+                self.assertEqual(load_data(result.run_path / "input.json")["provider"], provider_name)
+                output = load_data(result.run_path / "output.json")
+                self.assertEqual(output["provider"], provider_name)
+                self.assertEqual(output["external_id"], fixture["expected_id"])
+                self.assertTrue(output["summary"].startswith(provider_name))
+
+    def test_cli_pr_providers_lists_builtin_adapters(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output):
+            exit_code = cli.main(["pr", "providers"])
+
+        self.assertEqual(exit_code, 0)
+        text = output.getvalue()
+        self.assertIn("github\tgh", text)
+        self.assertIn("gitlab\tglab", text)
+
     def test_cli_pr_status_reports_missing_provider(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

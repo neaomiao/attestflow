@@ -123,7 +123,14 @@ Launch output：
   "status": "launched",
   "external_session_id": "codex-session-123",
   "resume_command": "codex resume codex-session-123",
-  "summary": "Started a Codex task session."
+  "summary": "Started a Codex task session.",
+  "usage": {
+    "provider": "codex",
+    "model": "gpt-5",
+    "input_tokens": 1200,
+    "output_tokens": 300,
+    "total_tokens": 1500
+  }
 }
 ```
 
@@ -142,11 +149,13 @@ Resume output：
 字段规则：
 
 - `schema_version` 必须为 `1`。
+- `contract_version` 可选；如果出现，必须为 `1`。缺省值兼容现有 provider。
 - launch `status` 只能是 `launched` 或 `blocked`。
 - resume `status` 只能是 `resumed` 或 `blocked`。
 - `summary` 必须非空。
 - `external_session_id` 是外部 Agent 会话 id；没有外部 id 时可省略。
 - `resume_command` 可由 adapter 返回，用于后续 `attestflow session resume TASK-*`。
+- `usage` 可选；如果 adapter 能拿到真实模型消耗，token 字段必须是非负整数，`cost_usd` 必须是非负数字。Launch 会另存 `session-launch-usage.json`，resume 会另存 `session-resume-usage.json`，并把路径写回 `session.yml` 的 `launch_usage` / `resume_usage`。
 
 内置 preset 会尽量从外部 CLI 输出中提取 `thread_id`、`session_id`、`sessionID`、`sessionId` 或 `conversation_id` 作为 `external_session_id`。如果外部 CLI 不返回稳定 id，resume 会退回该 CLI 的“继续最近会话”能力；这仍然会留下 Attestflow 的本地 run/session evidence，但项目可以用 `provider_options.resume_args` 收紧行为。
 
@@ -158,6 +167,7 @@ Launch 会写入：
 - `session-adapter-output.json`
 - `session-launch.stdout.log`
 - `session-launch.stderr.log`
+- `session-launch-usage.json`，当 adapter output 包含 `usage` 时存在
 - `session.yml`
 - `metadata.yml`
 - `ledger.jsonl`
@@ -168,6 +178,7 @@ Resume 会写入：
 - `session-resume-adapter-output.json`
 - `session-resume.stdout.log`
 - `session-resume.stderr.log`
+- `session-resume-usage.json`，当 adapter output 包含 `usage` 时存在
 - `session.yml`
 - `metadata.yml`
 - `ledger.jsonl`

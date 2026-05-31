@@ -1,0 +1,106 @@
+schema_version: 1
+project:
+  name: attestflow
+  adapter: attestflow
+  default_branch: main
+paths:
+  tasks: harness/tasks
+  runs: harness/runs
+  gates: harness/gates
+  locks: harness/locks
+  capability_runs: harness/capability-runs
+  autopilot_runs: harness/autopilot-runs
+  ci_runs: harness/ci-runs
+  pr_runs: harness/pr-runs
+  release_runs: harness/release-runs
+  sources: harness/sources
+  docs: docs
+commands:
+  bdd: python -m unittest tests.bdd.test_attestflow_dogfood_behavior
+  unit: python -m unittest tests.unit.test_attestflow_dogfood
+  lint: null
+  typecheck: null
+  secret_scan: python -m attestflow secret-scan
+  project_verify: null
+policies:
+  require_bdd_before_unit: true
+  require_unit_before_implementation: true
+  require_fresh_verify_for_done: true
+  require_agent_session_for_task: true
+  require_disjoint_agent_write_scopes: true
+  require_issue_triage_for_linked_issues: true
+  docker_required: false
+security:
+  provider_commands:
+    allowlist:
+      - python3
+    max_output_bytes: 1048576
+    require_approval_for_irreversible: true
+  network:
+    mode: provider-owned
+  filesystem:
+    mode: write-scope-validated
+sessions:
+  agent_provider: command
+  role: worker_agent
+  launch_command: null
+  resume_command: null
+  provider_options: {}
+  worktree:
+    enabled: false
+    path_template: ../.attestflow-worktrees/{project}/{task_id}-{run_id}
+autopilot:
+  max_repair_attempts: 1
+  default_limit: 1
+  max_steps: 1
+  max_loop_cycles: 20
+  loop_interval_seconds: 0
+capabilities:
+  intake:
+    agent_provider: command
+    command: python3 examples/providers/local_agent.py
+  planner:
+    agent_provider: command
+    command: python3 examples/providers/local_agent.py
+  bdd:
+    agent_provider: command
+    command: python3 examples/providers/local_agent.py
+  tdd:
+    agent_provider: command
+    command: python3 examples/providers/local_agent.py
+  implementer:
+    agent_provider: command
+    command: python3 examples/providers/local_agent.py
+  reviewer:
+    agent_provider: command
+    command: python3 examples/providers/local_agent.py
+  verifier:
+    agent_provider: command
+    command: python3 examples/providers/local_agent.py
+  releaser:
+    agent_provider: command
+    command: python3 examples/providers/local_agent.py
+context:
+  enabled: true
+  max_tree_entries: 400
+  max_file_bytes: 8000
+  max_index_files: 400
+  documents:
+    - README.md
+    - AGENTS.md
+    - harness.yml
+    - pyproject.toml
+    - SECURITY.md
+    - docs/contracts/capability-schema.md
+    - docs/contracts/session-adapter-schema.md
+    - docs/contracts/planner-output-schema.md
+    - docs/contracts/task-schema.md
+    - docs/design/universal-harness.md
+integrations:
+  git_provider: optional
+  ci_provider: optional
+  pr_provider: optional
+  release_provider: optional
+plugins:
+  directories:
+    - harness/plugins

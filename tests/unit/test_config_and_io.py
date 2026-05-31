@@ -569,6 +569,28 @@ sys.exit(0)
         self.assertIn("sessions.worktree.enabled must be a boolean", errors)
         self.assertIn("sessions.worktree.path_template must be a string or null", errors)
 
+    def test_validate_config_rejects_invalid_security_provider_command_policy(self) -> None:
+        config = {
+            "schema_version": 1,
+            "project": {"name": "demo"},
+            "paths": {"tasks": "harness/tasks", "runs": "harness/runs"},
+            "commands": {},
+            "policies": {},
+            "security": {
+                "provider_commands": {
+                    "allowlist": "python3",
+                    "max_output_bytes": 0,
+                    "require_approval_for_irreversible": "yes",
+                }
+            },
+        }
+
+        errors = validate_config(config)
+
+        self.assertIn("security.provider_commands.allowlist must be a list of strings", errors)
+        self.assertIn("security.provider_commands.max_output_bytes must be a positive integer", errors)
+        self.assertIn("security.provider_commands.require_approval_for_irreversible must be a boolean", errors)
+
     def test_validate_config_rejects_invalid_capability_provider_fields(self) -> None:
         config = {
             "schema_version": 1,

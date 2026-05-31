@@ -24,6 +24,13 @@ from .tasks import TaskRecord, block_task, iter_tasks
 class CapabilityRunResult:
     records: list[TaskRecord]
     run_path: Path
+    attempts: list[dict[str, Any]] | None = None
+
+
+@dataclass(frozen=True)
+class IntakeCapabilityRunResult:
+    output: dict[str, Any]
+    run_path: Path
 
 
 @dataclass(frozen=True)
@@ -176,6 +183,25 @@ def run_release_capability(
     return ReleaseCapabilityRunResult(output=output, run_path=run_path, done_tasks=done_tasks)
 
 
+def run_intake_capability(
+    root: Path,
+    config: dict[str, Any],
+    goal: str,
+    *,
+    command: str | None = None,
+) -> IntakeCapabilityRunResult:
+    capability = get_capability("intake")
+    capability_command = command or _configured_command(config, "intake")
+    if not capability_command:
+        raise ValueError("capabilities.intake.command must be configured or passed with --command")
+
+    run_path = _new_capability_run_path(root, config, "intake")
+    capability_input = build_intake_input(root, config, capability, goal)
+    output = _run_json_command(root, config, "intake", capability_command, capability_input, run_path)
+    _validate_task_capability_output(output, "intake", run_path / "output.json")
+    return IntakeCapabilityRunResult(output=output, run_path=run_path)
+
+
 def run_planner_capability(
     root: Path,
     config: dict[str, Any],
@@ -187,17 +213,85 @@ def run_planner_capability(
     if not planner_command:
         raise ValueError("capabilities.planner.command must be configured or passed with --command")
 
-    run_path = _new_capability_run_path(root, config, "planner")
-    capability_input = build_planner_input(root, config, goal)
-    planner_output = _run_json_command(root, config, "planner", planner_command, capability_input, run_path)
-    raise_contract_errors(
-        "planner output",
-        "planner-output",
-        validate_planner_output(planner_output, label="planner output"),
-        run_path / "output.json",
-    )
-    records = import_planner_tasks(root, config, planner_output)
-    return CapabilityRunResult(records=records, run_path=run_path)
+    max_attempts = _planner_retry_attempts(config)
+    attempts: list[dict[str, Any]] = []
+    previous_error: str | None = None
+    for attempt_index in range(1, max_attempts + 1):
+        run_path = _new_capability_run_path(root, config, "planner")
+        capability_input = build_planner_input(
+            root,
+            config,
+            goal,
+            attempt={"index": attempt_index, "max": max_attempts, "previous_error": previous_error},
+        )
+        try:
+            planner_output = _run_json_command(root, config, "planner", planner_command, capability_input, run_path)
+            raise_contract_errors(
+                "planner output",
+                "planner-output",
+                validate_planner_output(planner_output, label="planner output"),
+                run_path / "output.json",
+            )
+            records = import_planner_tasks(root, config, planner_output)
+        except ValueError as exc:
+            previous_error = str(exc)
+            retryable = _planner_failure_is_retryable(previous_error)
+            attempts.append(
+                {
+                    "attempt": attempt_index,
+                    "status": "failed",
+                    "run_path": str(run_path.relative_to(root)),
+                    "error": previous_error,
+                    "retryable": retryable,
+                    "failure_attribution": _planner_failure_attribution(previous_error),
+                }
+            )
+            _write_planner_retry_metadata(run_path, attempts)
+            if retryable and attempt_index < max_attempts:
+                continue
+            raise
+        attempts.append(
+            {
+                "attempt": attempt_index,
+                "status": "passed",
+                "run_path": str(run_path.relative_to(root)),
+                "retryable": False,
+                "failure_attribution": None,
+            }
+        )
+        _write_planner_retry_metadata(run_path, attempts)
+        return CapabilityRunResult(records=records, run_path=run_path, attempts=attempts)
+    raise RuntimeError("planner retry loop ended without a result")
+
+
+def build_intake_input(root: Path, config: dict[str, Any], capability: dict[str, Any], goal: str) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "capability": capability,
+        "agent_provider": _capability_agent_provider(config, "intake"),
+        "provider_options": _provider_options(config, "intake"),
+        "security": config.get("security", {}),
+        "root": str(root),
+        "goal": goal,
+        "project": config.get("project", {}),
+        "commands": config.get("commands", {}),
+        "repository_context": collect_repository_context(root, config),
+        "existing_tasks": [
+            {
+                "id": record.task.get("id"),
+                "state": record.task.get("state"),
+                "title": record.task.get("title"),
+                "priority": record.task.get("priority"),
+            }
+            for record in iter_tasks(root, config)
+        ],
+        "instructions": [
+            "Return only JSON.",
+            "Decide whether the goal is clear enough to plan.",
+            "If a business decision, credential, or external dependency is missing, return status blocked with structured decision_blockers in artifacts.",
+            "Do not generate runtime tasks; planner runs after intake passes.",
+        ],
+    }
 
 
 def run_task_capability(
@@ -252,14 +346,22 @@ def run_task_capability(
     )
 
 
-def build_planner_input(root: Path, config: dict[str, Any], goal: str) -> dict[str, Any]:
+def build_planner_input(
+    root: Path,
+    config: dict[str, Any],
+    goal: str,
+    *,
+    attempt: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "capability": get_capability("planner"),
         "agent_provider": _capability_agent_provider(config, "planner"),
         "provider_options": _provider_options(config, "planner"),
+        "security": config.get("security", {}),
         "root": str(root),
         "goal": goal,
+        "attempt": attempt or {"index": 1, "max": _planner_retry_attempts(config), "previous_error": None},
         "project": config.get("project", {}),
         "commands": config.get("commands", {}),
         "repository_context": collect_repository_context(root, config),
@@ -306,6 +408,7 @@ def build_task_capability_input(
         "capability": capability,
         "agent_provider": _capability_agent_provider(config, str(capability["name"])),
         "provider_options": _provider_options(config, str(capability["name"])),
+        "security": config.get("security", {}),
         "root": str(workspace_root),
         "control_root": str(root),
         "workspace": _task_workspace(root, config, task),
@@ -334,6 +437,7 @@ def build_release_capability_input(
         "capability": capability,
         "agent_provider": _capability_agent_provider(config, "releaser"),
         "provider_options": _provider_options(config, "releaser"),
+        "security": config.get("security", {}),
         "root": str(root),
         "project": config.get("project", {}),
         "commands": config.get("commands", {}),
@@ -459,6 +563,44 @@ def _capability_timeout_seconds(config: dict[str, Any], capability_name: str) ->
             "provider_options": _provider_options(config, capability_name),
         }
     )
+
+
+def _planner_retry_attempts(config: dict[str, Any]) -> int:
+    options = _provider_options(config, "planner")
+    configured = options.get("retry_attempts", options.get("retries"))
+    if type(configured) is int and configured > 0:
+        return configured
+    capability_config = _capability_config(config, "planner")
+    configured = capability_config.get("retry_attempts")
+    if type(configured) is int and configured > 0:
+        return configured
+    return 2
+
+
+def _planner_failure_is_retryable(error: str) -> bool:
+    text = error.lower()
+    return any(
+        marker in text
+        for marker in (
+            "invalid_output",
+            "did not return valid json",
+            "planner output",
+            "planner task",
+            "contract validate planner-output",
+        )
+    )
+
+
+def _planner_failure_attribution(error: str) -> dict[str, Any]:
+    return {
+        "phase": "planner",
+        "source": "provider",
+        "summary": error.splitlines()[0][:500],
+    }
+
+
+def _write_planner_retry_metadata(run_path: Path, attempts: list[dict[str, Any]]) -> None:
+    dump_data({"schema_version": 1, "attempts": attempts}, run_path / "retry.json")
 
 
 def _validate_task_capability_output(

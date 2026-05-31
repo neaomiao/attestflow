@@ -5,13 +5,19 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    name: verify (${{ matrix.os }} / py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
         python-version:
           - "3.11"
           - "3.12"
@@ -24,14 +30,93 @@ jobs:
       - name: Install package
         run: python -m pip install .
       - name: Verify
-        run: PYTHONDONTWRITEBYTECODE=1 python -m attestflow verify
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python -m attestflow verify
+      - name: Smoke installed CLI
+        run: attestflow install-smoke --offline
+
+  install-matrix:
+    name: install ${{ matrix.install-mode }} (${{ matrix.os }} / py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python-version: "3.11"
+            install-mode: source
+          - os: ubuntu-latest
+            python-version: "3.12"
+            install-mode: venv
+          - os: macos-latest
+            python-version: "3.12"
+            install-mode: wheel
+          - os: windows-latest
+            python-version: "3.12"
+            install-mode: wheel
+          - os: ubuntu-latest
+            python-version: "3.13"
+            install-mode: pipx
+          - os: ubuntu-latest
+            python-version: "3.12"
+            install-mode: uv
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install from source
+        if: matrix.install-mode == 'source'
+        run: python -m pip install .
+      - name: Smoke source install
+        if: matrix.install-mode == 'source'
+        run: attestflow install-smoke --check-template-mirror --offline
+      - name: Install in local venv
+        if: matrix.install-mode == 'venv'
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install .
+          .venv/bin/attestflow install-smoke --offline
       - name: Build wheel and sdist
+        if: matrix.install-mode == 'wheel'
         run: |
           python -m pip install build
           python -m build
       - name: Install built wheel
+        if: matrix.install-mode == 'wheel'
+        shell: bash
         run: |
           python -m pip install --force-reinstall dist/*.whl
-          attestflow init --path /tmp/attestflow-smoke --adapter python --agent-provider command
-          cd /tmp/attestflow-smoke
-          attestflow doctor
+          attestflow install-smoke --offline
+      - name: Install with pipx
+        if: matrix.install-mode == 'pipx'
+        run: |
+          python -m pip install pipx
+          python -m pipx install .
+          ~/.local/bin/attestflow install-smoke --offline
+      - name: Install with uv
+        if: matrix.install-mode == 'uv'
+        run: |
+          python -m pip install uv
+          uv tool run --from . attestflow install-smoke --offline
+
+  pypi-install-smoke:
+    name: install pypi (${{ matrix.os }} / py${{ matrix.python-version }})
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python-version: "3.12"
+            install-mode: pypi
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install from PyPI
+        run: python -m pip install --upgrade attestflow
+      - name: Smoke PyPI install
+        run: attestflow install-smoke --offline

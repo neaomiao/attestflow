@@ -14,6 +14,9 @@ from .provider_commands import provider_timeout_seconds, run_provider_json_comma
 
 BUILTIN_CI_PROVIDERS: dict[str, dict[str, str]] = {
     "github-actions": {"command": "gh", "description": "GitHub Actions via attestflow.ci_adapters."},
+    "gitlab-ci": {"command": "glab", "description": "GitLab CI pipelines via attestflow.ci_adapters."},
+    "buildkite": {"command": "buildkite-agent", "description": "Buildkite builds via attestflow.ci_adapters."},
+    "circleci": {"command": "circleci", "description": "CircleCI workflows via attestflow.ci_adapters."},
 }
 
 @dataclass(frozen=True)
@@ -76,6 +79,7 @@ def _ci_input(root: Path, config: dict[str, Any], provider: str, provider_config
         "schema_version": 1,
         "provider": provider,
         "provider_options": _provider_options(provider_config),
+        "security": config.get("security", {}),
         "root": str(root),
         "project": config.get("project", {}),
     }
