@@ -73,6 +73,7 @@ security:
 python -m attestflow contract validate planner-output planner-output.json
 python -m attestflow contract validate capability-output output.json
 python -m attestflow contract validate session-launch-output session-output.json
+python -m attestflow contract validate git-output git-output.json
 python -m attestflow contract validate ci-output ci-output.json
 python -m attestflow contract validate pr-output pr-output.json
 python -m attestflow contract validate release-output release-output.json
@@ -148,6 +149,11 @@ Release / delivery 内置 provider：
 
 ```yaml
 integrations:
+  git_provider:
+    provider: git
+    provider_options:
+      remote: origin
+      push: true
   ci_provider:
     provider: gitlab-ci
     provider_options:

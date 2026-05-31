@@ -17,6 +17,7 @@ from .capabilities import (
 )
 from .ci import run_ci_status
 from .evidence import append_ledger, update_run_workspace, utc_timestamp
+from .git import run_git_publish
 from .io import dump_data, load_data
 from .locks import file_lock_path, locks_root, normalize_file_path, release_locks_for_task
 from .pr import run_pr_ensure, run_pr_status
@@ -1258,6 +1259,8 @@ def _next_task_action(root: Path, config: dict[str, Any], record: TaskRecord) ->
     if state == "accepted":
         if _worktree_needs_apply(root, config, record.task):
             return TaskAction(task_id=task_id, state=state, action="apply_worktree", path=record.path)
+        if _git_configured(config) and not _passed_git_evidence(root, record.task):
+            return TaskAction(task_id=task_id, state=state, action="publish_changes", path=record.path)
         if _pr_configured(config) and not _passed_pr_request_evidence(root, record.task):
             return TaskAction(task_id=task_id, state=state, action="pr_ensure", path=record.path)
         if _ci_configured(config) and not _passed_ci_evidence(root, record.task):
@@ -1308,6 +1311,26 @@ def _ci_configured(config: dict[str, Any]) -> bool:
     integrations = config.get("integrations", {})
     ci_provider = integrations.get("ci_provider") if isinstance(integrations, dict) else None
     return isinstance(ci_provider, dict) and bool(ci_provider.get("provider") or ci_provider.get("command"))
+
+
+def _git_configured(config: dict[str, Any]) -> bool:
+    integrations = config.get("integrations", {})
+    git_provider = integrations.get("git_provider") if isinstance(integrations, dict) else None
+    return isinstance(git_provider, dict) and bool(git_provider.get("provider") or git_provider.get("command"))
+
+
+def _passed_git_evidence(root: Path, task: dict[str, Any]) -> bool:
+    evidence = task.get("evidence", {})
+    if not isinstance(evidence, dict) or not evidence.get("git"):
+        return False
+    output_path = root / str(evidence["git"])
+    if not output_path.exists():
+        return False
+    try:
+        output = load_data(output_path)
+    except ValueError:
+        return False
+    return output.get("status") in {"published", "skipped"}
 
 
 def _passed_ci_evidence(root: Path, task: dict[str, Any]) -> bool:
@@ -1505,6 +1528,23 @@ def _execute_task_action(root: Path, config: dict[str, Any], run_path: Path, act
                 },
             )
             return "passed"
+        if action.action == "publish_changes":
+            result = run_git_publish(root, config, task_id=action.task_id)
+            record = _find_task_record(root, config, action.task_id)
+            updated = dict(record.task)
+            evidence = dict(updated.get("evidence", {}))
+            evidence["git"] = str((result.run_path / "output.json").relative_to(root))
+            updated["evidence"] = evidence
+            dump_data(updated, record.path)
+            _append_autopilot_event(
+                run_path,
+                "git_publish_finished",
+                task_id=action.task_id,
+                data={"step": step, "status": result.status, "run_path": str(result.run_path.relative_to(root))},
+            )
+            if result.status == "blocked":
+                return "blocked"
+            return "passed" if result.status in {"published", "skipped"} else "failed"
         if action.action == "pr_status":
             result = run_pr_status(root, config, task_id=action.task_id)
             record = _find_task_record(root, config, action.task_id)

@@ -10,6 +10,7 @@ paths:
   capability_runs: harness/capability-runs
   autopilot_runs: harness/autopilot-runs
   ci_runs: harness/ci-runs
+  git_runs: harness/git-runs
   pr_runs: harness/pr-runs
   release_runs: harness/release-runs
   sources: harness/sources
@@ -91,6 +92,7 @@ context:
     - package.json
     - docs/contracts/capability-schema.md
     - docs/contracts/ci-provider-schema.md
+    - docs/contracts/git-provider-schema.md
     - docs/contracts/planner-output-schema.md
     - docs/contracts/pr-provider-schema.md
     - docs/contracts/release-provider-schema.md

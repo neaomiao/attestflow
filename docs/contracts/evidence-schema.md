@@ -282,6 +282,7 @@ Capability、CI、PR、release provider output 如果包含 `usage`，run 目录
 外部系统 evidence 不写进任务 run 目录，而是写入独立 provider run：
 
 - `task.evidence.ci`：`harness/ci-runs/ci-*/output.json`
+- `task.evidence.git`：`harness/git-runs/git-*/output.json`，来自 `publish`
 - `task.evidence.pr_request`：`harness/pr-runs/pr-*/output.json`，来自 `pr ensure`
 - `task.evidence.pr`：`harness/pr-runs/pr-*/output.json`，来自 `pr status`
 

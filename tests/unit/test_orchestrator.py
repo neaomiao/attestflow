@@ -1812,6 +1812,86 @@ class OrchestratorTests(unittest.TestCase):
             self.assertIn("pr_request", done["evidence"])
             self.assertIn("pr", done["evidence"])
 
+    def test_autopilot_publishes_git_changes_before_pr_ensure(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = deepcopy(DEFAULT_CONFIG)
+            for command_name in config["commands"]:
+                config["commands"][command_name] = None
+            capability_script = root / "capability_stub.py"
+            write_capability_stub(capability_script)
+            git_script = root / "git_stub.py"
+            pr_script = root / "pr_stub.py"
+            action_log = root / "delivery-actions.jsonl"
+            git_script.write_text(
+                "\n".join(
+                    [
+                        "import json, sys",
+                        "from pathlib import Path",
+                        "payload = json.load(sys.stdin)",
+                        "assert payload['action'] == 'publish'",
+                        f"Path({str(action_log)!r}).open('a', encoding='utf-8').write(json.dumps({{'action': 'publish', 'task_id': payload['task_id']}}) + '\\n')",
+                        "print(json.dumps({",
+                        "    'schema_version': 1,",
+                        "    'provider': 'local-git',",
+                        "    'status': 'published',",
+                        "    'summary': 'published',",
+                        "    'branch': 'codex/publish',",
+                        "    'remote': 'origin',",
+                        "    'commit_before': 'abc',",
+                        "    'commit_after': 'def',",
+                        "    'pushed': True,",
+                        "    'changes': ['README.md'],",
+                        "}))",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            pr_script.write_text(
+                "\n".join(
+                    [
+                        "import json, sys",
+                        "from pathlib import Path",
+                        "payload = json.load(sys.stdin)",
+                        f"Path({str(action_log)!r}).open('a', encoding='utf-8').write(json.dumps({{'action': payload['action'], 'task_id': payload['task_id']}}) + '\\n')",
+                        "status = 'open' if payload.get('action') == 'ensure' else 'merged'",
+                        "print(json.dumps({",
+                        "    'schema_version': 1,",
+                        "    'status': status,",
+                        "    'summary': f'pr {status}',",
+                        "    'checks': []",
+                        "}))",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            config["integrations"]["git_provider"] = {
+                "provider": "command",
+                "command": f"{shlex.quote(sys.executable)} {shlex.quote(str(git_script))}",
+            }
+            config["integrations"]["pr_provider"] = {
+                "provider": "command",
+                "command": f"{shlex.quote(sys.executable)} {shlex.quote(str(pr_script))}",
+            }
+            command = f"{shlex.quote(sys.executable)} {shlex.quote(str(capability_script))}"
+            for capability in ("bdd", "tdd", "implementer", "reviewer"):
+                config["capabilities"][capability]["command"] = command
+            write_task(root, "ready", "TASK-0001", ready_task("TASK-0001", priority=1))
+
+            result = run_autopilot(root, config, limit=1, max_steps=12)
+
+            self.assertEqual(result.failed, [])
+            calls = [json.loads(line) for line in action_log.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual([call["action"] for call in calls], ["publish", "ensure", "status"])
+            done = json.loads((root / "harness" / "tasks" / "done" / "TASK-0001.json").read_text(encoding="utf-8"))
+            self.assertIn("git", done["evidence"])
+            self.assertIn("pr_request", done["evidence"])
+            metadata = json.loads((result.path / "metadata.json").read_text(encoding="utf-8"))
+            self.assertLess(
+                metadata["actions"].index("TASK-0001:publish_changes"),
+                metadata["actions"].index("TASK-0001:pr_ensure"),
+            )
+
     def test_autopilot_applies_worktree_before_pr_or_close_actions(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp) / "repo"

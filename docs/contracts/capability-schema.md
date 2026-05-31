@@ -211,7 +211,7 @@ Capability input 的 `repository_context` 由 Attestflow 确定性生成：
 - `documents` 来自 `context.documents`。
 - `files` 来自 task `files.read` / `files.write` 和 `context.focus_files`。
 - 二进制文件会被跳过。
-- `.git`、`node_modules`、`__pycache__`、`harness/runs`、`harness/capability-runs`、`harness/ci-runs` 默认排除。
+- `.git`、`node_modules`、`__pycache__`、`harness/runs`、`harness/capability-runs`、`harness/ci-runs`、`harness/git-runs` 默认排除。
 - provider 不应自行递归扫描仓库；需要更多上下文时应通过 capability output 声明缺口。
 
 Task-scoped capability input 的 `root` 是执行 cwd。启用 `sessions.worktree.enabled` 时，`root` 指向任务 worktree，`control_root` 指向保存 `harness/` 状态和 evidence 的原项目目录，`workspace` 携带 worktree、branch、`commit_before` 和 `commit_after` 快照。Provider 只能把代码变更写到 `root`，不能直接修改 runtime task JSON；close 阶段由 Attestflow 把 worktree 变更提交并 ff-only merge 回 `control_root`。

@@ -144,6 +144,7 @@ class OpenSourceP0Tests(unittest.TestCase):
                     "harness/capability-runs",
                     "harness/autopilot-runs",
                     "harness/ci-runs",
+                    "harness/git-runs",
                     "harness/pr-runs",
                     "harness/release-runs",
                     "harness/locks",

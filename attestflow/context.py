@@ -26,6 +26,7 @@ DEFAULT_DOCUMENTS = [
     "package.json",
     "docs/contracts/capability-schema.md",
     "docs/contracts/ci-provider-schema.md",
+    "docs/contracts/git-provider-schema.md",
     "docs/contracts/planner-output-schema.md",
     "docs/contracts/pr-provider-schema.md",
     "docs/contracts/release-provider-schema.md",
@@ -331,6 +332,7 @@ def _excluded(rel_path: str) -> bool:
         "harness/runs",
         "harness/capability-runs",
         "harness/ci-runs",
+        "harness/git-runs",
         "harness/pr-runs",
         "harness/release-runs",
     }
@@ -339,6 +341,7 @@ def _excluded(rel_path: str) -> bool:
             "harness/runs/",
             "harness/capability-runs/",
             "harness/ci-runs/",
+            "harness/git-runs/",
             "harness/pr-runs/",
             "harness/release-runs/",
         )

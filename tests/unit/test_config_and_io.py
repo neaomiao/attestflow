@@ -472,6 +472,7 @@ sys.exit(0)
             root = Path(tmp)
             cmd_init(SimpleNamespace(path=str(root), adapter="generic", agent_provider="command", agent_command=None))
             (root / "harness" / "autopilot-runs").rmdir()
+            (root / "harness" / "git-runs").rmdir()
             (root / "harness" / "pr-runs").rmdir()
             (root / "harness" / "release-runs").rmdir()
             original_root = cli.ROOT
@@ -486,6 +487,7 @@ sys.exit(0)
             self.assertEqual(exit_code, 1)
             text = error.getvalue()
             self.assertIn("missing autopilot_runs directory", text)
+            self.assertIn("missing git_runs directory", text)
             self.assertIn("missing pr_runs directory", text)
             self.assertIn("missing release_runs directory", text)
 
@@ -683,6 +685,7 @@ sys.exit(0)
                 "tasks": "harness/tasks",
                 "runs": "harness/runs",
                 "ci_runs": 123,
+                "git_runs": {},
                 "pr_runs": False,
                 "release_runs": [],
             },
@@ -691,6 +694,12 @@ sys.exit(0)
             "integrations": {
                 "ci_provider": {
                     "provider": ["github-actions"],
+                    "command": False,
+                    "provider_options": [],
+                    "timeout_seconds": 0,
+                },
+                "git_provider": {
+                    "provider": ["git"],
                     "command": False,
                     "provider_options": [],
                     "timeout_seconds": 0,
@@ -712,8 +721,13 @@ sys.exit(0)
         errors = validate_config(config)
 
         self.assertIn("paths.ci_runs must be a string", errors)
+        self.assertIn("paths.git_runs must be a string", errors)
         self.assertIn("paths.pr_runs must be a string", errors)
         self.assertIn("paths.release_runs must be a string", errors)
+        self.assertIn("integrations.git_provider.provider must be a string", errors)
+        self.assertIn("integrations.git_provider.command must be a string or null", errors)
+        self.assertIn("integrations.git_provider.provider_options must be a mapping", errors)
+        self.assertIn("integrations.git_provider.timeout_seconds must be a positive number", errors)
         self.assertIn("integrations.ci_provider.provider must be a string", errors)
         self.assertIn("integrations.ci_provider.command must be a string or null", errors)
         self.assertIn("integrations.ci_provider.provider_options must be a mapping", errors)

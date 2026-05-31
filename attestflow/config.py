@@ -18,6 +18,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "capability_runs": "harness/capability-runs",
         "autopilot_runs": "harness/autopilot-runs",
         "ci_runs": "harness/ci-runs",
+        "git_runs": "harness/git-runs",
         "pr_runs": "harness/pr-runs",
         "release_runs": "harness/release-runs",
         "sources": "harness/sources",
@@ -95,6 +96,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "package.json",
             "docs/contracts/capability-schema.md",
             "docs/contracts/ci-provider-schema.md",
+            "docs/contracts/git-provider-schema.md",
             "docs/contracts/planner-output-schema.md",
             "docs/contracts/pr-provider-schema.md",
             "docs/contracts/release-provider-schema.md",
@@ -146,6 +148,9 @@ def validate_config(config: dict[str, Any]) -> list[str]:
     pr_runs = config.get("paths", {}).get("pr_runs")
     if pr_runs is not None and not isinstance(pr_runs, str):
         errors.append("paths.pr_runs must be a string")
+    git_runs = config.get("paths", {}).get("git_runs")
+    if git_runs is not None and not isinstance(git_runs, str):
+        errors.append("paths.git_runs must be a string")
     release_runs = config.get("paths", {}).get("release_runs")
     if release_runs is not None and not isinstance(release_runs, str):
         errors.append("paths.release_runs must be a string")
@@ -286,6 +291,7 @@ def validate_config(config: dict[str, Any]) -> list[str]:
     if integrations is not None and not isinstance(integrations, dict):
         errors.append("integrations must be a mapping")
     elif isinstance(integrations, dict):
+        _validate_provider_config(errors, integrations, "git_provider")
         _validate_provider_config(errors, integrations, "ci_provider")
         _validate_provider_config(errors, integrations, "pr_provider")
         _validate_provider_config(errors, integrations, "release_provider")

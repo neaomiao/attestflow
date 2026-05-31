@@ -508,6 +508,7 @@ def _bundle_relative(root: Path, path: Path) -> Path:
         "runs",
         "capability-runs",
         "ci-runs",
+        "git-runs",
         "pr-runs",
         "release-runs",
     }:

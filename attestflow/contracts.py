@@ -10,6 +10,7 @@ from .io import load_data
 TASK_CAPABILITY_STATUSES = ("passed", "failed", "blocked")
 SESSION_STATUSES = {"launch": {"launched", "blocked"}, "resume": {"resumed", "blocked"}}
 CI_STATUSES = {"passed", "failed", "running", "queued", "cancelled", "skipped", "blocked", "unknown"}
+GIT_STATUSES = {"published", "skipped", "blocked", "failed", "unknown"}
 PR_STATUSES = {"merged", "open", "draft", "blocked", "failed", "skipped", "unknown"}
 RELEASE_STATUSES = {"released", "skipped", "running", "queued", "blocked", "failed", "unknown"}
 REVIEW_FINDING_SEVERITIES = {"blocker", "major", "minor", "info"}
@@ -214,6 +215,23 @@ def validate_ci_output(output: dict[str, Any], label: str = "ci-output") -> list
     return errors
 
 
+def validate_git_output(output: dict[str, Any], label: str = "git-output") -> list[str]:
+    errors: list[str] = []
+    _require_schema_version(output, label, errors)
+    _validate_contract_version(output, label, errors)
+    _validate_usage(output, label, errors)
+    _require_status(output, label, GIT_STATUSES, errors)
+    _require_summary(output, label, errors)
+    for key in ("branch", "remote", "commit_before", "commit_after"):
+        if key in output and not str(output.get(key, "")).strip():
+            errors.append(_field_error(label, key, "must be non-empty when present"))
+    if "pushed" in output and not isinstance(output.get("pushed"), bool):
+        errors.append(_field_error(label, "pushed", "must be a boolean"))
+    if not isinstance(output.get("changes", []), list):
+        errors.append(_field_error(label, "changes", "must be a list"))
+    return errors
+
+
 def validate_pr_output(output: dict[str, Any], label: str = "pr-output") -> list[str]:
     errors: list[str] = []
     _require_schema_version(output, label, errors)
@@ -359,6 +377,7 @@ CONTRACT_TYPES: dict[str, Callable[[dict[str, Any]], list[str]]] = {
     "session-launch-output": validate_session_launch_output,
     "session-resume-output": validate_session_resume_output,
     "ci-output": validate_ci_output,
+    "git-output": validate_git_output,
     "pr-output": validate_pr_output,
     "release-output": validate_release_output,
     "task": validate_task_contract,

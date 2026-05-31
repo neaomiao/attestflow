@@ -20,6 +20,7 @@ from .contracts import CONTRACT_TYPES, validate_contract_file
 from .governance import SCHEMA_TYPES, governance_policy, json_schema_for, migrate_file, openapi_document
 from .io import dump_data, load_data
 from .evidence_export import export_autopilot_bundle, export_release_bundle, export_task_evidence, verify_evidence_bundle
+from .git import list_git_providers, run_git_publish
 from .observability import inspect_run, inspect_run_diff
 from .orchestrator import (
     AutopilotRunResult,
@@ -116,6 +117,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     (target / "harness" / "capability-runs").mkdir(parents=True, exist_ok=True)
     (target / "harness" / "autopilot-runs").mkdir(parents=True, exist_ok=True)
     (target / "harness" / "ci-runs").mkdir(parents=True, exist_ok=True)
+    (target / "harness" / "git-runs").mkdir(parents=True, exist_ok=True)
     (target / "harness" / "pr-runs").mkdir(parents=True, exist_ok=True)
     (target / "harness" / "release-runs").mkdir(parents=True, exist_ok=True)
     (target / "harness" / "locks").mkdir(parents=True, exist_ok=True)
@@ -700,6 +702,7 @@ def _doctor_errors(root: Path, config: dict) -> list[str]:
     errors.extend(_doctor_project_command_errors(config))
     errors.extend(_doctor_provider_errors(root, config))
     errors.extend(_doctor_ci_provider_errors(config))
+    errors.extend(_doctor_command_provider_errors(config, "git_provider", "Git"))
     errors.extend(_doctor_command_provider_errors(config, "pr_provider", "PR"))
     errors.extend(_doctor_command_provider_errors(config, "release_provider", "Release"))
     errors.extend(_doctor_worktree_errors(root, config))
@@ -861,6 +864,7 @@ def _doctor_runtime_layout_errors(root: Path, config: dict) -> list[str]:
         ("capability_runs", "harness/capability-runs"),
         ("autopilot_runs", "harness/autopilot-runs"),
         ("ci_runs", "harness/ci-runs"),
+        ("git_runs", "harness/git-runs"),
         ("pr_runs", "harness/pr-runs"),
         ("release_runs", "harness/release-runs"),
     ):
@@ -932,6 +936,8 @@ def _doctor_command_provider_errors(config: dict, key: str, label: str) -> list[
 
 
 def _builtin_command_provider_commands(key: str) -> dict[str, str]:
+    if key == "git_provider":
+        return {provider["name"]: provider["command"] for provider in list_git_providers()}
     if key == "pr_provider":
         return {provider["name"]: provider["command"] for provider in list_pr_providers()}
     if key == "release_provider":
@@ -1987,6 +1993,25 @@ def cmd_pr_provider_list(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_publish(args: argparse.Namespace) -> int:
+    try:
+        config = load_config(ROOT)
+        result = run_git_publish(ROOT, config, task_id=args.task, command=args.command)
+        if args.task:
+            record_task_evidence_reference(ROOT, config, args.task, "git", result.run_path / "output.json")
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    print(f"publish {result.status}: {result.run_path}")
+    return 0
+
+
+def cmd_publish_provider_list(_: argparse.Namespace) -> int:
+    for provider in list_git_providers():
+        print(f"{provider['name']}\t{provider['command']}\t{provider['description']}")
+    return 0
+
+
 def cmd_pr_ensure(args: argparse.Namespace) -> int:
     try:
         config = load_config(ROOT)
@@ -2305,6 +2330,12 @@ def build_parser() -> argparse.ArgumentParser:
     ci_status.add_argument("--task")
     ci_status.set_defaults(func=cmd_ci_status)
     ci_subparsers.add_parser("providers").set_defaults(func=cmd_ci_provider_list)
+
+    publish = subparsers.add_parser("publish")
+    publish.add_argument("--task")
+    publish.add_argument("--command")
+    publish.add_argument("--providers", action="store_true")
+    publish.set_defaults(func=lambda args: cmd_publish_provider_list(args) if args.providers else cmd_publish(args))
 
     pr = subparsers.add_parser("pr")
     pr_subparsers = pr.add_subparsers(dest="pr_command", required=True)

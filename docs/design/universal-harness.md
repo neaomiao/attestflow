@@ -345,13 +345,13 @@ active action 的确定性状态机：
 in_progress -> bdd -> tdd -> implementer -> review
 review -> reviewer -> optional verifier -> verify -> verified
 verified -> accepted
-accepted -> pr_ensure -> ci_status -> pr_status -> close
+accepted -> publish_changes -> pr_ensure -> ci_status -> pr_status -> close
 ```
 
 启用 worktree 时，`accepted` 会先执行：
 
 ```text
-accepted -> apply_worktree -> pr_ensure -> ci_status -> pr_status -> close
+accepted -> apply_worktree -> publish_changes -> pr_ensure -> ci_status -> pr_status -> close
 ```
 
 失败修复规则：
@@ -361,7 +361,8 @@ accepted -> apply_worktree -> pr_ensure -> ci_status -> pr_status -> close
 - repair 会写入 `evidence.autopilot.repair.target_capability`，清掉该 target 之后的 stale capability evidence，并受 `autopilot.max_repair_attempts` 限制。
 - repair 成功后清掉 pending repair，重新进入 `review -> reviewer -> optional verifier -> verify`。
 - repair 次数超过上限时，当前 autopilot run 以 `failed` 结束，保留失败 evidence 和 ledger。
-- 如果配置了 worktree，accepted 任务会先运行 `apply_worktree`，把 task commit ff-only merge 回控制仓库；之后才创建/更新 PR 和采集 CI/PR evidence。
+- 如果配置了 worktree，accepted 任务会先运行 `apply_worktree`，把 task commit ff-only merge 回控制仓库；之后才 publish、创建/更新 PR 和采集 CI/PR evidence。
+- 如果配置了 `integrations.git_provider`，accepted 任务会运行 `publish_changes`，把 `harness/git-runs/*/output.json` 写入 `task.evidence.git`；`published` 或 `skipped` 表示可以继续后续 gate，`blocked` 会停止本轮 autopilot。
 - 如果配置了 `integrations.pr_provider`，accepted 任务会先运行 `pr_ensure`，把 `harness/pr-runs/*/output.json` 写入 `task.evidence.pr_request`；`open`、`draft`、`merged` 或 `skipped` 表示 change request 已可继续后续 gate，`blocked` 会停止本轮 autopilot。
 - 如果配置了 `integrations.ci_provider`，accepted 任务会运行 `ci_status`，把 `harness/ci-runs/*/output.json` 写入 `task.evidence.ci`；CI `passed` 或 `skipped` 才继续，`running`、`queued` 或 `unknown` 会暂停等待 resume 重新采集。
 - 如果配置了 `integrations.pr_provider`，accepted 任务会运行 `pr_status`，把 `harness/pr-runs/*/output.json` 写入 `task.evidence.pr`；PR `merged` 或 `skipped` 才继续 close，`unknown` 会暂停等待 resume 重新采集。

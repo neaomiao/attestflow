@@ -40,6 +40,7 @@ class AutonomyCoreTests(unittest.TestCase):
                         "capability_runs": "harness/capability-runs",
                         "autopilot_runs": "harness/autopilot-runs",
                         "ci_runs": "harness/ci-runs",
+                        "git_runs": "harness/git-runs",
                         "pr_runs": "harness/pr-runs",
                         "release_runs": "harness/release-runs",
                     },
@@ -59,6 +60,7 @@ class AutonomyCoreTests(unittest.TestCase):
                 "harness/capability-runs",
                 "harness/autopilot-runs",
                 "harness/ci-runs",
+                "harness/git-runs",
                 "harness/pr-runs",
                 "harness/release-runs",
             ):

@@ -18,6 +18,7 @@ SCHEMA_TYPES = (
     "session-launch-output",
     "session-resume-output",
     "ci-output",
+    "git-output",
     "pr-output",
     "release-output",
     "task",
@@ -109,7 +110,7 @@ def json_schema_for(schema_type: str) -> dict[str, Any]:
     if schema_type != "task":
         schema["properties"]["contract_version"] = {"const": PROVIDER_CONTRACT_VERSION}
         schema["properties"]["usage"] = _usage_schema()
-    if schema_type in {"capability-output", "session-launch-output", "session-resume-output", "ci-output", "pr-output", "release-output"}:
+    if schema_type in {"capability-output", "session-launch-output", "session-resume-output", "ci-output", "git-output", "pr-output", "release-output"}:
         schema["required"].extend(["status", "summary"])
         schema["properties"]["status"] = {"type": "string"}
         schema["properties"]["summary"] = {"type": "string", "minLength": 1}
