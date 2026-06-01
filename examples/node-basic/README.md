@@ -1,5 +1,7 @@
 # Node Basic Example
 
+[中文](README.zh-CN.md)
+
 This example mirrors `examples/python-basic` for a Node.js project.
 It uses the deterministic local provider at `../providers/local_agent.py`, so it does not need model credentials.
 The commands assume `python` points to Python 3.11+.

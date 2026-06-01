@@ -1,5 +1,7 @@
 # Dart Adapter
 
+[中文](README.zh-CN.md)
+
 Use this adapter for Dart or Flutter package roots. `attestflow init --adapter dart` detects `pubspec.yaml`, then sets:
 
 - `unit` -> `dart test`

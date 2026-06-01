@@ -1,5 +1,7 @@
 # Security Policy
 
+[中文](SECURITY.zh-CN.md)
+
 Attestflow coordinates AI coding agents, so security issues usually involve unsafe execution boundaries, leaked evidence, or provider behavior.
 
 ## Supported versions

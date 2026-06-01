@@ -1,5 +1,7 @@
 # Ruby Adapter
 
+[中文](README.zh-CN.md)
+
 Use this adapter for Ruby projects. `attestflow init --adapter ruby` detects `Gemfile` and `Rakefile`, then sets:
 
 - `unit` -> `bundle exec rake test`

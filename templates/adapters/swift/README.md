@@ -1,5 +1,7 @@
 # Swift Adapter
 
+[中文](README.zh-CN.md)
+
 Use this adapter for Swift Package Manager projects. `attestflow init --adapter swift` detects `Package.swift`, then sets:
 
 - `unit` -> `swift test`

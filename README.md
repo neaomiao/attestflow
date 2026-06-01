@@ -105,9 +105,9 @@ python3 -m attestflow secret-scan
 ## Documentation
 
 - [Getting Started](docs/getting-started.en.md)
-- [Provider Cookbook](docs/providers.md)
+- [Provider Cookbook](docs/providers.en.md)
 - [GitHub Actions](docs/github-actions.md)
-- [Universal Harness Design](docs/design/universal-harness.md)
-- [Governance](docs/governance.md)
+- [Universal Harness Design](docs/design/universal-harness.en.md)
+- [Governance](docs/governance.en.md)
 
 The English README is the default GitHub entrypoint. The Chinese README is maintained at [README.zh-CN.md](README.zh-CN.md).

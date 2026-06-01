@@ -1,5 +1,7 @@
 # Session Adapter Schema 契约
 
+[English](session-adapter-schema.en.md)
+
 日期：2026-05-30
 状态：已实现 command adapter
 

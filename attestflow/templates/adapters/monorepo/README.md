@@ -1,5 +1,7 @@
 # Monorepo Adapter
 
+[中文](README.zh-CN.md)
+
 Use this adapter for JavaScript/TypeScript monorepos. `attestflow init --adapter monorepo` detects `pnpm-workspace.yaml`, `turbo.json`, and `nx.json`, then maps package scripts into workspace commands:
 
 - `test` -> `pnpm -r test`

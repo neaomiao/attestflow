@@ -1,5 +1,7 @@
 # Planner Output Schema 契约
 
+[English](planner-output-schema.en.md)
+
 日期：2026-05-30
 状态：已实现基础导入
 
