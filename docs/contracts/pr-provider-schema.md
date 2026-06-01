@@ -1,7 +1,5 @@
 # PR Provider Schema 契约
 
-[English](pr-provider-schema.en.md)
-
 日期：2026-05-30
 状态：`pr ensure` / `pr merge` / `pr status` command provider 已实现
 

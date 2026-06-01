@@ -1,7 +1,5 @@
 # Provider Cookbook
 
-[中文](providers.md)
-
 Providers are the boundary between Attestflow and programming agents. Attestflow owns input shaping, output validation, state, locks, verification, and evidence. Providers generate planner JSON or complete task-scoped capabilities.
 
 ## Command Contract

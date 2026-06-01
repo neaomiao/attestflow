@@ -1,7 +1,5 @@
 # GitHub Actions PR Gate
 
-[English](github-actions.md)
-
 Attestflow core 不依赖 GitHub，但开源核心仓库可以发布可复用的 GitHub Actions 示例。
 
 以 `examples/github-actions/attestflow-pr.yml` 为起点。该 workflow 做三个确定性检查：

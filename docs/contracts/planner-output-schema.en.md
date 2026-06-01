@@ -1,7 +1,5 @@
 # Planner Output Schema Contract
 
-[中文](planner-output-schema.md)
-
 Date: 2026-05-30
 Status: base import implemented
 

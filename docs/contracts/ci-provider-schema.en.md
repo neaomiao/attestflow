@@ -1,7 +1,5 @@
 # CI Provider Contract
 
-[中文](ci-provider-schema.md)
-
 Date: 2026-05-30
 Status: `ci status`, `ci await`, `ci logs`, `ci artifacts`, `ci rerun`, `ci dispatch`, and the GitHub Actions adapter implemented
 

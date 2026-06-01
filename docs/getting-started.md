@@ -1,7 +1,5 @@
 # Getting Started
 
-[English](getting-started.en.md)
-
 本指南验证开源核心：安装、初始化、planner 导入、capability 执行、验证、证据和关闭任务。
 
 ## 1. 本地示例

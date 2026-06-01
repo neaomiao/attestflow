@@ -1,7 +1,5 @@
 # Python Adapter
 
-[English](README.md)
-
 用于 Python 项目。`attestflow init --adapter python` 会读取显式项目工具配置，并填入对应命令：
 
 - `[tool.pytest.ini_options]` 或 `pytest.ini` -> `python -m pytest`

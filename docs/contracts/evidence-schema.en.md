@@ -1,7 +1,5 @@
 # Evidence Schema Contract
 
-[中文](evidence-schema.md)
-
 Date: 2026-05-29
 Status: core local gates implemented
 

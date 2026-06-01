@@ -1,7 +1,5 @@
 # Python Adapter
 
-[中文](README.zh-CN.md)
-
 Use this adapter for Python projects. During `attestflow init --adapter python`, Attestflow reads explicit project tool configuration and fills matching commands:
 
 - `[tool.pytest.ini_options]` or `pytest.ini` -> `python -m pytest`

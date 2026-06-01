@@ -1,7 +1,5 @@
 # 通用开发 Harness 设计
 
-[English](universal-harness.en.md)
-
 日期：2026-05-29
 状态：核心本地闭环已实现，AI-first 任务导入和 planner capability 已纳入主路径
 来源会话：019e7244-0bad-7970-81c4-af4c4323486c

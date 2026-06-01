@@ -99,8 +99,9 @@ class BilingualOnboardingTests(unittest.TestCase):
             config = load_data(target / "harness.yml")
             self.assertEqual(config["project"]["language"], "zh-CN")
             self.assertEqual(config["project"]["adapter"], "python")
-            self.assertTrue((target / "harness" / "adapters" / "python" / "README.md").exists())
-            self.assertTrue((target / "harness" / "adapters" / "python" / "README.zh-CN.md").exists())
+            adapter_readme = target / "harness" / "adapters" / "python" / "README.md"
+            self.assertIn("用于 Python 项目", adapter_readme.read_text(encoding="utf-8"))
+            self.assertFalse((target / "harness" / "adapters" / "python" / "README.zh-CN.md").exists())
 
     def test_bootstrap_script_runs_under_zsh_when_available(self) -> None:
         zsh = shutil.which("zsh")
@@ -138,6 +139,7 @@ class BilingualOnboardingTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             config = load_data(target / "harness.yml")
             self.assertEqual(config["project"]["language"], "en")
+            self.assertFalse((target / "harness" / "adapters" / "generic" / "README.zh-CN.md").exists())
 
 
 if __name__ == "__main__":

@@ -1,7 +1,5 @@
 # 安全策略
 
-[English](SECURITY.md)
-
 Attestflow 协调 AI 编码 agent，因此安全问题通常集中在执行边界、证据泄漏或 provider 行为。
 
 ## 支持版本

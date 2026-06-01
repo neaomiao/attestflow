@@ -1,7 +1,5 @@
 # Task Schema Contract
 
-[中文](task-schema.md)
-
 Date: 2026-05-29
 Status: core local validation implemented
 

@@ -1,7 +1,5 @@
 # Node 基础示例
 
-[English](README.md)
-
 这个示例对应 `examples/python-basic`，用于 Node.js 项目。
 它使用 `../providers/local_agent.py` 作为 deterministic local provider，因此不需要模型凭证。
 下面命令假设 `python` 指向 Python 3.11+。

@@ -1,7 +1,5 @@
 # Governance and Versioning
 
-[中文](governance.md)
-
 Date: 2026-05-31
 Status: P3 baseline governance implemented
 

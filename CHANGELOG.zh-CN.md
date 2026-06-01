@@ -1,7 +1,5 @@
 # 更新日志
 
-[English](CHANGELOG.md)
-
 ## 0.1.0 - 未发布
 
 - 新增开源核心 harness：任务 schema、状态机、锁、run ledger、验证证据、planner import、capability run、autopilot、session adapter、CI/PR/release provider contract 和项目模板。

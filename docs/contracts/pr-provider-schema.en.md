@@ -1,7 +1,5 @@
 # PR Provider Contract
 
-[中文](pr-provider-schema.md)
-
 Date: 2026-05-30
 Status: `pr ensure`, `pr merge`, and `pr status` command provider implemented
 

@@ -1,7 +1,5 @@
 # Universal Development Harness Design
 
-[中文](universal-harness.md)
-
 Date: 2026-05-29
 Status: core local loop implemented; AI-first task import and planner capability are part of the main path
 Source session: 019e7244-0bad-7970-81c4-af4c4323486c

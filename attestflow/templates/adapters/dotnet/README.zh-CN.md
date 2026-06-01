@@ -1,7 +1,5 @@
 # .NET Adapter
 
-[English](README.md)
-
 用于 .NET 项目。`attestflow init --adapter dotnet` 会检测 `.sln` 或 `.csproj` 文件，并设置：
 
 - `unit` -> `dotnet test`

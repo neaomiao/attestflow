@@ -1,7 +1,5 @@
 # Monorepo Adapter
 
-[English](README.md)
-
 用于 JavaScript/TypeScript monorepo。`attestflow init --adapter monorepo` 会检测 `pnpm-workspace.yaml`、`turbo.json` 和 `nx.json`，并把 package scripts 映射成 workspace 命令：
 
 - `test` -> `pnpm -r test`

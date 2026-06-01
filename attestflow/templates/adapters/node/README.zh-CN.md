@@ -1,7 +1,5 @@
 # Node Adapter
 
-[English](README.md)
-
 用于 Node 项目。`attestflow init --adapter node` 会检测 `pnpm-lock.yaml`、`yarn.lock`，否则回退到 `npm`，并把 package scripts 映射到 `harness.yml`：
 
 - `test` -> `commands.unit`

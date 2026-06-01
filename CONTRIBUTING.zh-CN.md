@@ -1,7 +1,5 @@
 # 贡献指南
 
-[English](CONTRIBUTING.md)
-
 Attestflow 是 AI-first 开发 harness。贡献应保持核心边界：
 
 - 生成性工作属于编程 agent provider。

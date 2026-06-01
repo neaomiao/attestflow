@@ -1,7 +1,5 @@
 # Rust Adapter
 
-[English](README.md)
-
 用于 Rust crate 或 workspace。`attestflow init --adapter rust` 会检测 `Cargo.toml`，并把核心验证命令写入 `harness.yml`：
 
 - `commands.unit`: `cargo test`

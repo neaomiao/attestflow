@@ -1,7 +1,5 @@
 # Evidence Schema 契约
 
-[English](evidence-schema.en.md)
-
 日期：2026-05-29
 状态：核心本地门禁已实现
 

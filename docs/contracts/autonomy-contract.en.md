@@ -1,7 +1,5 @@
 # Autonomy Contract
 
-[中文](autonomy-contract.md)
-
 Attestflow's autonomy boundary is deterministic. The system automatically advances engineering steps that can be proven by configuration, state, locks, and evidence. When credentials, authorization, external state, or business judgment are missing, it writes a structured blocker instead of pretending the work is complete.
 
 ## Core Rules

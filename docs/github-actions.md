@@ -1,7 +1,5 @@
 # GitHub Actions PR Gate
 
-[中文](github-actions.zh-CN.md)
-
 Attestflow core does not depend on GitHub, but an open-core repository can still publish a reusable GitHub Actions example.
 
 Use `examples/github-actions/attestflow-pr.yml` as a starting point. The workflow does three deterministic checks:

@@ -120,6 +120,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         return 1
     shutil.copytree(source, target, dirs_exist_ok=True)
     shutil.copytree(adapter_source, target / "harness" / "adapters" / str(adapter), dirs_exist_ok=True)
+    _select_initialized_adapter_language(target, str(adapter), str(language))
     _configure_initialized_adapter(target, str(adapter))
     _configure_initialized_language(target, str(language))
     _configure_initialized_agent_provider(target, agent_provider, agent_command)
@@ -464,6 +465,16 @@ def _configure_initialized_language(target: Path, language: str) -> None:
     project["language"] = language
     config["project"] = project
     dump_data(config, config_path)
+
+
+def _select_initialized_adapter_language(target: Path, adapter: str, language: str) -> None:
+    adapter_dir = target / "harness" / "adapters" / adapter
+    english_readme = adapter_dir / "README.md"
+    chinese_readme = adapter_dir / "README.zh-CN.md"
+    if language == "zh-CN" and chinese_readme.exists():
+        english_readme.write_text(chinese_readme.read_text(encoding="utf-8"), encoding="utf-8")
+    if chinese_readme.exists():
+        chinese_readme.unlink()
 
 
 def _configure_python_adapter_defaults(target: Path, config: dict, project: dict) -> None:

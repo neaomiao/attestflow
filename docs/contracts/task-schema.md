@@ -1,7 +1,5 @@
 # Task Schema 契约
 
-[English](task-schema.en.md)
-
 日期：2026-05-29
 状态：核心本地校验已实现
 

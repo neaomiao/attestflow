@@ -1,7 +1,5 @@
 # Release Provider Schema 契约
 
-[English](release-provider-schema.en.md)
-
 日期：2026-05-30
 状态：`release status` command provider 已实现
 

@@ -73,21 +73,26 @@ class BilingualDocsTests(unittest.TestCase):
 
         self.assertEqual(missing, [])
 
-    def test_language_pairs_link_to_each_other(self) -> None:
-        missing_links: list[str] = []
-        for english, chinese in EXPECTED_DOC_PAIRS:
-            english_path = ROOT / english
-            chinese_path = ROOT / chinese
-            if not english_path.exists() or not chinese_path.exists():
-                continue
-            english_text = english_path.read_text(encoding="utf-8")[:500]
-            chinese_text = chinese_path.read_text(encoding="utf-8")[:500]
-            if chinese_path.name not in english_text:
-                missing_links.append(f"{english} -> {chinese_path.name}")
-            if english_path.name not in chinese_text:
-                missing_links.append(f"{chinese} -> {english_path.name}")
+    def test_only_root_readmes_are_language_switch_entrypoints(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")[:500]
+        chinese_readme = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")[:500]
+        self.assertIn("README.zh-CN.md", readme)
+        self.assertIn("README.md", chinese_readme)
 
-        self.assertEqual(missing_links, [])
+        unexpected_links: list[str] = []
+        language_link = re.compile(r"^\[(English|中文|Chinese(?: README)?)\]\([^)]+\)$")
+        for english, chinese in EXPECTED_DOC_PAIRS:
+            for relative in (english, chinese):
+                if relative in {"README.md", "README.zh-CN.md"}:
+                    continue
+                path = ROOT / relative
+                if not path.exists():
+                    continue
+                for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+                    if language_link.match(line):
+                        unexpected_links.append(f"{relative}:{line_number}")
+
+        self.assertEqual(unexpected_links, [])
 
     def test_public_markdown_inventory_has_no_untracked_single_language_docs(self) -> None:
         expected = {tuple(pair) for pair in EXPECTED_DOC_PAIRS}

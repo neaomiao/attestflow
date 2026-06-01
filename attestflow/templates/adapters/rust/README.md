@@ -1,7 +1,5 @@
 # Rust Adapter
 
-[中文](README.zh-CN.md)
-
 Use this adapter for Rust crates or workspaces. During `attestflow init --adapter rust`, Attestflow checks for `Cargo.toml` and maps the core verification commands into `harness.yml`:
 
 - `commands.unit`: `cargo test`

@@ -1,7 +1,5 @@
 # Autonomy Contract
 
-[English](autonomy-contract.en.md)
-
 Attestflow 的自治边界是确定性的：系统自动推进可证明的工程步骤；缺少凭证、授权、外部状态或业务判断时写入结构化 blocker，不把等待伪装成完成。
 
 ## Run 状态

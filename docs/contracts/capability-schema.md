@@ -1,7 +1,5 @@
 # Capability Contract
 
-[English](capability-schema.en.md)
-
 日期：2026-05-30
 状态：planner capability 和 task-scoped capability runner 已实现
 

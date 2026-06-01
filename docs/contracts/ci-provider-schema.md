@@ -1,7 +1,5 @@
 # CI Provider Schema 契约
 
-[English](ci-provider-schema.en.md)
-
 日期：2026-05-30
 状态：`ci status`、`ci await`、`ci logs`、`ci artifacts`、`ci rerun`、`ci dispatch` 和 GitHub Actions adapter 已实现
 

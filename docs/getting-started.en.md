@@ -1,7 +1,5 @@
 # Getting Started
 
-[Chinese](getting-started.md)
-
 This guide validates the open-source core: install, initialize, planner import, capability execution, verification, evidence, and task close.
 
 ## 1. Local Example

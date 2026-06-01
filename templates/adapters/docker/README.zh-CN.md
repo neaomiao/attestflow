@@ -1,7 +1,5 @@
 # Docker Adapter
 
-[English](README.md)
-
 用于主要通过容器镜像验证的项目。`attestflow init --adapter docker` 会检测 `Dockerfile` 和常见 Compose 文件，启用 Docker 执行策略，并设置：
 
 - `project_verify` -> `docker build .`

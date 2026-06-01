@@ -1,7 +1,5 @@
 # Capability Contract
 
-[中文](capability-schema.md)
-
 Date: 2026-05-30
 Status: planner capability and task-scoped capability runner implemented
 

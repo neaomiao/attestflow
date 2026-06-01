@@ -1,7 +1,5 @@
 # Release Provider Contract
 
-[中文](release-provider-schema.md)
-
 Date: 2026-05-30
 Status: `release status` command provider implemented
 

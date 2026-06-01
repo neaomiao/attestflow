@@ -1,7 +1,5 @@
 # Go Adapter
 
-[English](README.md)
-
 用于 Go module。`attestflow init --adapter go` 会检测 `go.mod`，并把核心验证命令写入 `harness.yml`：
 
 - `commands.unit`: `go test ./...`

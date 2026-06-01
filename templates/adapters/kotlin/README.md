@@ -1,7 +1,5 @@
 # Kotlin Adapter
 
-[中文](README.zh-CN.md)
-
 Use this adapter for Kotlin JVM projects. `attestflow init --adapter kotlin` prefers Gradle/Kotlin DSL files, then sets:
 
 - Gradle: `unit` -> `./gradlew test` or `gradle test`

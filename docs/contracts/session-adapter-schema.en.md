@@ -1,7 +1,5 @@
 # Session Adapter Contract
 
-[中文](session-adapter-schema.md)
-
 Date: 2026-05-30
 Status: command adapter implemented
 

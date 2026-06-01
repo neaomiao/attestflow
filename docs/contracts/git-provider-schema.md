@@ -1,7 +1,5 @@
 # Git Provider Schema 契约
 
-[English](git-provider-schema.en.md)
-
 日期：2026-05-31
 状态：`publish` command provider 已实现
 

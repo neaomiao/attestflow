@@ -1,7 +1,5 @@
 # Governance and Versioning
 
-[English](governance.en.md)
-
 日期：2026-05-31
 状态：P3 基础治理已实现
 

@@ -1,7 +1,5 @@
 # Bazel Adapter
 
-[English](README.md)
-
 用于 Bazel workspace。`attestflow init --adapter bazel` 会检测 `MODULE.bazel`、`WORKSPACE.bazel` 或 `WORKSPACE`，并设置：
 
 - `unit` -> `bazel test //...`

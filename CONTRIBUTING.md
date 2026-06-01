@@ -1,7 +1,5 @@
 # Contributing
 
-[中文](CONTRIBUTING.zh-CN.md)
-
 Attestflow is an AI-first development harness. Contributions should preserve the core boundary:
 
 - Generative work belongs to programming agent providers.

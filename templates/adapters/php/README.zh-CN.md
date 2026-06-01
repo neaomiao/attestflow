@@ -1,7 +1,5 @@
 # PHP Adapter
 
-[English](README.md)
-
 用于 Composer PHP 项目。`attestflow init --adapter php` 会检测 `composer.json`，并设置：
 
 - Composer `test` script -> `composer test`

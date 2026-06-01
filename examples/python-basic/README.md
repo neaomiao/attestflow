@@ -1,7 +1,5 @@
 # Python Basic Example
 
-[中文](README.zh-CN.md)
-
 This example runs the full open-source Attestflow core without any external AI account.
 It uses `../providers/local_agent.py` as a deterministic provider that writes the demo tests and implementation.
 The commands assume `python` points to Python 3.11+.

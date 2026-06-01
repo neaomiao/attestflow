@@ -1,7 +1,5 @@
 # Git Provider Contract
 
-[中文](git-provider-schema.md)
-
 Date: 2026-05-31
 Status: `publish` command provider implemented
 
