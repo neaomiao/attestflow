@@ -3,15 +3,24 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
+from .governance import PROVIDER_CONTRACT_VERSION
 from .io import load_data
 
 
 TASK_CAPABILITY_STATUSES = ("passed", "failed", "blocked")
 SESSION_STATUSES = {"launch": {"launched", "blocked"}, "resume": {"resumed", "blocked"}}
 CI_STATUSES = {"passed", "failed", "running", "queued", "cancelled", "skipped", "blocked", "unknown"}
+GIT_STATUSES = {"published", "skipped", "blocked", "failed", "unknown"}
 PR_STATUSES = {"merged", "open", "draft", "blocked", "failed", "skipped", "unknown"}
 RELEASE_STATUSES = {"released", "skipped", "running", "queued", "blocked", "failed", "unknown"}
 REVIEW_FINDING_SEVERITIES = {"blocker", "major", "minor", "info"}
+USAGE_TOKEN_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "total_tokens",
+    "cached_input_tokens",
+    "reasoning_tokens",
+)
 
 
 def validate_contract(contract_type: str, value: Any) -> list[str]:
@@ -41,6 +50,8 @@ def raise_contract_errors(label: str, contract_type: str, errors: list[str], pat
 def validate_planner_output(output: dict[str, Any], label: str = "planner-output") -> list[str]:
     errors: list[str] = []
     _require_schema_version(output, label, errors)
+    _validate_contract_version(output, label, errors)
+    _validate_usage(output, label, errors)
     tasks = output.get("tasks")
     if not isinstance(tasks, list) or not tasks:
         errors.append(_field_error(label, "tasks", "must be a non-empty list"))
@@ -87,6 +98,8 @@ def validate_planner_output(output: dict[str, Any], label: str = "planner-output
 def validate_capability_output(output: dict[str, Any], label: str = "capability-output") -> list[str]:
     errors: list[str] = []
     _require_schema_version(output, label, errors)
+    _validate_contract_version(output, label, errors)
+    _validate_usage(output, label, errors)
     _require_status(output, label, TASK_CAPABILITY_STATUSES, errors)
     _require_summary(output, label, errors)
     if not isinstance(output.get("findings", []), list):
@@ -182,6 +195,8 @@ def validate_session_resume_output(output: dict[str, Any], label: str = "session
 def validate_session_output(output: dict[str, Any], action: str, label: str = "adapter output") -> list[str]:
     errors: list[str] = []
     _require_schema_version(output, label, errors)
+    _validate_contract_version(output, label, errors)
+    _validate_usage(output, label, errors)
     allowed = SESSION_STATUSES.get(action, set())
     _require_status(output, label, allowed, errors)
     _require_summary(output, label, errors)
@@ -191,16 +206,41 @@ def validate_session_output(output: dict[str, Any], action: str, label: str = "a
 def validate_ci_output(output: dict[str, Any], label: str = "ci-output") -> list[str]:
     errors: list[str] = []
     _require_schema_version(output, label, errors)
+    _validate_contract_version(output, label, errors)
+    _validate_usage(output, label, errors)
     _require_status(output, label, CI_STATUSES, errors)
     _require_summary(output, label, errors)
-    if not isinstance(output.get("checks", []), list):
-        errors.append(_field_error(label, "checks", "must be a list"))
+    for key in ("checks", "jobs", "annotations", "artifacts"):
+        if not isinstance(output.get(key, []), list):
+            errors.append(_field_error(label, key, "must be a list"))
+    for key in ("logs", "failure_summary"):
+        if key in output and not isinstance(output.get(key), dict):
+            errors.append(_field_error(label, key, "must be a mapping"))
+    return errors
+
+
+def validate_git_output(output: dict[str, Any], label: str = "git-output") -> list[str]:
+    errors: list[str] = []
+    _require_schema_version(output, label, errors)
+    _validate_contract_version(output, label, errors)
+    _validate_usage(output, label, errors)
+    _require_status(output, label, GIT_STATUSES, errors)
+    _require_summary(output, label, errors)
+    for key in ("branch", "remote", "commit_before", "commit_after"):
+        if key in output and not str(output.get(key, "")).strip():
+            errors.append(_field_error(label, key, "must be non-empty when present"))
+    if "pushed" in output and not isinstance(output.get("pushed"), bool):
+        errors.append(_field_error(label, "pushed", "must be a boolean"))
+    if not isinstance(output.get("changes", []), list):
+        errors.append(_field_error(label, "changes", "must be a list"))
     return errors
 
 
 def validate_pr_output(output: dict[str, Any], label: str = "pr-output") -> list[str]:
     errors: list[str] = []
     _require_schema_version(output, label, errors)
+    _validate_contract_version(output, label, errors)
+    _validate_usage(output, label, errors)
     _require_status(output, label, PR_STATUSES, errors)
     _require_summary(output, label, errors)
     if not isinstance(output.get("checks", []), list):
@@ -211,6 +251,8 @@ def validate_pr_output(output: dict[str, Any], label: str = "pr-output") -> list
 def validate_release_output(output: dict[str, Any], label: str = "release-output") -> list[str]:
     errors: list[str] = []
     _require_schema_version(output, label, errors)
+    _validate_contract_version(output, label, errors)
+    _validate_usage(output, label, errors)
     _require_status(output, label, RELEASE_STATUSES, errors)
     _require_summary(output, label, errors)
     if not isinstance(output.get("artifacts", []), list):
@@ -227,6 +269,33 @@ def validate_task_contract(output: dict[str, Any], label: str = "task") -> list[
 def _require_schema_version(output: dict[str, Any], label: str, errors: list[str]) -> None:
     if output.get("schema_version") != 1:
         errors.append(_field_error(label, "schema_version", "must be 1"))
+
+
+def _validate_contract_version(output: dict[str, Any], label: str, errors: list[str]) -> None:
+    if "contract_version" in output and output.get("contract_version") != PROVIDER_CONTRACT_VERSION:
+        errors.append(_field_error(label, "contract_version", f"must be {PROVIDER_CONTRACT_VERSION}"))
+
+
+def _validate_usage(output: dict[str, Any], label: str, errors: list[str]) -> None:
+    if "usage" not in output:
+        return
+    usage = output.get("usage")
+    if not isinstance(usage, dict):
+        errors.append(_field_error(label, "usage", "must be a mapping"))
+        return
+    for key in ("provider", "model"):
+        if key in usage and not str(usage.get(key, "")).strip():
+            errors.append(_field_error(label, f"usage.{key}", "must be non-empty when present"))
+    for key in USAGE_TOKEN_FIELDS:
+        if key not in usage:
+            continue
+        value = usage.get(key)
+        if type(value) is not int or value < 0:
+            errors.append(_field_error(label, f"usage.{key}", "must be a non-negative integer"))
+    if "cost_usd" in usage:
+        value = usage.get("cost_usd")
+        if type(value) not in {int, float} or value < 0:
+            errors.append(_field_error(label, "usage.cost_usd", "must be a non-negative number"))
 
 
 def _require_status(output: dict[str, Any], label: str, allowed: Any, errors: list[str]) -> None:
@@ -312,6 +381,7 @@ CONTRACT_TYPES: dict[str, Callable[[dict[str, Any]], list[str]]] = {
     "session-launch-output": validate_session_launch_output,
     "session-resume-output": validate_session_resume_output,
     "ci-output": validate_ci_output,
+    "git-output": validate_git_output,
     "pr-output": validate_pr_output,
     "release-output": validate_release_output,
     "task": validate_task_contract,

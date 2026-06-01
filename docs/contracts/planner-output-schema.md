@@ -17,6 +17,13 @@ Planner 必须输出 JSON object：
 {
   "schema_version": 1,
   "goal": "Improve the project onboarding flow.",
+  "usage": {
+    "provider": "codex",
+    "model": "gpt-5",
+    "input_tokens": 1200,
+    "output_tokens": 300,
+    "total_tokens": 1500
+  },
   "tasks": [
     {
       "key": "planner_contract",
@@ -47,7 +54,9 @@ Planner 必须输出 JSON object：
 ## 字段规则
 
 - `schema_version`：当前为 `1`。
+- `contract_version`：可选；如果出现，必须为 `1`。缺省值兼容现有 provider。
 - `goal`：原始目标摘要，用于审计，不写入 task 必填字段。
+- `usage`：可选；记录 provider 报告的真实模型消耗。token 字段必须是非负整数，`cost_usd` 必须是非负数字。Attestflow 会把它另存为 capability run 的 `usage.json`。
 - `tasks`：非空数组。
 - `key`：planner 内部稳定引用。Attestflow 不信任编程 Agent 生成的 `TASK-*`，而是用 `key` 解析任务间依赖。
 - `title`：任务标题。

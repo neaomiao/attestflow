@@ -472,6 +472,7 @@ sys.exit(0)
             root = Path(tmp)
             cmd_init(SimpleNamespace(path=str(root), adapter="generic", agent_provider="command", agent_command=None))
             (root / "harness" / "autopilot-runs").rmdir()
+            (root / "harness" / "git-runs").rmdir()
             (root / "harness" / "pr-runs").rmdir()
             (root / "harness" / "release-runs").rmdir()
             original_root = cli.ROOT
@@ -486,6 +487,7 @@ sys.exit(0)
             self.assertEqual(exit_code, 1)
             text = error.getvalue()
             self.assertIn("missing autopilot_runs directory", text)
+            self.assertIn("missing git_runs directory", text)
             self.assertIn("missing pr_runs directory", text)
             self.assertIn("missing release_runs directory", text)
 
@@ -568,6 +570,28 @@ sys.exit(0)
 
         self.assertIn("sessions.worktree.enabled must be a boolean", errors)
         self.assertIn("sessions.worktree.path_template must be a string or null", errors)
+
+    def test_validate_config_rejects_invalid_security_provider_command_policy(self) -> None:
+        config = {
+            "schema_version": 1,
+            "project": {"name": "demo"},
+            "paths": {"tasks": "harness/tasks", "runs": "harness/runs"},
+            "commands": {},
+            "policies": {},
+            "security": {
+                "provider_commands": {
+                    "allowlist": "python3",
+                    "max_output_bytes": 0,
+                    "require_approval_for_irreversible": "yes",
+                }
+            },
+        }
+
+        errors = validate_config(config)
+
+        self.assertIn("security.provider_commands.allowlist must be a list of strings", errors)
+        self.assertIn("security.provider_commands.max_output_bytes must be a positive integer", errors)
+        self.assertIn("security.provider_commands.require_approval_for_irreversible must be a boolean", errors)
 
     def test_validate_config_rejects_invalid_capability_provider_fields(self) -> None:
         config = {
@@ -661,6 +685,7 @@ sys.exit(0)
                 "tasks": "harness/tasks",
                 "runs": "harness/runs",
                 "ci_runs": 123,
+                "git_runs": {},
                 "pr_runs": False,
                 "release_runs": [],
             },
@@ -669,6 +694,12 @@ sys.exit(0)
             "integrations": {
                 "ci_provider": {
                     "provider": ["github-actions"],
+                    "command": False,
+                    "provider_options": [],
+                    "timeout_seconds": 0,
+                },
+                "git_provider": {
+                    "provider": ["git"],
                     "command": False,
                     "provider_options": [],
                     "timeout_seconds": 0,
@@ -690,8 +721,13 @@ sys.exit(0)
         errors = validate_config(config)
 
         self.assertIn("paths.ci_runs must be a string", errors)
+        self.assertIn("paths.git_runs must be a string", errors)
         self.assertIn("paths.pr_runs must be a string", errors)
         self.assertIn("paths.release_runs must be a string", errors)
+        self.assertIn("integrations.git_provider.provider must be a string", errors)
+        self.assertIn("integrations.git_provider.command must be a string or null", errors)
+        self.assertIn("integrations.git_provider.provider_options must be a mapping", errors)
+        self.assertIn("integrations.git_provider.timeout_seconds must be a positive number", errors)
         self.assertIn("integrations.ci_provider.provider must be a string", errors)
         self.assertIn("integrations.ci_provider.command must be a string or null", errors)
         self.assertIn("integrations.ci_provider.provider_options must be a mapping", errors)

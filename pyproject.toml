@@ -31,4 +31,4 @@ attestflow = "attestflow.cli:main"
 include = ["attestflow*"]
 
 [tool.setuptools.package-data]
-attestflow = ["templates/**/*"]
+attestflow = ["templates/**/*", "templates/base/.github/workflows/*.yml"]

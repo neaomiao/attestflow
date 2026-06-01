@@ -18,13 +18,14 @@ harness/runs/<timestamp>-<task-id>/
   metadata.yml
   ledger.jsonl
   evidence.md
-  session.yml
-  prompt.md
-  session-adapter-input.json
-  session-adapter-output.json
-  session-launch.stdout.log
-  session-launch.stderr.log
-  commands/
+	  session.yml
+	  prompt.md
+	  session-adapter-input.json
+	  session-adapter-output.json
+	  session-launch-usage.json
+	  session-launch.stdout.log
+	  session-launch.stderr.log
+	  commands/
     bdd.log
     unit.log
     lint.log
@@ -272,15 +273,66 @@ ci_url: null
 
 `fresh` 表示命令在当前任务进入 `in_progress` 后执行。
 
+## Provider Usage
+
+Capability、CI、PR、release provider output 如果包含 `usage`，run 目录会额外保存 `usage.json`。Session adapter output 如果包含 `usage`，会保存 `session-launch-usage.json` 或 `session-resume-usage.json`，并写回 `session.yml`。Attestflow 只记录 provider 报告的真实模型用量，不根据字节数推算 token。
+
 ## 外部交付 Evidence
 
 外部系统 evidence 不写进任务 run 目录，而是写入独立 provider run：
 
 - `task.evidence.ci`：`harness/ci-runs/ci-*/output.json`
+- `task.evidence.git`：`harness/git-runs/git-*/output.json`，来自 `publish`
 - `task.evidence.pr_request`：`harness/pr-runs/pr-*/output.json`，来自 `pr ensure`
 - `task.evidence.pr`：`harness/pr-runs/pr-*/output.json`，来自 `pr status`
 
 这些 evidence 证明外部系统状态，不替代当前 task run 的本地 verification evidence。release evidence 属于顶层 autopilot run，写入 `harness/autopilot-runs/*/metadata.json.release`。
+
+## Evidence Bundle
+
+`evidence export TASK --out DIR` 仍导出单个 done/archived task 的 evidence。顶层交付用 bundle：
+
+```bash
+python -m attestflow evidence bundle --run RUN --out DIR
+python -m attestflow evidence bundle --release RELEASE --out DIR
+python -m attestflow evidence verify DIR
+python -m attestflow evidence verify DIR --check-source
+```
+
+Autopilot bundle 至少包含：
+
+- `autopilot-runs/<run>/metadata.json`
+- `autopilot-runs/<run>/ledger.jsonl`
+- run 中 planned/dispatched task 的 task JSON、task run、CI、PR 和 capability evidence
+- release evidence 引用的 `release-runs/*`
+- `manifest.json`
+- `audit.md`
+- `pr-comment.md`
+
+Release bundle 至少包含 `release-runs/<release>/*`、`manifest.json` 和 `audit.md`。
+
+`manifest.json` 是可复现索引：
+
+```json
+{
+  "schema_version": 1,
+  "kind": "autopilot",
+  "identifier": "auto-1",
+  "source_root": "/repo",
+  "files": ["autopilot-runs/auto-1/metadata.json"],
+  "artifacts": [
+    {
+      "path": "autopilot-runs/auto-1/metadata.json",
+      "size": 123,
+      "sha256": "...",
+      "source": "harness/autopilot-runs/auto-1/metadata.json",
+      "source_sha256": "..."
+    }
+  ]
+}
+```
+
+`evidence verify DIR` 校验 bundle 内文件存在、size 和 SHA-256；`--check-source` 会同时比较源 evidence 当前 hash，用来发现 bundle 生成后源 evidence 被更新或覆盖。
 
 ## 关闭规则
 

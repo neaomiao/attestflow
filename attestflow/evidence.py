@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -104,8 +105,33 @@ def append_ledger(
         "actor": {"role": actor_role, "id": "local"},
         "data": data,
     }
-    with (run_path / "ledger.jsonl").open("a", encoding="utf-8") as handle:
+    ledger_path = run_path / "ledger.jsonl"
+    line["previous_hash"] = _previous_ledger_hash(ledger_path)
+    line["hash"] = _ledger_hash(line)
+    with ledger_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+
+def _previous_ledger_hash(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    previous = None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            previous = line
+    if previous is None:
+        return None
+    try:
+        payload = json.loads(previous)
+    except json.JSONDecodeError:
+        return None
+    return str(payload.get("hash")) if payload.get("hash") else None
+
+
+def _ledger_hash(line: dict[str, Any]) -> str:
+    payload = {key: value for key, value in line.items() if key != "hash"}
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def write_evidence_packet(path: Path, task: dict[str, Any], run_id: str) -> None:

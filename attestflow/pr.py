@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import shlex
+import sys
 from typing import Any
 
 from .contracts import PR_STATUSES, raise_contract_errors, validate_pr_output
@@ -10,11 +12,24 @@ from .io import dump_data
 from .provider_commands import provider_timeout_seconds, run_provider_json_command, shell_command_exists
 
 
+BUILTIN_PR_PROVIDERS: dict[str, dict[str, str]] = {
+    "github": {"command": "gh", "description": "GitHub pull requests via attestflow.pr_adapters."},
+    "gitlab": {"command": "glab", "description": "GitLab merge requests via attestflow.pr_adapters."},
+}
+
+
 @dataclass(frozen=True)
 class PRStatusResult:
     status: str
     output: dict[str, Any]
     run_path: Path
+
+
+def list_pr_providers() -> list[dict[str, str]]:
+    return [
+        {"name": name, "command": item["command"], "description": item["description"]}
+        for name, item in sorted(BUILTIN_PR_PROVIDERS.items())
+    ]
 
 
 def run_pr_status(
@@ -49,7 +64,7 @@ def _run_pr_action(
     provider = str(provider_config.get("provider") or ("command" if command else ""))
     if not provider:
         raise ValueError("integrations.pr_provider must be configured or passed with --command")
-    pr_command = command or _configured_command(provider_config)
+    pr_command = command or _configured_command(provider, provider_config)
     if not pr_command:
         raise ValueError(f"PR provider command must be configured for {provider}")
     if not shell_command_exists(pr_command):
@@ -76,9 +91,13 @@ def _pr_provider_config(config: dict[str, Any]) -> dict[str, Any]:
     return pr_provider if isinstance(pr_provider, dict) else {}
 
 
-def _configured_command(provider_config: dict[str, Any]) -> str | None:
+def _configured_command(provider: str, provider_config: dict[str, Any]) -> str | None:
     command = provider_config.get("command")
-    return str(command) if command else None
+    if command:
+        return str(command)
+    if provider in BUILTIN_PR_PROVIDERS:
+        return _builtin_pr_adapter_command()
+    return None
 
 
 def _pr_input(
@@ -95,6 +114,7 @@ def _pr_input(
         "action": action,
         "provider": provider,
         "provider_options": _provider_options(provider_config),
+        "security": config.get("security", {}),
         "root": str(root),
         "project": config.get("project", {}),
         "task_id": task_id,
@@ -124,3 +144,8 @@ def _new_pr_run_path(root: Path, config: dict[str, Any]) -> Path:
         path = run_root / f"pr-{utc_timestamp()}-{suffix}"
     path.mkdir(parents=True)
     return path
+
+
+def _builtin_pr_adapter_command() -> str:
+    adapter_path = Path(__file__).resolve().parent / "pr_adapters.py"
+    return f"{shlex.quote(sys.executable)} {shlex.quote(str(adapter_path))}"

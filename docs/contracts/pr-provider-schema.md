@@ -71,6 +71,7 @@ integrations:
 字段规则：
 
 - `schema_version` 必须为 `1`。
+- `contract_version` 可选；如果出现，必须为 `1`。缺省值兼容现有 provider。
 - `status` 只能是 `merged`、`open`、`draft`、`blocked`、`failed`、`skipped` 或 `unknown`。
 - `summary` 必须非空。
 - `checks` 如果存在，必须是 list。

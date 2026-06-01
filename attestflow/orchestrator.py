@@ -1,20 +1,31 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import threading
 from typing import Any
 
-from .capabilities import is_capability_configured, run_planner_capability, run_release_capability, run_task_capability
+from .capabilities import (
+    is_capability_configured,
+    run_intake_capability,
+    run_planner_capability,
+    run_release_capability,
+    run_task_capability,
+)
 from .ci import run_ci_status
 from .evidence import append_ledger, update_run_workspace, utc_timestamp
+from .git import run_git_publish
 from .io import dump_data, load_data
 from .locks import file_lock_path, locks_root, normalize_file_path, release_locks_for_task
 from .pr import run_pr_ensure, run_pr_status
 from .release import run_release_status
+from .sessions import launch_agent_session
 from .tasks import (
     TaskRecord,
+    block_task,
     close_task,
     iter_tasks,
     start_task,
@@ -31,7 +42,7 @@ ACTIVE_STATES = {"in_progress", "review", "verified", "accepted"}
 EXTERNAL_PENDING_STATUSES = {"running", "queued", "unknown"}
 AUTOPILOT_METADATA_SCHEMA_VERSION = 1
 AUTOPILOT_STATE_MACHINE_VERSION = 1
-AUTOPILOT_TERMINAL_STATUSES = {"finished", "blocked", "failed"}
+AUTOPILOT_TERMINAL_STATUSES = {"finished", "blocked", "failed", "cancelled"}
 
 
 @dataclass(frozen=True)
@@ -88,6 +99,7 @@ class AutopilotRunResult:
     actions: list[str]
     failed: list[str]
     blocked: list[str]
+    cancelled: list[str]
     planned: list[str]
     skipped: list[SkippedTask]
     steps: int
@@ -98,6 +110,9 @@ class AutopilotRunResult:
     release_repair_planner: str | None = None
     releaser: str | None = None
     releaser_tasks: list[str] | None = None
+    intake: str | None = None
+    intake_status: str | None = None
+    batch_executions: list[dict[str, Any]] | None = None
 
 
 def build_execution_plan(root: Path, config: dict[str, Any], *, limit: int | None = None) -> ExecutionPlan:
@@ -224,9 +239,13 @@ def run_autopilot(
     planned: list[str] = list(previous_metadata.get("planned", [])) if isinstance(previous_metadata.get("planned"), list) else []
     failed: list[str] = []
     blocked: list[str] = []
+    previous_cancelled = previous_metadata.get("cancelled", [])
+    cancelled: list[str] = [str(item) for item in previous_cancelled] if isinstance(previous_cancelled, list) else []
     pause_reason: str | None = None
     run_goal = str(previous_metadata.get("goal") or goal or "").strip() or None
     planner = str(previous_metadata.get("planner")) if previous_metadata.get("planner") else None
+    intake = str(previous_metadata.get("intake")) if previous_metadata.get("intake") else None
+    intake_status = str(previous_metadata.get("intake_status")) if previous_metadata.get("intake_status") else None
     release = str(previous_metadata.get("release")) if previous_metadata.get("release") else None
     release_status = _previous_release_status(root, previous_metadata, release)
     release_repair_planner = (
@@ -239,6 +258,8 @@ def run_autopilot(
     releaser_tasks = [str(task_id) for task_id in previous_releaser_tasks] if isinstance(previous_releaser_tasks, list) else []
     previous_skipped = previous_metadata.get("skipped", [])
     skipped_payload = previous_skipped if isinstance(previous_skipped, list) else []
+    previous_batch_executions = previous_metadata.get("batch_executions", [])
+    batch_executions = previous_batch_executions if isinstance(previous_batch_executions, list) else []
     latest_skipped: list[SkippedTask] = []
     steps_executed = 0
     started_at = str(previous_metadata.get("started_at") or datetime.now(timezone.utc).isoformat())
@@ -247,6 +268,13 @@ def run_autopilot(
         if isinstance(previous_metadata.get("loop_cycles", 0), int)
         else 0
     )
+    resume_count = (
+        int(previous_metadata.get("resume_count", 0))
+        if isinstance(previous_metadata.get("resume_count", 0), int)
+        else 0
+    )
+    if resume_path:
+        resume_count += 1
     _write_autopilot_metadata(
         run_path,
         {
@@ -261,18 +289,24 @@ def run_autopilot(
             "goal": run_goal,
             "steps": int(previous_metadata.get("steps", 0)) if isinstance(previous_metadata.get("steps", 0), int) else 0,
             "actions": actions,
+            "intake": intake,
+            "intake_status": intake_status,
             "planned": planned,
             "planner": planner,
             "dispatched": dispatched,
             "failed": [],
             "blocked": [],
+            "cancelled": cancelled,
+            "cancellation": _autopilot_cancel_payload(run_path),
             "skipped": skipped_payload,
+            "batch_executions": batch_executions,
             "release": release,
             "release_status": release_status,
             "release_repair_planner": release_repair_planner,
             "releaser": releaser,
             "releaser_tasks": releaser_tasks,
             "loop_cycles": previous_loop_cycles,
+            "resume_count": resume_count,
         },
     )
     _append_autopilot_event(
@@ -283,7 +317,26 @@ def run_autopilot(
     _recover_autopilot_state(root, config, run_path)
 
     for step in range(1, max_steps + 1):
+        if _autopilot_cancel_requested(run_path):
+            if "autopilot" not in cancelled:
+                cancelled.append("autopilot")
+            _append_autopilot_event(run_path, "autopilot_cancelled", data={"step": step})
+            break
         if run_goal and not planned and not planner:
+            if not intake and is_capability_configured(config, "intake"):
+                steps_executed += 1
+                actions.append("autopilot:intake")
+                _append_autopilot_event(run_path, "intake_started", data={"step": step, "goal": run_goal})
+                status, intake_path = _run_intake_action(root, config, run_path, run_goal, step)
+                intake = intake_path
+                intake_status = status
+                if status == "failed":
+                    failed.append("intake")
+                    break
+                if status == "blocked":
+                    blocked.append("intake")
+                    break
+                continue
             steps_executed += 1
             actions.append("autopilot:plan")
             _append_autopilot_event(run_path, "planner_started", data={"step": step, "goal": run_goal})
@@ -421,72 +474,71 @@ def run_autopilot(
             },
         )
 
-        stop_after_failure = False
-        for task in batch.tasks:
-            _append_autopilot_event(
-                run_path,
-                "task_started",
-                task_id=task.task_id,
-                data={"step": step, "batch_index": batch.index},
-            )
-            try:
-                task_run = start_task(root, config, task.task_id, actor_role=actor_role)
-                session = load_data(task_run.path / "session.yml")
-            except Exception as exc:  # pragma: no cover - exercised through CLI result paths
-                failed.append(task.task_id)
-                stop_after_failure = True
+        batch_result = _dispatch_task_batch(root, config, run_path, batch, step, actor_role)
+        batch_executions.append(batch_result)
+        for task_result in batch_result["tasks"]:
+            task_id = str(task_result["task_id"])
+            status = str(task_result["status"])
+            if status == "dispatched":
+                if task_id not in dispatched:
+                    dispatched.append(task_id)
+                _append_autopilot_event(
+                    run_path,
+                    "task_dispatched",
+                    task_id=task_id,
+                    task_run_id=task_result.get("run_id"),
+                    data={
+                        "step": step,
+                        "session_id": task_result.get("session_id"),
+                        "session_status": task_result.get("session_status"),
+                        "batch_index": batch.index,
+                    },
+                )
+            elif status == "blocked":
+                if task_id not in blocked:
+                    blocked.append(task_id)
+                _append_autopilot_event(
+                    run_path,
+                    "task_dispatch_blocked",
+                    task_id=task_id,
+                    task_run_id=task_result.get("run_id"),
+                    data={
+                        "step": step,
+                        "session_status": task_result.get("session_status"),
+                        "summary": task_result.get("summary"),
+                        "batch_index": batch.index,
+                    },
+                )
+            elif status == "failed":
+                if task_id not in failed:
+                    failed.append(task_id)
                 _append_autopilot_event(
                     run_path,
                     "task_dispatch_failed",
-                    task_id=task.task_id,
-                    data={"step": step, "error": str(exc)},
+                    task_id=task_id,
+                    task_run_id=task_result.get("run_id"),
+                    data={
+                        "step": step,
+                        "session_status": task_result.get("session_status"),
+                        "error": task_result.get("error"),
+                        "batch_index": batch.index,
+                    },
                 )
-                break
-
-            session_status = str(session.get("status"))
-            if session_status not in {"prepared", "launched"}:
-                if session_status == "blocked":
-                    blocked.append(task.task_id)
-                    stop_after_failure = True
-                    _append_autopilot_event(
-                        run_path,
-                        "task_dispatch_blocked",
-                        task_id=task.task_id,
-                        task_run_id=task_run.run_id,
-                        data={
-                            "step": step,
-                            "session_status": session_status,
-                            "summary": session.get("summary") or session.get("failure"),
-                        },
-                    )
-                    break
-                failed.append(task.task_id)
-                stop_after_failure = True
+            elif status == "cancelled":
+                if task_id not in cancelled:
+                    cancelled.append(task_id)
                 _append_autopilot_event(
                     run_path,
-                    "task_dispatch_failed",
-                    task_id=task.task_id,
-                    task_run_id=task_run.run_id,
-                    data={"step": step, "session_status": session_status},
+                    "task_dispatch_cancelled",
+                    task_id=task_id,
+                    task_run_id=task_result.get("run_id"),
+                    data={
+                        "step": step,
+                        "session_status": task_result.get("session_status"),
+                        "summary": task_result.get("summary"),
+                        "batch_index": batch.index,
+                    },
                 )
-                break
-
-            if task.task_id not in dispatched:
-                dispatched.append(task.task_id)
-            _append_autopilot_event(
-                run_path,
-                "task_dispatched",
-                task_id=task.task_id,
-                task_run_id=task_run.run_id,
-                data={
-                    "step": step,
-                    "session_id": session.get("session_id"),
-                    "session_status": session_status,
-                },
-            )
-
-        if stop_after_failure:
-            break
         if pause_reason:
             break
 
@@ -498,8 +550,13 @@ def run_autopilot(
         steps_executed=steps_executed,
         failed=failed,
         blocked=blocked,
+        cancelled=cancelled,
         pause_reason=pause_reason,
         release_status=release_status,
+        run_goal=run_goal,
+        planned=planned,
+        planner=planner,
+        intake_status=intake_status,
     )
     _write_autopilot_metadata(
         run_path,
@@ -516,18 +573,24 @@ def run_autopilot(
             "steps": (int(previous_metadata.get("steps", 0)) if isinstance(previous_metadata.get("steps", 0), int) else 0)
             + steps_executed,
             "actions": actions,
+            "intake": intake,
+            "intake_status": intake_status,
             "planned": planned,
             "planner": planner,
             "dispatched": dispatched,
             "failed": failed,
             "blocked": blocked,
+            "cancelled": cancelled,
+            "cancellation": _autopilot_cancel_payload(run_path),
             "skipped": skipped_payload,
+            "batch_executions": batch_executions,
             "release": release,
             "release_status": release_status,
             "release_repair_planner": release_repair_planner,
             "releaser": releaser,
             "releaser_tasks": releaser_tasks,
             "loop_cycles": previous_loop_cycles,
+            "resume_count": resume_count,
         },
     )
     _append_autopilot_event(
@@ -541,6 +604,7 @@ def run_autopilot(
             "dispatched": dispatched,
             "failed": failed,
             "blocked": blocked,
+            "cancelled": cancelled,
             "pause_reason": pause_reason,
         },
     )
@@ -553,6 +617,7 @@ def run_autopilot(
         actions=actions,
         failed=failed,
         blocked=blocked,
+        cancelled=cancelled,
         planned=planned,
         skipped=latest_skipped,
         steps=(int(previous_metadata.get("steps", 0)) if isinstance(previous_metadata.get("steps", 0), int) else 0)
@@ -564,6 +629,9 @@ def run_autopilot(
         release_repair_planner=release_repair_planner,
         releaser=releaser,
         releaser_tasks=releaser_tasks,
+        intake=intake,
+        intake_status=intake_status,
+        batch_executions=batch_executions,
     )
 
 
@@ -705,18 +773,261 @@ def _final_autopilot_status(
     steps_executed: int,
     failed: list[str],
     blocked: list[str],
+    cancelled: list[str],
     pause_reason: str | None,
     release_status: str | None,
+    run_goal: str | None = None,
+    planned: list[str] | None = None,
+    planner: str | None = None,
+    intake_status: str | None = None,
 ) -> tuple[str, str | None]:
+    if cancelled:
+        return "cancelled", None
     if failed:
         return "failed", None
     if blocked:
         return "blocked", None
     if pause_reason:
         return "paused", pause_reason
-    if steps_executed >= max_steps and _has_more_autopilot_work(root, config, limit=limit, release_status=release_status):
+    if steps_executed >= max_steps and (
+        _has_more_goal_planning(run_goal, planned or [], planner, intake_status)
+        or _has_more_autopilot_work(root, config, limit=limit, release_status=release_status)
+    ):
         return "paused", "max_steps_reached"
     return "finished", None
+
+
+def _has_more_goal_planning(
+    run_goal: str | None,
+    planned: list[str],
+    planner: str | None,
+    intake_status: str | None,
+) -> bool:
+    if not run_goal or planned or planner:
+        return False
+    return intake_status in {None, "passed"}
+
+
+def _dispatch_task_batch(
+    root: Path,
+    config: dict[str, Any],
+    run_path: Path,
+    batch: ExecutionBatch,
+    step: int,
+    actor_role: str,
+) -> dict[str, Any]:
+    started_at = datetime.now(timezone.utc).isoformat()
+    log_path = run_path / f"batch-{step}-{batch.index}-dispatch.jsonl"
+    cancel_path = run_path / "cancel.json"
+    log_lock = threading.Lock()
+    prepared_runs: dict[str, Path] = {}
+    prepared_failures: dict[str, dict[str, Any]] = {}
+    for task in batch.tasks:
+        _append_autopilot_event(
+            run_path,
+            "task_started",
+            task_id=task.task_id,
+            data={"step": step, "batch_index": batch.index},
+        )
+        _append_batch_log(log_path, log_lock, "task_queued", task.task_id, {"step": step, "batch_index": batch.index})
+        try:
+            task_run = start_task(root, config, task.task_id, actor_role=actor_role, launch_session=False)
+            prepared_runs[task.task_id] = task_run.path
+            _append_batch_log(
+                log_path,
+                log_lock,
+                "task_prepared",
+                task.task_id,
+                {"step": step, "batch_index": batch.index, "run_id": task_run.run_id},
+            )
+        except Exception as exc:
+            prepared_failures[task.task_id] = {
+                "task_id": task.task_id,
+                "status": "failed",
+                "error": str(exc),
+                "run_id": None,
+                "session_id": None,
+                "session_status": None,
+                "summary": None,
+                "started_at": started_at,
+                "ended_at": datetime.now(timezone.utc).isoformat(),
+            }
+            _append_batch_log(log_path, log_lock, "task_result", task.task_id, prepared_failures[task.task_id])
+
+    max_workers = max(1, len(prepared_runs))
+    results_by_task: dict[str, dict[str, Any]] = dict(prepared_failures)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                _dispatch_one_task,
+                root,
+                config,
+                task,
+                prepared_runs[task.task_id],
+                cancel_path,
+                actor_role,
+                log_path,
+                log_lock,
+                step,
+                batch.index,
+            ): task
+            for task in batch.tasks
+            if task.task_id in prepared_runs
+        }
+        for future in as_completed(futures):
+            task = futures[future]
+            try:
+                result = future.result()
+            except Exception as exc:  # pragma: no cover - defensive for unexpected worker failures.
+                result = {
+                    "task_id": task.task_id,
+                    "status": "failed",
+                    "error": str(exc),
+                    "run_id": None,
+                    "session_id": None,
+                    "session_status": None,
+                    "summary": None,
+                    "started_at": None,
+                    "ended_at": datetime.now(timezone.utc).isoformat(),
+                }
+            results_by_task[task.task_id] = result
+
+    ordered_results = [results_by_task[task.task_id] for task in batch.tasks if task.task_id in results_by_task]
+    statuses = {str(item["status"]) for item in ordered_results}
+    if "cancelled" in statuses:
+        status = "cancelled"
+    elif "failed" in statuses:
+        status = "failed"
+    elif "blocked" in statuses:
+        status = "blocked"
+    else:
+        status = "passed"
+    ended_at = datetime.now(timezone.utc).isoformat()
+    merge_queue = [
+        str(item["task_id"])
+        for item in ordered_results
+        if item.get("status") == "dispatched" and item.get("run_id")
+    ]
+    return {
+        "schema_version": 1,
+        "mode": "concurrent",
+        "batch_index": batch.index,
+        "step": step,
+        "status": status,
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "log": str(log_path.relative_to(run_path)),
+        "heartbeat": str(log_path.relative_to(run_path)),
+        "resource_budget": {"max_workers": max_workers, "task_count": len(batch.tasks)},
+        "merge_queue": merge_queue,
+        "tasks": ordered_results,
+    }
+
+
+def _dispatch_one_task(
+    root: Path,
+    config: dict[str, Any],
+    task: PlannedTask,
+    task_run_path: Path,
+    cancel_path: Path,
+    actor_role: str,
+    log_path: Path,
+    log_lock: threading.Lock,
+    step: int,
+    batch_index: int,
+) -> dict[str, Any]:
+    started_at = datetime.now(timezone.utc).isoformat()
+    _append_batch_log(log_path, log_lock, "task_heartbeat", task.task_id, {"step": step, "batch_index": batch_index, "status": "starting"})
+    try:
+        if cancel_path.exists():
+            raise _TaskDispatchCancelled("cancel requested before session launch")
+        launched = launch_agent_session(root, config, task_run_path, cancel_path=cancel_path)
+        session = load_data(launched.path)
+    except _TaskDispatchCancelled as exc:
+        ended_at = datetime.now(timezone.utc).isoformat()
+        result = {
+            "task_id": task.task_id,
+            "status": "cancelled",
+            "error": str(exc),
+            "run_id": task_run_path.name,
+            "session_id": None,
+            "session_status": "cancelled",
+            "summary": str(exc),
+            "started_at": started_at,
+            "ended_at": ended_at,
+        }
+        _append_batch_log(log_path, log_lock, "task_result", task.task_id, result)
+        return result
+    except Exception as exc:
+        ended_at = datetime.now(timezone.utc).isoformat()
+        result = {
+            "task_id": task.task_id,
+            "status": "failed",
+            "error": str(exc),
+            "run_id": None,
+            "session_id": None,
+            "session_status": None,
+            "summary": None,
+            "started_at": started_at,
+            "ended_at": ended_at,
+        }
+        _append_batch_log(log_path, log_lock, "task_result", task.task_id, result)
+        return result
+
+    session_status = str(session.get("status"))
+    if session_status in {"prepared", "launched"}:
+        status = "dispatched"
+        error = None
+    elif session_status.endswith("_cancelled"):
+        status = "cancelled"
+        error = str(session.get("failure") or "cancelled")
+    elif session_status == "blocked":
+        status = "blocked"
+        error = None
+        block_task(
+            root,
+            config,
+            task.task_id,
+            reason=str(session.get("summary") or session.get("failure") or "agent session blocked"),
+            unblock_condition="Resolve the agent session prerequisite, then unblock and dispatch the task again.",
+            owner="user",
+            blocker_type="agent_session",
+            source="session:launch",
+        )
+    else:
+        status = "failed"
+        error = str(session.get("failure") or session.get("summary") or session_status)
+    ended_at = datetime.now(timezone.utc).isoformat()
+    result = {
+        "task_id": task.task_id,
+        "status": status,
+        "error": error,
+        "run_id": str(session.get("run_id")),
+        "session_id": session.get("session_id"),
+        "session_status": session_status,
+        "summary": session.get("summary") or session.get("failure"),
+        "started_at": started_at,
+        "ended_at": ended_at,
+    }
+    _append_batch_log(log_path, log_lock, "task_result", task.task_id, result)
+    return result
+
+
+class _TaskDispatchCancelled(Exception):
+    pass
+
+
+def _append_batch_log(path: Path, lock: threading.Lock, event: str, task_id: str, data: dict[str, Any]) -> None:
+    payload = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "event": event,
+        "task_id": task_id,
+        "data": data,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with lock:
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, sort_keys=True) + "\n")
 
 
 def _has_more_autopilot_work(
@@ -948,6 +1259,8 @@ def _next_task_action(root: Path, config: dict[str, Any], record: TaskRecord) ->
     if state == "accepted":
         if _worktree_needs_apply(root, config, record.task):
             return TaskAction(task_id=task_id, state=state, action="apply_worktree", path=record.path)
+        if _git_configured(config) and not _passed_git_evidence(root, record.task):
+            return TaskAction(task_id=task_id, state=state, action="publish_changes", path=record.path)
         if _pr_configured(config) and not _passed_pr_request_evidence(root, record.task):
             return TaskAction(task_id=task_id, state=state, action="pr_ensure", path=record.path)
         if _ci_configured(config) and not _passed_ci_evidence(root, record.task):
@@ -998,6 +1311,26 @@ def _ci_configured(config: dict[str, Any]) -> bool:
     integrations = config.get("integrations", {})
     ci_provider = integrations.get("ci_provider") if isinstance(integrations, dict) else None
     return isinstance(ci_provider, dict) and bool(ci_provider.get("provider") or ci_provider.get("command"))
+
+
+def _git_configured(config: dict[str, Any]) -> bool:
+    integrations = config.get("integrations", {})
+    git_provider = integrations.get("git_provider") if isinstance(integrations, dict) else None
+    return isinstance(git_provider, dict) and bool(git_provider.get("provider") or git_provider.get("command"))
+
+
+def _passed_git_evidence(root: Path, task: dict[str, Any]) -> bool:
+    evidence = task.get("evidence", {})
+    if not isinstance(evidence, dict) or not evidence.get("git"):
+        return False
+    output_path = root / str(evidence["git"])
+    if not output_path.exists():
+        return False
+    try:
+        output = load_data(output_path)
+    except ValueError:
+        return False
+    return output.get("status") in {"published", "skipped"}
 
 
 def _passed_ci_evidence(root: Path, task: dict[str, Any]) -> bool:
@@ -1195,6 +1528,23 @@ def _execute_task_action(root: Path, config: dict[str, Any], run_path: Path, act
                 },
             )
             return "passed"
+        if action.action == "publish_changes":
+            result = run_git_publish(root, config, task_id=action.task_id)
+            record = _find_task_record(root, config, action.task_id)
+            updated = dict(record.task)
+            evidence = dict(updated.get("evidence", {}))
+            evidence["git"] = str((result.run_path / "output.json").relative_to(root))
+            updated["evidence"] = evidence
+            dump_data(updated, record.path)
+            _append_autopilot_event(
+                run_path,
+                "git_publish_finished",
+                task_id=action.task_id,
+                data={"step": step, "status": result.status, "run_path": str(result.run_path.relative_to(root))},
+            )
+            if result.status == "blocked":
+                return "blocked"
+            return "passed" if result.status in {"published", "skipped"} else "failed"
         if action.action == "pr_status":
             result = run_pr_status(root, config, task_id=action.task_id)
             record = _find_task_record(root, config, action.task_id)
@@ -1361,9 +1711,43 @@ def _run_planner_action(
     _append_autopilot_event(
         run_path,
         "planner_finished",
-        data={"step": step, "run_path": planner_ref, "tasks": task_ids},
+        data={"step": step, "run_path": planner_ref, "tasks": task_ids, "attempts": result.attempts or []},
     )
     return "passed", planner_ref, task_ids
+
+
+def _run_intake_action(
+    root: Path,
+    config: dict[str, Any],
+    run_path: Path,
+    goal: str,
+    step: int,
+) -> tuple[str, str | None]:
+    try:
+        result = run_intake_capability(root, config, goal)
+    except Exception as exc:
+        _append_autopilot_event(
+            run_path,
+            "intake_failed",
+            data={"step": step, "error": str(exc)},
+        )
+        return "failed", None
+    intake_ref = str(result.run_path.relative_to(root))
+    status = str(result.output.get("status"))
+    _append_autopilot_event(
+        run_path,
+        "intake_finished",
+        data={
+            "step": step,
+            "status": status,
+            "run_path": intake_ref,
+            "summary": result.output.get("summary"),
+            "artifacts": result.output.get("artifacts", {}),
+        },
+    )
+    if status == "blocked":
+        return "blocked", intake_ref
+    return ("passed" if status == "passed" else "failed"), intake_ref
 
 
 def _run_releaser_action(
@@ -1474,7 +1858,7 @@ def _run_release_repair_planner_action(
     _append_autopilot_event(
         run_path,
         "release_repair_planner_finished",
-        data={"step": step, "release": release_ref, "run_path": planner_ref, "tasks": task_ids},
+        data={"step": step, "release": release_ref, "run_path": planner_ref, "tasks": task_ids, "attempts": result.attempts or []},
     )
     return "passed", planner_ref, task_ids
 
@@ -1718,6 +2102,47 @@ def _autopilot_run_root(root: Path, config: dict[str, Any]) -> Path:
     return root / config.get("paths", {}).get("autopilot_runs", "harness/autopilot-runs")
 
 
+def request_autopilot_cancel(run_path: Path, *, reason: str | None = None, requested_by: str = "cli") -> dict[str, Any]:
+    if not run_path.exists():
+        raise FileNotFoundError(f"autopilot run does not exist: {run_path}")
+    payload = {
+        "schema_version": 1,
+        "requested_at": datetime.now(timezone.utc).isoformat(),
+        "requested_by": requested_by,
+        "reason": reason,
+    }
+    dump_data(payload, run_path / "cancel.json")
+    metadata_path = run_path / "metadata.json"
+    if metadata_path.exists():
+        metadata = _migrate_autopilot_metadata(load_data(metadata_path))
+        metadata["cancellation"] = payload
+        dump_data(metadata, metadata_path)
+    _append_autopilot_event(run_path, "autopilot_cancel_requested", data=payload)
+    return payload
+
+
+def read_autopilot_log_lines(run_path: Path) -> list[str]:
+    metadata_path = run_path / "metadata.json"
+    if not metadata_path.exists():
+        raise FileNotFoundError(f"autopilot metadata does not exist: {metadata_path}")
+    metadata = load_data(metadata_path)
+    batch_executions = metadata.get("batch_executions", [])
+    if not isinstance(batch_executions, list):
+        return []
+    lines: list[str] = []
+    for batch in batch_executions:
+        if not isinstance(batch, dict):
+            continue
+        log_ref = batch.get("log") or batch.get("heartbeat")
+        if not log_ref:
+            continue
+        log_path = run_path / str(log_ref)
+        if not log_path.exists():
+            continue
+        lines.extend(log_path.read_text(encoding="utf-8").splitlines())
+    return lines
+
+
 def _create_autopilot_run(root: Path, config: dict[str, Any]) -> tuple[str, Path]:
     base_run_id = f"{utc_timestamp()}-autopilot"
     run_root = _autopilot_run_root(root, config)
@@ -1745,13 +2170,15 @@ def _load_autopilot_run(root: Path, run_path: Path) -> tuple[str, Path, dict[str
 def _migrate_autopilot_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     migrated = dict(metadata)
     migrated["schema_version"] = AUTOPILOT_METADATA_SCHEMA_VERSION
-    for key in ("actions", "planned", "dispatched", "failed", "blocked", "skipped", "releaser_tasks"):
+    for key in ("actions", "planned", "dispatched", "failed", "blocked", "cancelled", "skipped", "releaser_tasks"):
         if not isinstance(migrated.get(key), list):
             migrated[key] = []
     if not isinstance(migrated.get("parameters"), dict):
         migrated["parameters"] = {}
     if not isinstance(migrated.get("loop_cycles"), int):
         migrated["loop_cycles"] = 0
+    if not isinstance(migrated.get("resume_count"), int):
+        migrated["resume_count"] = 0
     status = str(migrated.get("status") or "paused")
     if not isinstance(migrated.get("state_machine"), dict):
         migrated["state_machine"] = _state_machine_payload(status)
@@ -1763,6 +2190,18 @@ def _migrate_autopilot_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
         state_machine.setdefault("paused", ["paused"])
         migrated["state_machine"] = state_machine
     return migrated
+
+
+def _autopilot_cancel_requested(run_path: Path) -> bool:
+    return (run_path / "cancel.json").exists()
+
+
+def _autopilot_cancel_payload(run_path: Path) -> dict[str, Any] | None:
+    cancel_path = run_path / "cancel.json"
+    if not cancel_path.exists():
+        return None
+    payload = load_data(cancel_path)
+    return payload if isinstance(payload, dict) else None
 
 
 def _state_machine_payload(status: str) -> dict[str, Any]:

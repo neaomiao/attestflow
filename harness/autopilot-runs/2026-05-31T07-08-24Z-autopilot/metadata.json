@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "state_machine": {
+    "version": 1,
+    "current": "finished",
+    "terminal": [
+      "blocked",
+      "failed",
+      "finished"
+    ],
+    "paused": [
+      "paused"
+    ]
+  },
+  "run_id": "2026-05-31T07-08-24Z-autopilot",
+  "started_at": "2026-05-31T07:08:24.798410+00:00",
+  "ended_at": "2026-05-31T07:08:28.358778+00:00",
+  "status": "finished",
+  "pause_reason": null,
+  "parameters": {
+    "limit": 1,
+    "max_steps": 1,
+    "actor_role": "orchestrator"
+  },
+  "goal": "Dogfood Attestflow by adding the deterministic dogfood marker.",
+  "steps": 11,
+  "actions": [
+    "autopilot:plan",
+    "TASK-0001:run_capability:bdd",
+    "TASK-0001:run_capability:tdd",
+    "TASK-0001:run_capability:implementer",
+    "TASK-0001:transition:review",
+    "TASK-0001:run_capability:reviewer",
+    "TASK-0001:run_capability:verifier",
+    "TASK-0001:verify_task:verified",
+    "TASK-0001:transition:accepted",
+    "TASK-0001:close_task:done"
+  ],
+  "planned": [
+    "TASK-0001"
+  ],
+  "planner": "harness/capability-runs/planner-20260531T070824799519Z",
+  "dispatched": [
+    "TASK-0001"
+  ],
+  "failed": [],
+  "blocked": [],
+  "skipped": [],
+  "release": null,
+  "release_status": null,
+  "release_repair_planner": null,
+  "releaser": null,
+  "releaser_tasks": [],
+  "loop_cycles": 11,
+  "loop_stop_reason": "terminal_status"
+}

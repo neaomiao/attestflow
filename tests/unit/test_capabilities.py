@@ -202,6 +202,64 @@ print(json.dumps({"schema_version": 1, "tasks": []}))
             self.assertEqual(len(run_dirs), 1)
             self.assertIn("timed out", (run_dirs[0] / "stderr.log").read_text(encoding="utf-8"))
 
+    def test_planner_capability_retries_invalid_output_before_importing_tasks(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider = root / "planner_provider.py"
+            provider.write_text(
+                """
+import json
+from pathlib import Path
+import sys
+
+counter = Path("planner-attempts.txt")
+attempt = int(counter.read_text(encoding="utf-8")) + 1 if counter.exists() else 1
+counter.write_text(str(attempt), encoding="utf-8")
+payload = json.load(sys.stdin)
+assert payload["attempt"]["index"] == attempt
+if attempt == 1:
+    print("not json")
+else:
+    json.dump(
+        {
+            "schema_version": 1,
+            "tasks": [
+                {
+                    "title": "Retry planner output",
+                    "priority": 10,
+                    "type": "feature",
+                    "purpose": "Exercise planner invalid output retry.",
+                    "scope": ["planner retry"],
+                    "out_of_scope": ["manual rerun"],
+                    "requirements": {"confirmed": ["invalid output is retried"], "unresolved": [], "assumptions": []},
+                    "bdd_scenarios": ["Planner retries invalid output."],
+                    "unit_tests": ["tests/unit/test_capabilities.py"],
+                    "acceptance": ["ready task is imported after retry"],
+                    "files": {"read": [], "write": ["attestflow/capabilities.py"]},
+                }
+            ],
+        },
+        sys.stdout,
+    )
+""".lstrip(),
+                encoding="utf-8",
+            )
+            config = {
+                "paths": {"tasks": "harness/tasks", "capability_runs": "harness/capability-runs"},
+                "capabilities": {"planner": {"agent_provider": "command", "command": f"python3 {provider}"}},
+            }
+
+            result = run_planner_capability(root, config, "Add planner retry")
+
+            self.assertEqual([record.task["id"] for record in result.records], ["TASK-0001"])
+            self.assertEqual((root / "planner-attempts.txt").read_text(encoding="utf-8"), "2")
+            self.assertEqual([attempt["status"] for attempt in result.attempts], ["failed", "passed"])
+            run_dirs = sorted((root / "harness" / "capability-runs").glob("planner-*"))
+            self.assertEqual(len(run_dirs), 2)
+            self.assertTrue((run_dirs[0] / "failure.json").exists())
+            self.assertEqual(load_data(run_dirs[1] / "input.json")["attempt"]["index"], 2)
+            self.assertTrue((root / "harness" / "tasks" / "ready" / "TASK-0001.json").exists())
+
     def test_cli_plan_requires_a_planner_command(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

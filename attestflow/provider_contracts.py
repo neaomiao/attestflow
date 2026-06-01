@@ -18,6 +18,7 @@ class ProviderContractFixture:
 
 
 PROVIDER_CONTRACT_FIXTURES = [
+    ProviderContractFixture(name="intake", capability="intake", contract="capability-output"),
     ProviderContractFixture(name="planner", capability="planner", contract="planner-output"),
     ProviderContractFixture(name="task", capability="implementer", contract="capability-output"),
     ProviderContractFixture(name="reviewer", capability="reviewer", contract="capability-output"),

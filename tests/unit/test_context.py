@@ -69,6 +69,49 @@ class RepositoryContextTests(unittest.TestCase):
             self.assertTrue(context["enabled"])
             self.assertEqual(context["documents"][0]["path"], "README.md")
 
+    def test_context_includes_symbol_dependency_test_and_dynamic_context_indexes(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            (root / "tests" / "unit").mkdir(parents=True)
+            (root / "src" / "payments.py").write_text(
+                "\n".join(
+                    [
+                        "import json",
+                        "from pathlib import Path",
+                        "",
+                        "class PaymentService:",
+                        "    def charge(self) -> None:",
+                        "        pass",
+                        "",
+                        "def normalize_amount(value: str) -> int:",
+                        "    return int(value)",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (root / "tests" / "unit" / "test_payments.py").write_text(
+                "from src.payments import normalize_amount\n",
+                encoding="utf-8",
+            )
+
+            context = collect_repository_context(
+                root,
+                {"context": {"max_tree_entries": 20, "max_file_bytes": 1000}},
+                focus_files=["src/payments.py"],
+            )
+
+            symbols = {(item["kind"], item["name"], item["path"]) for item in context["symbols"]}
+            self.assertIn(("class", "PaymentService", "src/payments.py"), symbols)
+            self.assertIn(("function", "normalize_amount", "src/payments.py"), symbols)
+            dependencies = {(item["source"], item["target"]) for item in context["dependencies"]}
+            self.assertIn(("src/payments.py", "json"), dependencies)
+            self.assertIn(("src/payments.py", "pathlib.Path"), dependencies)
+            test_map = {(item["source"], item["test"]) for item in context["test_map"]}
+            self.assertIn(("src/payments.py", "tests/unit/test_payments.py"), test_map)
+            self.assertEqual(context["dynamic_context"]["request_schema_version"], 1)
+            self.assertIn("symbol_lookup", context["dynamic_context"]["allowed_requests"])
+
 
 if __name__ == "__main__":
     unittest.main()

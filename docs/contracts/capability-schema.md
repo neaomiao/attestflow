@@ -136,17 +136,26 @@ Programming Agent Provider 要求：
   "status": "passed",
   "summary": "No blocking issues.",
   "findings": [],
-  "evidence": ["review report"]
+  "evidence": ["review report"],
+  "usage": {
+    "provider": "codex",
+    "model": "gpt-5",
+    "input_tokens": 1200,
+    "output_tokens": 300,
+    "total_tokens": 1500
+  }
 }
 ```
 
 字段规则：
 
 - `schema_version` 必须为 `1`。
+- `contract_version` 可选；如果出现，必须为 `1`。缺省值兼容现有 provider。
 - `status` 必须是 `passed`、`failed` 或 `blocked`。
 - `summary` 必须是非空字符串。
 - `findings` 必须是数组。
 - `evidence` 必须是数组。
+- `usage` 可选；如果 provider 能拿到真实模型消耗，必须用非负整数填写 `input_tokens`、`output_tokens`、`total_tokens`、`cached_input_tokens` 或 `reasoning_tokens`，可用非负数字填写 `cost_usd`。Attestflow 会保留原始 `output.json`，并把 `usage` 单独写为 `usage.json`，方便后续成本审计。
 
 Task-scoped typed artifact 规则：
 
@@ -202,7 +211,7 @@ Capability input 的 `repository_context` 由 Attestflow 确定性生成：
 - `documents` 来自 `context.documents`。
 - `files` 来自 task `files.read` / `files.write` 和 `context.focus_files`。
 - 二进制文件会被跳过。
-- `.git`、`node_modules`、`__pycache__`、`harness/runs`、`harness/capability-runs`、`harness/ci-runs` 默认排除。
+- `.git`、`node_modules`、`__pycache__`、`harness/runs`、`harness/capability-runs`、`harness/ci-runs`、`harness/git-runs` 默认排除。
 - provider 不应自行递归扫描仓库；需要更多上下文时应通过 capability output 声明缺口。
 
 Task-scoped capability input 的 `root` 是执行 cwd。启用 `sessions.worktree.enabled` 时，`root` 指向任务 worktree，`control_root` 指向保存 `harness/` 状态和 evidence 的原项目目录，`workspace` 携带 worktree、branch、`commit_before` 和 `commit_after` 快照。Provider 只能把代码变更写到 `root`，不能直接修改 runtime task JSON；close 阶段由 Attestflow 把 worktree 变更提交并 ff-only merge 回 `control_root`。

@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 import attestflow.cli as cli
-from attestflow.ci import run_ci_status
+from attestflow.ci import run_ci_action, run_ci_status
 from attestflow.io import load_data
 
 
@@ -195,6 +195,173 @@ json.dump(
             self.assertEqual(result.status, "failed")
             self.assertEqual(load_data(result.run_path / "input.json")["provider"], "github-actions")
             self.assertEqual(load_data(result.run_path / "output.json")["external_id"], "321")
+
+    def test_ci_logs_cli_runs_github_actions_action_and_records_task_evidence(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_gh = root / "fake-gh"
+            fake_gh.write_text(
+                """
+#!/usr/bin/env python3
+import json
+import sys
+
+args = sys.argv[1:]
+if args[:3] == ["run", "view", "456"] and "--json" in args:
+    json.dump(
+        {
+            "databaseId": 456,
+            "status": "completed",
+            "conclusion": "failure",
+            "workflowName": "CI",
+            "headSha": "abc123",
+            "jobs": [{"name": "unit", "conclusion": "failure"}],
+        },
+        sys.stdout,
+    )
+elif args[:3] == ["run", "view", "456"] and "--log-failed" in args:
+    sys.stdout.write("unit failure line\\n")
+else:
+    raise SystemExit(f"unexpected args: {args}")
+""".lstrip(),
+                encoding="utf-8",
+            )
+            fake_gh.chmod(0o755)
+            (root / "harness" / "tasks" / "proposed").mkdir(parents=True)
+            (root / "harness" / "tasks" / "proposed" / "TASK-0001.json").write_text(
+                """
+{
+  "schema_version": 1,
+  "id": "TASK-0001",
+  "title": "Fix CI",
+  "state": "proposed",
+  "priority": 5,
+  "type": "bug",
+  "evidence": {}
+}
+""".lstrip(),
+                encoding="utf-8",
+            )
+            (root / "harness.yml").write_text(
+                f"""
+schema_version: 1
+project:
+  name: demo
+paths:
+  tasks: harness/tasks
+  runs: harness/runs
+  ci_runs: harness/ci-runs
+commands: {{}}
+policies: {{}}
+integrations:
+  ci_provider:
+    provider: github-actions
+    provider_options:
+      command: {fake_gh}
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            original_root = cli.ROOT
+            cli.ROOT = root
+            try:
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    exit_code = cli.main(["ci", "logs", "--run-id", "456", "--task", "TASK-0001"])
+            finally:
+                cli.ROOT = original_root
+
+            self.assertEqual(exit_code, 0)
+            self.assertIn("ci failed:", output.getvalue())
+            task = load_data(root / "harness" / "tasks" / "proposed" / "TASK-0001.json")
+            ci_ref = task["evidence"]["ci"]
+            ci_output = load_data(root / ci_ref)
+            self.assertEqual(ci_output["action"], "logs")
+            self.assertIn("unit failure line", ci_output["logs"]["failed"])
+
+    def test_run_ci_action_dispatch_passes_action_to_builtin_adapter(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_gh = root / "fake-gh"
+            fake_gh.write_text(
+                """
+#!/usr/bin/env python3
+import sys
+
+args = sys.argv[1:]
+assert args == ["workflow", "run", "ci.yml", "--ref", "feature/actions", "-f", "task=TASK-0001"]
+""".lstrip(),
+                encoding="utf-8",
+            )
+            fake_gh.chmod(0o755)
+            config = {
+                "paths": {"ci_runs": "harness/ci-runs"},
+                "integrations": {
+                    "ci_provider": {
+                        "provider": "github-actions",
+                        "provider_options": {
+                            "command": str(fake_gh),
+                            "workflow": "ci.yml",
+                            "ref": "feature/actions",
+                            "inputs": {"task": "TASK-0001"},
+                        },
+                    }
+                },
+            }
+
+            result = run_ci_action(root, config, action="dispatch")
+
+            self.assertEqual(result.status, "queued")
+            self.assertEqual(load_data(result.run_path / "input.json")["action"], "dispatch")
+            self.assertEqual(load_data(result.run_path / "output.json")["action"], "dispatch")
+
+    def test_builtin_delivery_ci_providers_use_provider_specific_adapters(self) -> None:
+        fixtures = {
+            "gitlab-ci": {
+                "raw": {"id": 42, "status": "success", "web_url": "https://gitlab.example/pipelines/42", "ref": "main", "sha": "abc"},
+                "expected_status": "passed",
+                "expected_id": "42",
+            },
+            "buildkite": {
+                "raw": {"id": "bk-1", "state": "running", "web_url": "https://buildkite.example/builds/1", "branch": "main", "commit": "def"},
+                "expected_status": "running",
+                "expected_id": "bk-1",
+            },
+            "circleci": {
+                "raw": {"id": "cc-1", "status": "failed", "web_url": "https://circleci.example/workflow/1", "vcs": {"branch": "main", "revision": "ghi"}},
+                "expected_status": "failed",
+                "expected_id": "cc-1",
+            },
+        }
+        for provider_name, fixture in fixtures.items():
+            with self.subTest(provider=provider_name), TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                fake_cli = root / "fake-ci"
+                fake_cli.write_text(
+                    "#!/usr/bin/env python3\n"
+                    "import json, sys\n"
+                    f"json.dump({fixture['raw']!r}, sys.stdout)\n",
+                    encoding="utf-8",
+                )
+                fake_cli.chmod(0o755)
+                config = {
+                    "paths": {"ci_runs": "harness/ci-runs"},
+                    "integrations": {
+                        "ci_provider": {
+                            "provider": provider_name,
+                            "provider_options": {"command": str(fake_cli), "status_args": ["status", "--json"]},
+                        }
+                    },
+                }
+
+                result = run_ci_status(root, config)
+
+                self.assertEqual(result.status, fixture["expected_status"])
+                self.assertEqual(load_data(result.run_path / "input.json")["provider"], provider_name)
+                output = load_data(result.run_path / "output.json")
+                self.assertEqual(output["provider"], provider_name)
+                self.assertEqual(output["external_id"], fixture["expected_id"])
+                self.assertTrue(output["summary"].startswith(provider_name))
 
     def test_cli_ci_status_reports_missing_provider(self) -> None:
         with TemporaryDirectory() as tmp:

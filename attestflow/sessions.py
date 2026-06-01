@@ -16,6 +16,7 @@ from .evidence import RunRecord, append_ledger
 from .io import dump_data, load_data
 from .provider_commands import provider_command_argv, provider_timeout_seconds
 from .provider_failures import classify_provider_failure, redact_text
+from .write_scope import build_write_scope_report, capture_write_scope_snapshot, write_scope_failure_message
 
 
 BUILTIN_SESSION_PROVIDERS: dict[str, dict[str, str]] = {
@@ -47,6 +48,8 @@ def create_agent_session(
     run: RunRecord,
     *,
     workspace_root: Path | None = None,
+    launch: bool = True,
+    cancel_path: Path | None = None,
 ) -> AgentSessionRecord:
     workspace_root = workspace_root or root
     session_config = _session_config(config)
@@ -88,11 +91,13 @@ def create_agent_session(
         "resume_exit_code": None,
         "resume_stdout_log": None,
         "resume_stderr_log": None,
+        "launch_write_scope": None,
+        "resume_write_scope": None,
         "failure": None,
     }
 
     launch_command_template = session_config.get("launch_command") or _builtin_adapter_command(agent_provider)
-    if launch_command_template:
+    if launch and launch_command_template:
         _apply_adapter_result(
             root,
             config,
@@ -102,6 +107,7 @@ def create_agent_session(
             action="launch",
             command_template=str(launch_command_template),
             workspace_root=workspace_root,
+            cancel_path=cancel_path,
         )
 
     dump_data(session, session_path)
@@ -111,6 +117,49 @@ def create_agent_session(
         session_id=session_id,
         path=session_path,
         prompt_path=prompt_path,
+        status=str(session["status"]),
+    )
+
+
+def launch_agent_session(
+    root: Path,
+    config: dict[str, Any],
+    run_path: Path,
+    *,
+    cancel_path: Path | None = None,
+) -> AgentSessionRecord:
+    session_path = run_path / "session.yml"
+    session = load_data(session_path)
+    task_id = str(session.get("task_id"))
+    task = _load_task(root, config, task_id)
+    run = RunRecord(run_id=str(session["run_id"]), path=run_path)
+    workspace_root = Path(str(session.get("workspace_root") or root))
+    command_template = _session_config(config).get("launch_command") or _builtin_adapter_command(str(session.get("agent_provider", "")))
+    if not command_template:
+        return AgentSessionRecord(
+            session_id=str(session["session_id"]),
+            path=session_path,
+            prompt_path=run_path / str(session.get("prompt_packet", "prompt.md")),
+            status=str(session["status"]),
+        )
+    _apply_adapter_result(
+        root,
+        config,
+        task,
+        run,
+        session,
+        action="launch",
+        command_template=str(command_template),
+        workspace_root=workspace_root,
+        cancel_path=cancel_path,
+    )
+    dump_data(session, session_path)
+    _record_session_metadata(run_path, session)
+    _append_session_launch_event(run_path, task, run, session)
+    return AgentSessionRecord(
+        session_id=str(session["session_id"]),
+        path=session_path,
+        prompt_path=run_path / str(session.get("prompt_packet", "prompt.md")),
         status=str(session["status"]),
     )
 
@@ -238,18 +287,47 @@ def _apply_adapter_result(
     action: str,
     command_template: str,
     workspace_root: Path,
+    cancel_path: Path | None = None,
 ) -> None:
     command = _render_session_command(command_template, root, run, str(session["session_id"]))
     if command is None:
         return
     started_at = datetime.now(timezone.utc).isoformat()
     payload = _adapter_input(root, config, task, run, session, action, workspace_root)
-    result = _run_adapter_command(workspace_root, run.path, action, command, payload)
+    before_snapshot = capture_write_scope_snapshot(workspace_root, config)
+    result = _run_adapter_command(workspace_root, run.path, action, command, payload, cancel_path=cancel_path)
+    after_snapshot = capture_write_scope_snapshot(workspace_root, config)
     ended_at = datetime.now(timezone.utc).isoformat()
+    write_scope_report = build_write_scope_report(
+        workspace_root,
+        config,
+        task,
+        before_snapshot,
+        after_snapshot,
+        action=action,
+    )
+    write_scope_path = run.path / f"session-{action}-write-scope.json"
+    dump_data(write_scope_report, write_scope_path)
+    session[f"{action}_write_scope"] = write_scope_path.name
+    scope_failure = write_scope_failure_message(write_scope_report)
+    if scope_failure:
+        failure = _write_adapter_failure(
+            run.path,
+            action,
+            "tool_denied",
+            result["exit_code"],
+            "",
+            "",
+            scope_failure,
+        )
+        existing_failure = str(result["failure"]) if result["failure"] else ""
+        result["failure"] = f"{existing_failure}; {failure['type']}: {scope_failure}" if existing_failure else f"{failure['type']}: {scope_failure}"
     session[f"{action}_command"] = command
     session[f"{action}_exit_code"] = result["exit_code"]
     session[f"{action}_stdout_log"] = result["stdout_log"]
     session[f"{action}_stderr_log"] = result["stderr_log"]
+    if result.get("usage_path"):
+        session[f"{action}_usage"] = result["usage_path"]
     session["adapter_input"] = result["input"]
     session[f"{action}_adapter_input"] = result["input"]
     session["updated_at"] = ended_at
@@ -258,7 +336,10 @@ def _apply_adapter_result(
         session[f"{action}_adapter_output"] = result["output_path"]
 
     output = result["output"]
-    if result["failure"]:
+    if result.get("cancelled"):
+        session["status"] = f"{action}_cancelled"
+        session["failure"] = result["failure"]
+    elif result["failure"]:
         session["status"] = f"{action}_failed"
         session["failure"] = result["failure"]
     elif isinstance(output, dict):
@@ -341,6 +422,8 @@ def _run_adapter_command(
     action: str,
     command: str,
     payload: dict[str, Any],
+    *,
+    cancel_path: Path | None = None,
 ) -> dict[str, Any]:
     prefix = "session-adapter" if action == "launch" else "session-resume-adapter"
     input_path = run_path / f"{prefix}-input.json"
@@ -352,10 +435,12 @@ def _run_adapter_command(
         "exit_code": None,
         "input": input_path.name,
         "output_path": None,
-        "stdout_log": stdout_path.name,
-        "stderr_log": stderr_path.name,
-        "output": None,
+	        "stdout_log": stdout_path.name,
+	        "stderr_log": stderr_path.name,
+	        "usage_path": None,
+	        "output": None,
         "failure": None,
+        "cancelled": False,
     }
     process = subprocess.Popen(
         provider_command_argv(command),
@@ -367,11 +452,27 @@ def _run_adapter_command(
         start_new_session=True,
     )
     timeout_seconds = provider_timeout_seconds({"provider_options": payload.get("provider_options", {})})
+    payload_text = json.dumps(payload, ensure_ascii=False)
     try:
-        stdout, stderr = process.communicate(
-            input=json.dumps(payload, ensure_ascii=False),
-            timeout=timeout_seconds,
+        stdout, stderr = _communicate_with_cancel(
+            process,
+            payload_text,
+            timeout_seconds=timeout_seconds,
+            cancel_path=cancel_path,
         )
+    except _AdapterCancelled as exc:
+        _terminate_process_group(process)
+        stdout, stderr = _collect_after_timeout(process)
+        stdout = stdout or _adapter_output_text(exc.stdout)
+        stderr = stderr or _adapter_output_text(exc.stderr)
+        message = "adapter command cancelled"
+        stdout_path.write_text(redact_text(stdout), encoding="utf-8")
+        stderr_path.write_text(redact_text(_append_stderr_message(stderr, message)), encoding="utf-8")
+        _write_adapter_failure(run_path, action, "tool_denied", -2, stdout, stderr, message)
+        result["exit_code"] = -2
+        result["failure"] = message
+        result["cancelled"] = True
+        return result
     except subprocess.TimeoutExpired as exc:
         _terminate_process_group(process)
         stdout, stderr = _collect_after_timeout(process)
@@ -413,9 +514,59 @@ def _run_adapter_command(
         _write_adapter_failure(run_path, action, "invalid_output", process.returncode, stdout, stderr, message)
         result["failure"] = message
         return result
+    usage_path = _write_adapter_usage(run_path, action, output)
+    if usage_path:
+        result["usage_path"] = usage_path.name
     result["output_path"] = output_path.name
     result["output"] = output
     return result
+
+
+def _write_adapter_usage(run_path: Path, action: str, output: dict[str, Any]) -> Path | None:
+    usage = output.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    path = run_path / f"session-{action}-usage.json"
+    dump_data(usage, path)
+    return path
+
+
+class _AdapterCancelled(Exception):
+    def __init__(self, stdout: str | bytes | None = None, stderr: str | bytes | None = None) -> None:
+        super().__init__("adapter command cancelled")
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _communicate_with_cancel(
+    process: subprocess.Popen[str],
+    payload_text: str,
+    *,
+    timeout_seconds: float | None,
+    cancel_path: Path | None,
+) -> tuple[str, str]:
+    if cancel_path is None:
+        return process.communicate(input=payload_text, timeout=timeout_seconds)
+    interval = 0.1
+    deadline = None if timeout_seconds is None else datetime.now(timezone.utc).timestamp() + timeout_seconds
+    input_text: str | None = payload_text
+    while True:
+        if cancel_path.exists():
+            raise _AdapterCancelled()
+        timeout = interval
+        if deadline is not None:
+            remaining = deadline - datetime.now(timezone.utc).timestamp()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(process.args, timeout_seconds)
+            timeout = min(interval, remaining)
+        try:
+            return process.communicate(input=input_text, timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            input_text = None
+            if cancel_path.exists():
+                raise _AdapterCancelled(stdout=exc.stdout, stderr=exc.stderr) from exc
+            if deadline is not None and datetime.now(timezone.utc).timestamp() >= deadline:
+                raise
 
 
 def _terminate_process_group(process: subprocess.Popen[str]) -> None:
@@ -503,23 +654,33 @@ def _append_session_events(run_path: Path, task: dict[str, Any], run: RunRecord,
     }
     append_ledger(run_path, "session_created", str(task["id"]), run.run_id, actor_role, data)
     if session["launch_command"]:
-        event = "session_launched" if session["status"] == "launched" else "session_launch_failed"
-        append_ledger(
-            run_path,
-            event,
-            str(task["id"]),
-            run.run_id,
-            actor_role,
-            {
-                **data,
-                "exit_code": session["launch_exit_code"],
-                "stdout_log": session["launch_stdout_log"],
-                "stderr_log": session["launch_stderr_log"],
-                "adapter_input": session["adapter_input"],
-                "adapter_output": session["launch_adapter_output"],
-                "failure": session.get("failure"),
-            },
-        )
+        _append_session_launch_event(run_path, task, run, session)
+
+
+def _append_session_launch_event(run_path: Path, task: dict[str, Any], run: RunRecord, session: dict[str, Any]) -> None:
+    actor_role = str(task.get("agents", {}).get("owner", "orchestrator"))
+    event = "session_launched" if session["status"] == "launched" else "session_launch_failed"
+    append_ledger(
+        run_path,
+        event,
+        str(task["id"]),
+        run.run_id,
+        actor_role,
+        {
+            "session_id": session["session_id"],
+            "agent_provider": session["agent_provider"],
+            "role": session["role"],
+            "status": session["status"],
+            "external_session_id": session.get("external_session_id"),
+            "prompt_packet": session["prompt_packet"],
+            "exit_code": session["launch_exit_code"],
+            "stdout_log": session["launch_stdout_log"],
+            "stderr_log": session["launch_stderr_log"],
+            "adapter_input": session["adapter_input"],
+            "adapter_output": session["launch_adapter_output"],
+            "failure": session.get("failure"),
+        },
+    )
 
 
 def _append_session_resume_event(run_path: Path, task: dict[str, Any], run: RunRecord, session: dict[str, Any]) -> None:

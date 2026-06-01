@@ -109,6 +109,7 @@ paths:
   ci_runs: harness/ci-runs
   pr_runs: harness/pr-runs
   release_runs: harness/release-runs
+  sources: harness/sources
   docs: docs
 
 commands:
@@ -330,7 +331,7 @@ dependencies -> state/DoR -> locks/files.write -> priority -> id
 
 `python -m attestflow autopilot --run --goal "..." --limit N --max-steps M` 是当前最小可执行 orchestrator。它创建 `harness/autopilot-runs/<run>/metadata.json` 和 `ledger.jsonl`，记录 `autopilot_started`、`planner_started`、`planner_finished`、`autopilot_resumed`、`active_actions_planned`、`task_action_planned`、capability 事件、`repair_requested`、`repair_finished`、`batch_planned`、`task_started`、`task_dispatched`、失败和结束事件。`metadata.json` 是快速状态索引，包含参数、goal、planner run、planned task ids、状态、暂停原因、结束时间、动作、分发、失败、阻塞、跳过原因、release evidence、`release_status` 和 `release_repair_planner`；`ledger.jsonl` 是 append-only 审计日志。执行顺序是有 `--goal` 时先调用 planner capability 导入 runtime task JSON，再按 `limit` 批量推进 active task，最后复用 `start_task` 创建新任务自己的 run、锁、prompt packet 和 session。active task batch 会跳过同批次 `files.write` 冲突。默认 batch size 和 step budget 来自 `harness.yml` 的 `autopilot.default_limit` / `autopilot.max_steps`，`--limit` 和 `--max-steps` 只做本次运行覆盖。`max_steps` 约束本次最多执行多少个动作批次或分发批次，避免未验证阶段无限推进；如果到点后仍存在 active task、ready batch 或 release gate，run 会记录 `status: paused` 和 `pause_reason: max_steps_reached`，表示可恢复而不是完成。
 
-`python -m attestflow autopilot --resume --max-steps M` 会读取最新 autopilot run 的 `metadata.json`，复用同一个 run 目录继续执行，追加 `ledger.jsonl`，并把 actions、dispatched 和 steps 累加回 metadata。旧 metadata 会先迁移补齐 `actions`、`planned`、`dispatched`、`releaser_tasks`、`loop_cycles` 和 `state_machine`，避免字段漂移。`--run` 用于开启一轮新自治运行；`--resume` 用于继续上一轮运行。`--loop` 可以和 `--run` 或 `--resume` 搭配，受限地反复 resume paused run，直到 `finished`、`blocked`、`failed` 或 cycle 用完；`--until terminal` 是全自动安全入口，会在同一个 run 上自动 resume，直到 `finished`、`blocked` 或 `failed`。默认 cycle 上限和等待时间来自 `harness.yml` 的 `autopilot.max_loop_cycles` / `autopilot.loop_interval_seconds`，`--max-cycles N` 和 `--interval-seconds S` 可临时覆盖。Loop 会写入 `metadata.json.loop_cycles` 和 `metadata.json.loop_stop_reason`；`max_cycles_reached` 表示安全阈值触发且仍处于 paused，`terminal_status` 表示已进入终态。
+`python -m attestflow autopilot --resume --max-steps M` 会读取最新 autopilot run 的 `metadata.json`，复用同一个 run 目录继续执行，追加 `ledger.jsonl`，并把 actions、dispatched、steps 和 `resume_count` 累加回 metadata。旧 metadata 会先迁移补齐 `actions`、`planned`、`dispatched`、`releaser_tasks`、`resume_count`、`loop_cycles` 和 `state_machine`，避免字段漂移。`--run` 用于开启一轮新自治运行；`--resume` 用于继续上一轮运行。`--loop` 可以和 `--run` 或 `--resume` 搭配，受限地反复 resume paused run，直到 `finished`、`blocked`、`failed` 或 cycle 用完；`--until terminal` 是全自动安全入口，会在同一个 run 上自动 resume，直到 `finished`、`blocked` 或 `failed`。默认 cycle 上限和等待时间来自 `harness.yml` 的 `autopilot.max_loop_cycles` / `autopilot.loop_interval_seconds`，`--max-cycles N` 和 `--interval-seconds S` 可临时覆盖。Loop 会写入 `metadata.json.loop_cycles` 和 `metadata.json.loop_stop_reason`；`max_cycles_reached` 表示安全阈值触发且仍处于 paused，`terminal_status` 表示已进入终态。
 
 当前 `autopilot --run` 自动完成：
 
@@ -344,13 +345,13 @@ active action 的确定性状态机：
 in_progress -> bdd -> tdd -> implementer -> review
 review -> reviewer -> optional verifier -> verify -> verified
 verified -> accepted
-accepted -> pr_ensure -> ci_status -> pr_status -> close
+accepted -> publish_changes -> pr_ensure -> ci_status -> pr_status -> close
 ```
 
 启用 worktree 时，`accepted` 会先执行：
 
 ```text
-accepted -> apply_worktree -> pr_ensure -> ci_status -> pr_status -> close
+accepted -> apply_worktree -> publish_changes -> pr_ensure -> ci_status -> pr_status -> close
 ```
 
 失败修复规则：
@@ -360,7 +361,8 @@ accepted -> apply_worktree -> pr_ensure -> ci_status -> pr_status -> close
 - repair 会写入 `evidence.autopilot.repair.target_capability`，清掉该 target 之后的 stale capability evidence，并受 `autopilot.max_repair_attempts` 限制。
 - repair 成功后清掉 pending repair，重新进入 `review -> reviewer -> optional verifier -> verify`。
 - repair 次数超过上限时，当前 autopilot run 以 `failed` 结束，保留失败 evidence 和 ledger。
-- 如果配置了 worktree，accepted 任务会先运行 `apply_worktree`，把 task commit ff-only merge 回控制仓库；之后才创建/更新 PR 和采集 CI/PR evidence。
+- 如果配置了 worktree，accepted 任务会先运行 `apply_worktree`，把 task commit ff-only merge 回控制仓库；之后才 publish、创建/更新 PR 和采集 CI/PR evidence。
+- 如果配置了 `integrations.git_provider`，accepted 任务会运行 `publish_changes`，把 `harness/git-runs/*/output.json` 写入 `task.evidence.git`；`published` 或 `skipped` 表示可以继续后续 gate，`blocked` 会停止本轮 autopilot。
 - 如果配置了 `integrations.pr_provider`，accepted 任务会先运行 `pr_ensure`，把 `harness/pr-runs/*/output.json` 写入 `task.evidence.pr_request`；`open`、`draft`、`merged` 或 `skipped` 表示 change request 已可继续后续 gate，`blocked` 会停止本轮 autopilot。
 - 如果配置了 `integrations.ci_provider`，accepted 任务会运行 `ci_status`，把 `harness/ci-runs/*/output.json` 写入 `task.evidence.ci`；CI `passed` 或 `skipped` 才继续，`running`、`queued` 或 `unknown` 会暂停等待 resume 重新采集。
 - 如果配置了 `integrations.pr_provider`，accepted 任务会运行 `pr_status`，把 `harness/pr-runs/*/output.json` 写入 `task.evidence.pr`；PR `merged` 或 `skipped` 才继续 close，`unknown` 会暂停等待 resume 重新采集。
@@ -517,6 +519,12 @@ python -m attestflow doctor
 python -m attestflow validate-config
 python -m attestflow validate-task TASK
 python -m attestflow task import --from-json PLAN.json
+python -m attestflow source import --kind github-issue --from-json ISSUE.json
+python -m attestflow schema migrate --kind harness-config --from-json harness.yml --write
+python -m attestflow schema export --type task --json
+python -m attestflow schema openapi --json
+python -m attestflow plugin list --json
+python -m attestflow governance policy --json
 python -m attestflow tasks
 python -m attestflow next
 python -m attestflow autopilot --dry-run --limit 3
@@ -524,6 +532,11 @@ python -m attestflow autopilot --run --limit 1 --max-steps 1
 python -m attestflow autopilot --resume --max-steps 8
 python -m attestflow autopilot --run --loop --max-cycles 20 --max-steps 1
 python -m attestflow autopilot --status --json
+python -m attestflow inspect --run RUN
+python -m attestflow inspect --diff OLD_RUN NEW_RUN
+python -m attestflow recover
+python -m attestflow recover --apply
+python -m attestflow recover --apply --resume-interrupted
 python -m attestflow dispatch TASK
 python -m attestflow dispatch --limit 3
 python -m attestflow start TASK
@@ -531,6 +544,9 @@ python -m attestflow block TASK --reason REASON
 python -m attestflow unblock TASK --blocker BLK --resolution RESOLUTION
 python -m attestflow evidence TASK
 python -m attestflow evidence export TASK --out DIR
+python -m attestflow evidence bundle --run RUN --out DIR
+python -m attestflow evidence bundle --release RELEASE --out DIR
+python -m attestflow evidence verify DIR --check-source
 python -m attestflow contract validate capability-output output.json
 python -m attestflow verify
 python -m attestflow verify --task TASK
@@ -546,11 +562,15 @@ python -m attestflow secret-scan
 
 命令职责：
 
-- `init`：在目标项目生成模板文件；`--adapter generic|python|node|go|rust` 会复制对应项目 adapter 文档到 `harness/adapters/<adapter>/` 并写入 `project.adapter`，`--agent-provider codex|claude-code|opencode` 会写入内置 provider preset。
+- `init`：在目标项目生成模板文件；`--adapter generic|python|node|go|rust|monorepo|docker|bazel|java|kotlin|dotnet|swift|dart|ruby|php` 会复制对应项目 adapter 文档到 `harness/adapters/<adapter>/`、写入 `project.adapter`，并按项目文件生成基础验证命令；`--agent-provider codex|claude-code|opencode` 会写入内置 provider preset。
 - `doctor`：检查配置、项目命令 executable、runtime 目录、任务 schema、provider CLI 和 provider preflight；不执行项目任务，但会尽早暴露缺少测试命令、登录、授权或凭证不可用。
 - `validate-config`：验证 `harness.yml`。
 - `validate-task`：验证 schema、状态、目录、依赖和门禁。
 - `task import --from-json`：导入编程 Agent 输出的 planner JSON，校验后写入 runtime task JSON。
+- `source import --kind github-issue|linear-ticket|jira-ticket|pr-review-comment|ci-failure --from-json FILE`：保存外部来源快照到 `harness/sources`，并创建带 `source` 元数据的 `proposed` task；后续仍由 intake/planner 生成可执行 ready task。
+- `schema migrate/export/openapi`：迁移旧 harness 配置、导出 JSON Schema，并输出 OpenAPI 3.1 component schema，供 provider 作者和 CI 使用。
+- `plugin list`：从 `plugins.directories` 扫描 `plugin.json`，只做注册发现和 manifest 校验，不执行插件代码。
+- `governance policy`：输出支持的 schema version、provider contract version、稳定发布流程和 `1.0` 前破坏性变更规则。
 - `tasks`：按状态和优先级列出任务。
 - `next`：返回最高优先级、依赖已完成、文件未锁定的 `ready` 任务。
 - `autopilot --dry-run`：只读生成自动执行计划，优先展示 active task 下一步动作和 repair mode，否则展示可执行 ready 批次和不可执行任务原因，不启动 Agent、不改状态。
@@ -558,12 +578,15 @@ python -m attestflow secret-scan
 - `autopilot --run/--resume --loop` / `--until terminal`：在同一个 top-level run 上自动续跑 paused 状态，受 `harness.yml` batch/step/loop policy 和 CLI override 限制，并记录 `loop_stop_reason`，不隐藏终态失败或阻塞。
 - `autopilot --resume`：复用最新 autopilot run 的 `metadata.json` 和 `ledger.jsonl`，继续执行并追加事件。
 - `autopilot --status`：读取最新 autopilot run 的 `metadata.json`，输出状态、暂停原因、步数、actions、planned、dispatched、releaser、release、failed 和 blocked 摘要；`--json` 输出完整 metadata。
+- `inspect --run RUN`：读取指定或最新 autopilot run，并合并 `metadata.json`、`ledger.jsonl`、blocked task 文件和 provider `failure.json`，输出 timeline、blocker dashboard、provider failure drilldown 和 next-action；`--json` 输出同结构数据。
+- `inspect --diff OLD NEW`：对比两个 autopilot run 的状态、暂停原因、release status、actions、planned/dispatched、failed、blocked、cancelled 和 releaser task 变化。
+- `recover`：默认只读诊断 orphan autopilot run、task JSON 状态目录错位、已 finalized 的 stale worktree 和被取消的 provider session；`--apply` 只执行确定性修复，写入缺失 run metadata、移动错位 task、清理 finalized worktree，并生成 `harness/snapshots/ledger-snapshot-*.json`；`--resume-interrupted` 会显式调用 session resume adapter 恢复中断 provider session。
 - `dispatch`：AI-first 执行入口，创建 run、locks、独立 agent session、prompt packet，并按配置启动外部 AI 会话。
 - `dispatch --limit N`：批量选择依赖满足、写范围不冲突且未被锁定的 ready 任务，并逐个创建独立 session。
 - `start`：低层生命周期入口，仍会创建 session packet，保留给脚本和兼容场景。
 - `block`：写入结构化 active blocker，记录 reason / unblock condition / owner / source，并移动到 `blocked`。
 - `unblock`：解决指定 blocker；没有 active blocker 后把任务转回 `ready`。
-- `evidence`：读取 evidence packet；`evidence export` 会导出 task、run、ledger、capability output 和 manifest。
+- `evidence`：读取 evidence packet；`evidence export` 会导出 task、run、ledger、capability output 和 manifest；`evidence bundle --run/--release` 会导出顶层 autopilot 或 release bundle，附带可复现 manifest、audit report 和 PR comment artifact；`evidence verify` 校验 bundle hash/size，`--check-source` 额外检测源 evidence 是否过期。
 - `contract validate`：本地校验 planner、capability、session、CI、PR、release 或 task contract。
 - `provider contract`：用固定夹具验证 Codex/Claude Code/OpenCode provider 能产出 planner、task、reviewer、verifier、release 五类合同 JSON。
 - `verify`：执行配置的质量门禁，用于临时或 CI 验证。
@@ -721,7 +744,7 @@ python -m attestflow verify
 
 ## 新项目接入流程
 
-1. 运行 `python -m attestflow init --adapter python --agent-provider codex`，或按项目选择 `generic` / `node` 和 `claude-code` / `opencode`。
+1. 运行 `python -m attestflow init --adapter python --agent-provider codex`，或按项目选择 `generic` / `node` / `monorepo` / `docker` / `bazel` / `java` / `kotlin` / `dotnet` / `swift` / `dart` / `ruby` / `php` 和 `claude-code` / `opencode`。
 2. 运行 `python -m attestflow doctor`，确认配置、目录、provider CLI 和 provider preflight 可用。
 3. 让 Agent 审核生成的 `harness.yml` 和项目命令，只有凭证或业务取舍需要人工确认。
 4. 让编程 Agent 根据目标和仓库上下文输出 planner JSON。
