@@ -121,7 +121,7 @@ task JSON -> capability input -> programming agent provider -> capability output
 Programming Agent Provider 要求：
 
 - 从 stdin 读取 JSON object。
-- 输入包含 `capability`、`agent_provider`、`provider_options`、`task`、`task_path`、`project`、`commands`、`repository_context` 和 `instructions`。
+- 输入包含 `capability`、`agent_provider`、`provider_options`、`task`、`task_path`、`project`、`commands`、`repository_context`、`incremental_context` 和 `instructions`。
 - 向 stdout 输出 JSON object。
 - stderr/stdout 会保存到 `harness/capability-runs/<capability>-<task>-*/`。
 - 非零退出码会阻止任务 evidence 更新。
@@ -156,6 +156,7 @@ Programming Agent Provider 要求：
 - `findings` 必须是数组。
 - `evidence` 必须是数组。
 - `usage` 可选；如果 provider 能拿到真实模型消耗，必须用非负整数填写 `input_tokens`、`output_tokens`、`total_tokens`、`cached_input_tokens` 或 `reasoning_tokens`，可用非负数字填写 `cost_usd`。Attestflow 会保留原始 `output.json`，并把 `usage` 单独写为 `usage.json`，方便后续成本审计。
+- 当 `token_economy.provider_cache.enabled: true` 且 capability input 规范化后命中缓存，Attestflow 会复用成功 provider output，写出新的 `input.json`、`output.json`、`usage.json` 和 `cache.json`，不会再次调用外部模型 provider。
 
 Task-scoped typed artifact 规则：
 
@@ -201,6 +202,7 @@ Capability input 的 `repository_context` 由 Attestflow 确定性生成：
   "tree": ["README.md", "attestflow/capabilities.py"],
   "documents": [{"path": "README.md", "content": "...", "truncated": false}],
   "files": [{"path": "attestflow/capabilities.py", "content": "...", "truncated": true}],
+  "dynamic_context": {"allowed_requests": ["file_slice", "symbol_lookup", "semantic_search"]},
   "limits": {"max_tree_entries": 200, "max_file_bytes": 4000}
 }
 ```
@@ -211,8 +213,11 @@ Capability input 的 `repository_context` 由 Attestflow 确定性生成：
 - `documents` 来自 `context.documents`。
 - `files` 来自 task `files.read` / `files.write` 和 `context.focus_files`。
 - 二进制文件会被跳过。
-- `.git`、`node_modules`、`__pycache__`、`harness/runs`、`harness/capability-runs`、`harness/ci-runs`、`harness/git-runs` 默认排除。
+- `.git`、`node_modules`、`__pycache__`、`harness/tasks`、`harness/runs`、`harness/capability-runs`、`harness/ci-runs`、`harness/git-runs`、`harness/pr-runs`、`harness/release-runs`、`harness/context-cache` 和 `harness/provider-cache` 默认排除。
 - provider 不应自行递归扫描仓库；需要更多上下文时应通过 capability output 声明缺口。
+- `python -m attestflow context resolve --from-json request.json --json` 可按动态上下文协议返回 `file_slice`、`symbol_lookup`、`dependency_neighbors`、`semantic_search`、`change_history` 或 `test_mapping` 片段，避免为了一个局部问题重发全仓上下文。
+- 当估算输入超过 `token_economy.budgets.<capability>_input_tokens` 或 `default_input_tokens`，Attestflow 会把 `documents` / `files` 的全文替换为摘要、hash 和 `cache_key`，原摘要记录写入 `harness/context-cache/`，并在 input 的 `token_economy` 字段记录预算、估算 token 和节省量。
+- `incremental_context` 只携带当前 task 的 focus files 和已有 capability output 摘要，避免 reviewer/verifier/releaser 反复读完整历史 evidence。
 
 Task-scoped capability input 的 `root` 是执行 cwd。启用 `sessions.worktree.enabled` 时，`root` 指向任务 worktree，`control_root` 指向保存 `harness/` 状态和 evidence 的原项目目录，`workspace` 携带 worktree、branch、`commit_before` 和 `commit_after` 快照。Provider 只能把代码变更写到 `root`，不能直接修改 runtime task JSON；close 阶段由 Attestflow 把 worktree 变更提交并 ff-only merge 回 `control_root`。
 

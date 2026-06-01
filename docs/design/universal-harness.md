@@ -181,6 +181,25 @@ context:
     - docs/contracts/task-schema.md
     - docs/design/universal-harness.md
 
+token_economy:
+  enabled: true
+  budgets:
+    default_input_tokens: 24000
+    planner_input_tokens: 32000
+    releaser_input_tokens: 32000
+  context_cache:
+    enabled: true
+    path: harness/context-cache
+    max_summary_bytes: 800
+  provider_cache:
+    enabled: false
+    path: harness/provider-cache
+  incremental_context:
+    enabled: true
+  evidence_summary:
+    enabled: true
+    max_output_bytes: 2000
+
 execution:
   docker:
     enabled: false
@@ -236,9 +255,12 @@ Provider input 包含 `repository_context`，由 Attestflow 确定性生成：
 - `tree`：受限文件树
 - `documents`：`README.md`、`harness.yml`、核心 contract/design 文档等
 - `files`：任务 `files.read` / `files.write` 指向的文本片段
+- `dynamic_context`：允许 provider 后续请求 `file_slice`、`symbol_lookup`、`dependency_neighbors`、`semantic_search`、`change_history` 或 `test_mapping`
 - `limits`：实际使用的上下文限制
 
-默认排除 `.git`、`node_modules`、`__pycache__`、`harness/runs`、`harness/capability-runs`、`harness/ci-runs`、`harness/pr-runs` 和 `harness/release-runs`，避免把运行证据、缓存和依赖目录传给编程 Agent。
+默认排除 `.git`、`node_modules`、`__pycache__`、`harness/tasks`、`harness/runs`、`harness/capability-runs`、`harness/ci-runs`、`harness/pr-runs`、`harness/release-runs`、`harness/context-cache` 和 `harness/provider-cache`，避免把运行证据、缓存和依赖目录传给编程 Agent。
+
+`token_economy` 是确定性省 token 层：预算门会在 provider 调用前估算 input token，超预算时把全文 context 替换为摘要、hash 和 cache key；`context resolve` 负责按需取片；`incremental_context` 只传已有 capability output 摘要；release handoff 默认摘要化大型 evidence；`usage report` 聚合真实 provider usage。`provider_cache.enabled` 默认关闭，因为它会复用上一次成功模型输出，适合 deterministic prompt 或 CI 中的重复验证场景。
 
 ## 每任务独立会话
 
@@ -324,7 +346,7 @@ dependencies -> state/DoR -> locks/files.write -> priority -> id
 - `state` 和 Definition of Ready 决定任务是否可执行；`blocked`、`needs_clarification`、schema 不合法或仍有 external inputs 的任务会被跳过并报告原因。
 - 有效 file locks 会阻止任务进入 dry-run 批次；stale lock 会在 autopilot run/resume 开始时自动释放并写入 recovery 事件。
 - 同一批次内 `files.write` 不能重叠；冲突任务会被推迟到后续批次。
-- `autopilot.resources.model_concurrency`、`max_test_cost` 和 `ci_queue` 会限制同一批 active action 或 ready batch 的资源预算。
+- `autopilot.resources.model_concurrency`、`max_test_cost`、`max_model_tokens` 和 `ci_queue` 会限制同一批 active action 或 ready batch 的资源预算。
 - 在满足以上条件后，任务按 `priority, id` 排序。
 
 `python -m attestflow autopilot --dry-run --limit N` 是顶层自治执行前的只读计划视图。如果已有 `in_progress`、`review`、`verified` 或 `accepted` 任务，它会先展示这些 active task 的下一步动作，避免继续扩大 WIP；否则才模拟每一批 ready 任务完成后的后续可执行批次，输出批次和跳过原因。它不调用 Agent、不创建 run、不移动任务状态。这个命令承担 “plan-order” 能力，是后续 `autopilot run` 的确定性决策核心。
@@ -398,7 +420,8 @@ python -m attestflow capability run reviewer TASK-0001
 执行规则：
 
 - 加载 runtime task JSON
-- 构造 capability input，包含 task、project、commands、repository_context、capability contract 和固定 instructions
+- 构造 capability input，包含 task、project、commands、repository_context、incremental_context、capability contract 和固定 instructions
+- 先经过 token budget gate；命中 provider cache 时直接写新 run evidence，不调用外部模型 provider
 - 调用 `--command`、`capabilities.<name>.command` 或内置 provider adapter
 - 保存 `input.json`、`stdout.log`、`stderr.log` 和 `output.json`
 - provider 非零退出、stdout 不是 JSON object 或 capability output schema 不合法时失败

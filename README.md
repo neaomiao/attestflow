@@ -192,18 +192,19 @@ python3 -m attestflow secret-scan
 - `harness.yml` 校验
 - `init --adapter <adapter> --agent-provider codex|claude-code|opencode` 写入项目 adapter 和内置 provider preset；内置 adapter 覆盖 generic、Python、Node、Go、Rust、monorepo、Docker、Bazel、Java、Kotlin、.NET、Swift、Dart、Ruby、PHP，并按项目文件生成基础验证命令；`doctor` 检查配置、项目命令 executable、runtime 目录、任务 schema、provider CLI 和 provider preflight
 - `contract validate` 校验 planner、capability、session、Git、CI、PR、release 和 runtime task contract，provider 作者可以直接定位输出字段错误
-- provider output 可选记录真实模型 `usage`，成功 run 会保留 `usage.json` 或 session usage evidence，用于后续 token/cost 审计
+- provider output 可选记录真实模型 `usage`，成功 run 会保留 `usage.json` 或 session usage evidence；`usage report` 会聚合 capability、session、CI、Git、PR 和 release provider 的 token/cost 用量
+- token economy 控制层：输入预算门、context cache、动态 context resolve、incremental context、evidence 摘要和可选 provider result cache，用于减少重复上下文和重复模型调用
 - 内置 capability registry：intake、planner、bdd、tdd、implementer、reviewer、verifier、releaser
 - 内置 capability provider adapter：Codex、Claude Code、OpenCode preset 可直接驱动 `plan` 和 `capability run`
 - `plan` programming agent provider：调用编程 Agent provider，保存 capability 输入/输出证据并导入 runtime task JSON
 - `capability run` task programming agent provider：对单个任务执行 `bdd`、`tdd`、`implementer`、`reviewer` 或 `verifier`，校验 capability output schema，保存 evidence 并写回任务证据索引；`releaser` 由 top-level release gate 调用
-- 自动仓库上下文：收集文件树、核心文档和任务 focus files，写入 capability provider input
+- 自动仓库上下文：收集文件树、核心文档和任务 focus files，写入 capability provider input；超过 token budget 时自动把全文替换为摘要和 cache key，并允许 provider 后续按需请求局部 context
 - AI planner JSON 导入为 runtime task JSON
 - 外部来源导入：GitHub issue、Linear/Jira ticket、PR review comment 和 CI failure 会保存 source evidence，并进入 `proposed` task 队列等待 intake/planner
 - 治理和版本演进：`schema migrate/export/openapi`、provider `contract_version` 校验、`plugin list` 注册发现、`governance policy` 发布和破坏性变更规则
 - task schema 校验
 - `next` 调度单个最高优先级任务
-- `autopilot --dry-run` 生成只读执行计划，优先展示 active-task 下一步动作和 repair mode，否则按依赖、优先级、锁和写范围冲突展示 ready 批次与跳过原因
+- `autopilot --dry-run` 生成只读执行计划，优先展示 active-task 下一步动作和 repair mode，否则按依赖、优先级、锁、写范围冲突、`max_test_cost` 和 `max_model_tokens` 展示 ready 批次与跳过原因
 - `autopilot --run --goal` 调用 planner capability 生成并导入 runtime task JSON，然后进入同一轮自治执行
 - `autopilot --run` 创建顶层 run ledger，先按 `limit` 批量推进 active-task capability/状态动作，失败时按 repair_attempts 限制回到 implementer 修复，accepted 任务会先 apply worktree，再执行已配置的 `publish` 和 `pr ensure`，随后采集 CI evidence；若 `integrations.pr_provider.auto_merge: true` 且 PR 可合并，会执行 `pr merge`，最后采集 PR status evidence；全部任务完成后才会采集 release evidence；agent session、Git、PR、CI 或 release 返回 blocked 时记录为 blocked run 并返回非零退出码；`max_steps` 到点但仍有后续工作时记录为 `paused`
 - `autopilot --run/--resume --loop` 在同一个 run 上自动续跑 paused 状态，直到终态或 cycle 上限；默认 batch、step 和 loop policy 来自 `harness.yml`，CLI 参数可覆盖

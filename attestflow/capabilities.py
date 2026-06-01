@@ -18,6 +18,13 @@ from .provider_commands import provider_timeout_seconds, run_provider_json_comma
 from .release import release_task_summaries
 from .sessions import BUILTIN_SESSION_PROVIDERS
 from .tasks import TaskRecord, block_task, iter_tasks
+from .token_economy import (
+    build_incremental_context,
+    enforce_payload_budget,
+    load_provider_cache,
+    provider_cache_hit_metadata,
+    store_provider_cache,
+)
 
 
 @dataclass(frozen=True)
@@ -178,7 +185,7 @@ def run_release_capability(
 
     run_path = _new_capability_run_path(root, config, "releaser")
     capability_input = build_release_capability_input(root, config, capability, done_tasks)
-    output = _run_json_command(root, config, "releaser", capability_command, capability_input, run_path)
+    output = _run_json_command(root, config, "releaser", capability_command, capability_input, run_path, control_root=root)
     _validate_task_capability_output(output, "releaser", run_path / "output.json")
     return ReleaseCapabilityRunResult(output=output, run_path=run_path, done_tasks=done_tasks)
 
@@ -197,7 +204,7 @@ def run_intake_capability(
 
     run_path = _new_capability_run_path(root, config, "intake")
     capability_input = build_intake_input(root, config, capability, goal)
-    output = _run_json_command(root, config, "intake", capability_command, capability_input, run_path)
+    output = _run_json_command(root, config, "intake", capability_command, capability_input, run_path, control_root=root)
     _validate_task_capability_output(output, "intake", run_path / "output.json")
     return IntakeCapabilityRunResult(output=output, run_path=run_path)
 
@@ -225,7 +232,7 @@ def run_planner_capability(
             attempt={"index": attempt_index, "max": max_attempts, "previous_error": previous_error},
         )
         try:
-            planner_output = _run_json_command(root, config, "planner", planner_command, capability_input, run_path)
+            planner_output = _run_json_command(root, config, "planner", planner_command, capability_input, run_path, control_root=root)
             raise_contract_errors(
                 "planner output",
                 "planner-output",
@@ -316,7 +323,15 @@ def run_task_capability(
     run_path = _new_capability_run_path(root, config, f"{capability_name}-{task_id}")
     capability_input = build_task_capability_input(root, config, capability, record, workspace_root=workspace_root)
     before_status = _git_status_paths(workspace_root)
-    output = _run_json_command(workspace_root, config, capability_name, capability_command, capability_input, run_path)
+    output = _run_json_command(
+        workspace_root,
+        config,
+        capability_name,
+        capability_command,
+        capability_input,
+        run_path,
+        control_root=root,
+    )
     _validate_task_capability_output(
         output,
         capability_name,
@@ -417,6 +432,7 @@ def build_task_capability_input(
         "task": task,
         "task_path": str(record.path.relative_to(root)),
         "repository_context": collect_repository_context(workspace_root, config, focus_files=focus_files),
+        "incremental_context": build_incremental_context(root, config, task),
         "instructions": [
             "Return only JSON.",
             "Do not edit task files directly; Attestflow records capability evidence.",
@@ -542,17 +558,45 @@ def _run_json_command(
     command: str,
     payload: dict[str, Any],
     run_path: Path,
+    *,
+    control_root: Path | None = None,
 ) -> dict[str, Any]:
+    cache_root = control_root or cwd
+    optimized_payload = enforce_payload_budget(cache_root, config, capability_name, payload)
+    cache_payload = deepcopy(optimized_payload)
+    cached_output = load_provider_cache(cache_root, config, capability_name, command, cache_payload)
+    if cached_output is not None:
+        dump_data(optimized_payload, run_path / "input.json")
+        dump_data(cached_output, run_path / "output.json")
+        _write_provider_cache_logs(run_path, hit=True)
+        _write_provider_cache_usage(run_path, cached_output)
+        dump_data(provider_cache_hit_metadata(cache_root, config, capability_name, command, cache_payload), run_path / "cache.json")
+        return cached_output
     output = run_provider_json_command(
         cwd,
         command,
-        payload,
+        optimized_payload,
         run_path,
         capability_name,
         timeout_seconds=_capability_timeout_seconds(config, capability_name),
     )
     dump_data(output, run_path / "output.json")
+    cache_metadata = store_provider_cache(cache_root, config, capability_name, command, cache_payload, output)
+    if cache_metadata is not None:
+        dump_data(cache_metadata, run_path / "cache.json")
     return output
+
+
+def _write_provider_cache_logs(run_path: Path, *, hit: bool) -> None:
+    (run_path / "stdout.log").write_text("", encoding="utf-8")
+    status = "hit" if hit else "miss"
+    (run_path / "stderr.log").write_text(f"provider cache {status}\n", encoding="utf-8")
+
+
+def _write_provider_cache_usage(run_path: Path, output: dict[str, Any]) -> None:
+    usage = output.get("usage")
+    if isinstance(usage, dict):
+        dump_data(usage, run_path / "usage.json")
 
 
 def _capability_timeout_seconds(config: dict[str, Any], capability_name: str) -> float | None:

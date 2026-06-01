@@ -1232,6 +1232,25 @@ class OrchestratorTests(unittest.TestCase):
 
             self.assertEqual([[task.task_id for task in batch.tasks] for batch in plan.batches], [["TASK-0001"], ["TASK-0002"]])
 
+    def test_autopilot_resource_budget_caps_ready_batch_by_model_tokens(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = deepcopy(DEFAULT_CONFIG)
+            config["autopilot"]["resources"] = {"model_concurrency": 4, "max_model_tokens": 3000}
+            first = ready_task("TASK-0001", priority=1)
+            first["files"]["write"] = ["src/one.py"]
+            first["estimate"] = {"model_tokens": 2400}
+            second = ready_task("TASK-0002", priority=2)
+            second["files"]["write"] = ["src/two.py"]
+            second["estimate"] = {"model_tokens": 2400}
+            write_task(root, "ready", "TASK-0001", first)
+            write_task(root, "ready", "TASK-0002", second)
+
+            plan = build_execution_plan(root, config, limit=2)
+
+            self.assertEqual([[task.task_id for task in batch.tasks] for batch in plan.batches], [["TASK-0001"], ["TASK-0002"]])
+            self.assertEqual(plan.batches[0].tasks[0].model_tokens, 2400)
+
     def test_autopilot_recovers_stale_file_lock_before_dispatch(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -535,6 +535,95 @@ json.dump(
             )
             self.assertIn("capability_marker", snippet["content"])
 
+    def test_task_capability_run_applies_token_budget_before_provider_call(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_ready_task(root, "TASK-0001")
+            (root / "README.md").write_text("very large context\n" * 2000, encoding="utf-8")
+            provider = root / "review_provider.py"
+            provider.write_text(
+                """
+import json
+import sys
+
+payload = json.load(sys.stdin)
+assert payload["token_economy"]["budget_exceeded"] is True
+assert "content" not in payload["repository_context"]["documents"][0]
+assert payload["repository_context"]["documents"][0]["summary"]
+json.dump(
+    {
+        "schema_version": 1,
+        "status": "passed",
+        "summary": "No blocking issues.",
+        "findings": [],
+        "evidence": ["review report"],
+    },
+    sys.stdout,
+)
+""".lstrip(),
+                encoding="utf-8",
+            )
+            config = {
+                "paths": {"tasks": "harness/tasks", "capability_runs": "harness/capability-runs"},
+                "context": {"documents": ["README.md"], "max_tree_entries": 20, "max_file_bytes": 100000},
+                "token_economy": {
+                    "budgets": {"reviewer_input_tokens": 500},
+                    "context_cache": {"enabled": True, "path": "harness/context-cache"},
+                },
+            }
+
+            result = run_task_capability(root, config, "reviewer", "TASK-0001", command=f"python3 {provider}")
+
+            self.assertEqual(result.output["status"], "passed")
+            capability_input = load_data(result.run_path / "input.json")
+            self.assertTrue(capability_input["token_economy"]["budget_exceeded"])
+            self.assertTrue(any((root / "harness" / "context-cache").glob("*.json")))
+
+    def test_task_capability_runner_reuses_provider_result_cache(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            write_ready_task(root, "TASK-0001")
+            provider = Path(tmp) / "review_provider.py"
+            counter = Path(tmp) / "provider-count.txt"
+            provider.write_text(
+                f"""
+import json
+from pathlib import Path
+import sys
+
+json.load(sys.stdin)
+counter = Path({str(counter)!r})
+count = int(counter.read_text(encoding="utf-8")) + 1 if counter.exists() else 1
+counter.write_text(str(count), encoding="utf-8")
+json.dump(
+    {{
+        "schema_version": 1,
+        "status": "passed",
+        "summary": f"Provider call {{count}}",
+        "findings": [],
+        "evidence": ["review report"],
+        "usage": {{"provider": "codex", "model": "gpt-5", "input_tokens": 10, "output_tokens": 2, "total_tokens": 12}},
+    }},
+    sys.stdout,
+)
+""".lstrip(),
+                encoding="utf-8",
+            )
+            config = {
+                "paths": {"tasks": "harness/tasks", "capability_runs": "harness/capability-runs"},
+                "token_economy": {"provider_cache": {"enabled": True, "path": "harness/provider-cache"}},
+            }
+
+            first = run_task_capability(root, config, "reviewer", "TASK-0001", command=f"python3 {provider}")
+            second = run_task_capability(root, config, "reviewer", "TASK-0001", command=f"python3 {provider}")
+
+            self.assertEqual(counter.read_text(encoding="utf-8"), "1")
+            self.assertEqual(first.output["summary"], "Provider call 1")
+            self.assertEqual(second.output["summary"], "Provider call 1")
+            self.assertTrue((second.run_path / "cache.json").exists())
+            self.assertEqual(load_data(second.run_path / "usage.json")["total_tokens"], 12)
+
     def test_task_capability_runner_rejects_invalid_output_schema(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

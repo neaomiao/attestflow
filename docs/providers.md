@@ -43,7 +43,9 @@ Planner provider 输出见 `docs/contracts/planner-output-schema.md`。Reviewer 
 }
 ```
 
-`input_tokens`、`output_tokens`、`total_tokens`、`cached_input_tokens` 和 `reasoning_tokens` 必须是非负整数；`cost_usd` 必须是非负数字。成功 provider run 会把该对象另存为 `usage.json`；session launch/resume 会分别写 `session-launch-usage.json` / `session-resume-usage.json`。
+`input_tokens`、`output_tokens`、`total_tokens`、`cached_input_tokens` 和 `reasoning_tokens` 必须是非负整数；`cost_usd` 必须是非负数字。成功 provider run 会把该对象另存为 `usage.json`；session launch/resume 会分别写 `session-launch-usage.json` / `session-resume-usage.json`。`python -m attestflow usage report --json` 会聚合这些真实用量；Attestflow 的预算门只用字节数做调用前估算，不替代 provider 报告的账单数据。
+
+Provider input 可能已经被 token economy 层压缩：当 `token_economy` 预算超限时，`repository_context.documents[]` 和 `files[]` 会从 `content` 变成 `summary`、`content_hash`、`cache_key` 和 `retrieval`。Provider 需要更多局部上下文时，应提交动态 context 请求，然后由 orchestrator 运行 `python -m attestflow context resolve --from-json request.json --json` 取回片段，而不是自行递归扫描仓库。
 
 Attestflow 使用 argv 模式执行 provider command，不通过 shell 展开管道、重定向或 `;`。stdout/stderr 会写入证据日志，并对常见 token、secret、password、API key 和 bearer token 做 redaction。失败会写入 `failure.json`，`type` 取值为 `auth_missing`、`rate_limited`、`context_too_large`、`invalid_output`、`tool_denied`、`approval_required`、`output_too_large`、`timeout`、`network` 或 `failed`，并附带 `automatic_action` 和 `recovery_strategy`。
 

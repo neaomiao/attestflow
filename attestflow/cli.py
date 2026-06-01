@@ -17,6 +17,7 @@ from .autonomy import autonomy_doctor
 from .capabilities import get_capability, list_capabilities, run_planner_capability, run_task_capability
 from .ci import BUILTIN_CI_PROVIDERS, list_ci_providers, run_ci_action, run_ci_status
 from .config import load_config, validate_config
+from .context import resolve_dynamic_context_request
 from .contracts import CONTRACT_TYPES, validate_contract_file
 from .governance import SCHEMA_TYPES, governance_policy, json_schema_for, migrate_file, openapi_document
 from .io import dump_data, load_data
@@ -59,6 +60,7 @@ from .tasks import (
     validate_task,
     verify_task,
 )
+from .usage import build_usage_report
 
 
 ROOT = Path.cwd()
@@ -121,6 +123,8 @@ def cmd_init(args: argparse.Namespace) -> int:
     (target / "harness" / "git-runs").mkdir(parents=True, exist_ok=True)
     (target / "harness" / "pr-runs").mkdir(parents=True, exist_ok=True)
     (target / "harness" / "release-runs").mkdir(parents=True, exist_ok=True)
+    (target / "harness" / "context-cache").mkdir(parents=True, exist_ok=True)
+    (target / "harness" / "provider-cache").mkdir(parents=True, exist_ok=True)
     (target / "harness" / "locks").mkdir(parents=True, exist_ok=True)
     print(f"initialized attestflow harness in {target}")
     return 0
@@ -1303,7 +1307,7 @@ def _print_execution_plan(plan: ExecutionPlan) -> None:
             print(f"batch {batch.index}:")
             for task in batch.tasks:
                 write_scope = ", ".join(task.write_files) if task.write_files else "-"
-                print(f"  {task.task_id}\tpriority={task.priority}\twrite={write_scope}\t{task.title}")
+                print(f"  {task.task_id}\tpriority={task.priority}\tmodel_tokens={task.model_tokens}\twrite={write_scope}\t{task.title}")
     else:
         print("no executable batches")
     if plan.skipped:
@@ -1339,6 +1343,7 @@ def _execution_plan_json(plan: ExecutionPlan) -> dict:
                         "path": str(task.path),
                         "dependencies": task.dependencies,
                         "write_files": task.write_files,
+                        "model_tokens": task.model_tokens,
                     }
                     for task in batch.tasks
                 ],
@@ -2213,6 +2218,36 @@ def cmd_capability_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_usage_report(args: argparse.Namespace) -> int:
+    report = build_usage_report(ROOT, load_config(ROOT))
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
+    totals = report["totals"]
+    print(
+        "usage report: "
+        f"input={totals['input_tokens']} "
+        f"output={totals['output_tokens']} "
+        f"total={totals['total_tokens']} "
+        f"cached={totals['cached_input_tokens']} "
+        f"cost_usd={totals['cost_usd']:.4f}"
+    )
+    return 0
+
+
+def cmd_context_resolve(args: argparse.Namespace) -> int:
+    request = load_data(Path(args.from_json))
+    response = resolve_dynamic_context_request(ROOT, load_config(ROOT), request)
+    if args.json:
+        print(json.dumps(response, ensure_ascii=False, indent=2))
+        return 0
+    print(f"context request {response.get('request_id')}: {response.get('status')}")
+    for item in response.get("items", []):
+        if isinstance(item, dict):
+            print(f"  {item.get('kind', 'item')}\t{item.get('path', '-')}")
+    return 0
+
+
 def cmd_plan(args: argparse.Namespace) -> int:
     goal = " ".join(args.goal).strip()
     try:
@@ -2386,6 +2421,19 @@ def build_parser() -> argparse.ArgumentParser:
     provider_contract.add_argument("--command")
     provider_contract.add_argument("--json", action="store_true")
     provider_contract.set_defaults(func=cmd_provider_contract)
+
+    usage = subparsers.add_parser("usage")
+    usage_subparsers = usage.add_subparsers(dest="usage_command", required=True)
+    usage_report = usage_subparsers.add_parser("report")
+    usage_report.add_argument("--json", action="store_true")
+    usage_report.set_defaults(func=cmd_usage_report)
+
+    context = subparsers.add_parser("context")
+    context_subparsers = context.add_subparsers(dest="context_command", required=True)
+    context_resolve = context_subparsers.add_parser("resolve")
+    context_resolve.add_argument("--from-json", required=True)
+    context_resolve.add_argument("--json", action="store_true")
+    context_resolve.set_defaults(func=cmd_context_resolve)
 
     ci = subparsers.add_parser("ci")
     ci_subparsers = ci.add_subparsers(dest="ci_command", required=True)

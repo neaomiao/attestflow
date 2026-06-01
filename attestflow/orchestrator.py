@@ -53,6 +53,7 @@ class PlannedTask:
     path: Path
     write_files: list[str]
     dependencies: list[str]
+    model_tokens: int
 
 
 @dataclass(frozen=True)
@@ -172,7 +173,9 @@ def build_execution_plan(root: Path, config: dict[str, Any], *, limit: int | Non
         reserved_write_files: set[str] = set()
         batch_limit = _resource_item_limit(config, limit)
         test_cost_budget = _resource_test_cost_budget(config)
+        model_token_budget = _resource_model_token_budget(config)
         selected_test_cost = 0
+        selected_model_tokens = 0
         for record in sorted(candidates, key=_task_sort_key):
             if batch_limit is not None and len(selected) >= batch_limit:
                 continue
@@ -180,15 +183,23 @@ def build_execution_plan(root: Path, config: dict[str, Any], *, limit: int | Non
             if any(file_name in reserved_write_files for file_name in write_files):
                 continue
             task_cost = _task_test_cost(record.task)
+            task_model_tokens = _task_model_tokens(record.task)
             if (
                 test_cost_budget is not None
                 and selected
                 and selected_test_cost + task_cost > test_cost_budget
             ):
                 continue
+            if (
+                model_token_budget is not None
+                and selected
+                and selected_model_tokens + task_model_tokens > model_token_budget
+            ):
+                continue
             selected.append(record)
             reserved_write_files.update(write_files)
             selected_test_cost += task_cost
+            selected_model_tokens += task_model_tokens
 
         if not selected:
             for record in still_remaining:
@@ -1094,6 +1105,10 @@ def _resource_test_cost_budget(config: dict[str, Any]) -> int | None:
     return _resource_positive_int(config, "max_test_cost")
 
 
+def _resource_model_token_budget(config: dict[str, Any]) -> int | None:
+    return _resource_positive_int(config, "max_model_tokens")
+
+
 def _resource_ci_queue_limit(config: dict[str, Any]) -> int | None:
     return _resource_positive_int(config, "ci_queue")
 
@@ -1118,6 +1133,24 @@ def _task_test_cost(task: dict[str, Any]) -> int:
     return 1
 
 
+def _task_model_tokens(task: dict[str, Any]) -> int:
+    estimate = task.get("estimate", {})
+    if isinstance(estimate, dict):
+        for key in ("model_tokens", "input_tokens", "estimated_tokens"):
+            value = estimate.get(key)
+            if isinstance(value, int) and value > 0:
+                return value
+    cost = task.get("cost", {})
+    if isinstance(cost, dict):
+        value = cost.get("estimated_tokens")
+        if isinstance(value, int) and value > 0:
+            return value
+    value = task.get("token_estimate")
+    if isinstance(value, int) and value > 0:
+        return value
+    return 1
+
+
 def _planned_task(record: TaskRecord) -> PlannedTask:
     return PlannedTask(
         task_id=str(record.task["id"]),
@@ -1126,6 +1159,7 @@ def _planned_task(record: TaskRecord) -> PlannedTask:
         path=record.path,
         write_files=_write_files(record),
         dependencies=[str(dep) for dep in record.task.get("dependencies", []) if str(dep)],
+        model_tokens=_task_model_tokens(record.task),
     )
 
 

@@ -275,7 +275,7 @@ ci_url: null
 
 ## Provider Usage
 
-Capability、CI、PR、release provider output 如果包含 `usage`，run 目录会额外保存 `usage.json`。Session adapter output 如果包含 `usage`，会保存 `session-launch-usage.json` 或 `session-resume-usage.json`，并写回 `session.yml`。Attestflow 只记录 provider 报告的真实模型用量，不根据字节数推算 token。
+Capability、CI、PR、release provider output 如果包含 `usage`，run 目录会额外保存 `usage.json`。Session adapter output 如果包含 `usage`，会保存 `session-launch-usage.json` 或 `session-resume-usage.json`，并写回 `session.yml`。Attestflow 只记录 provider 报告的真实模型用量，不把预算门的字节估算当账单数据。`usage report` 会扫描这些 usage evidence，按 provider/model 聚合 token 和 `cost_usd`。
 
 ## 外部交付 Evidence
 
