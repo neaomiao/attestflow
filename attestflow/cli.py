@@ -11,10 +11,11 @@ import tempfile
 import time
 import tomllib
 from pathlib import Path
+from typing import Any
 
 from .autonomy import autonomy_doctor
 from .capabilities import get_capability, list_capabilities, run_planner_capability, run_task_capability
-from .ci import BUILTIN_CI_PROVIDERS, list_ci_providers, run_ci_status
+from .ci import BUILTIN_CI_PROVIDERS, list_ci_providers, run_ci_action, run_ci_status
 from .config import load_config, validate_config
 from .contracts import CONTRACT_TYPES, validate_contract_file
 from .governance import SCHEMA_TYPES, governance_policy, json_schema_for, migrate_file, openapi_document
@@ -1956,9 +1957,23 @@ def cmd_provider_smoke(args: argparse.Namespace) -> int:
 
 
 def cmd_ci_status(args: argparse.Namespace) -> int:
+    return _cmd_ci_action(args, "status")
+
+
+def cmd_ci_action(args: argparse.Namespace) -> int:
+    return _cmd_ci_action(args, str(args.ci_command))
+
+
+def _cmd_ci_action(args: argparse.Namespace, action: str) -> int:
     try:
         config = load_config(ROOT)
-        result = run_ci_status(ROOT, config, command=args.command)
+        result = run_ci_action(
+            ROOT,
+            config,
+            action=action,
+            command=args.command,
+            provider_options=_ci_provider_options_from_args(args),
+        )
         if args.task:
             record_task_evidence_reference(ROOT, config, args.task, "ci", result.run_path / "output.json")
     except (FileNotFoundError, ValueError) as exc:
@@ -1966,6 +1981,42 @@ def cmd_ci_status(args: argparse.Namespace) -> int:
         return 1
     print(f"ci {result.status}: {result.run_path}")
     return 0
+
+
+def _ci_provider_options_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    options: dict[str, Any] = {}
+    for key in (
+        "run_id",
+        "head_sha",
+        "branch",
+        "workflow",
+        "event",
+        "status_filter",
+        "limit",
+        "max_wait_seconds",
+        "poll_interval_seconds",
+        "download_dir",
+        "ref",
+    ):
+        value = getattr(args, key, None)
+        if value is not None:
+            options[key] = value
+    if getattr(args, "failed", False):
+        options["rerun_failed"] = True
+    if getattr(args, "download", False):
+        options["download_artifacts"] = True
+    inputs = getattr(args, "input", None)
+    if inputs:
+        parsed: dict[str, str] = {}
+        for item in inputs:
+            if "=" not in item:
+                raise ValueError(f"ci dispatch --input must be KEY=VALUE: {item}")
+            key, value = item.split("=", 1)
+            if not key.strip():
+                raise ValueError(f"ci dispatch --input key must be non-empty: {item}")
+            parsed[key.strip()] = value
+        options["inputs"] = parsed
+    return options
 
 
 def cmd_ci_provider_list(_: argparse.Namespace) -> int:
@@ -2328,7 +2379,68 @@ def build_parser() -> argparse.ArgumentParser:
     ci_status = ci_subparsers.add_parser("status")
     ci_status.add_argument("--command")
     ci_status.add_argument("--task")
+    ci_status.add_argument("--run-id")
+    ci_status.add_argument("--head-sha")
+    ci_status.add_argument("--branch")
+    ci_status.add_argument("--workflow")
+    ci_status.add_argument("--event")
+    ci_status.add_argument("--status-filter")
+    ci_status.add_argument("--limit", type=int)
     ci_status.set_defaults(func=cmd_ci_status)
+    ci_await = ci_subparsers.add_parser("await")
+    ci_await.add_argument("--command")
+    ci_await.add_argument("--task")
+    ci_await.add_argument("--run-id")
+    ci_await.add_argument("--head-sha")
+    ci_await.add_argument("--branch")
+    ci_await.add_argument("--workflow")
+    ci_await.add_argument("--event")
+    ci_await.add_argument("--status-filter")
+    ci_await.add_argument("--limit", type=int)
+    ci_await.add_argument("--max-wait-seconds", type=float)
+    ci_await.add_argument("--poll-interval-seconds", type=float)
+    ci_await.set_defaults(func=cmd_ci_action)
+    ci_logs = ci_subparsers.add_parser("logs")
+    ci_logs.add_argument("--command")
+    ci_logs.add_argument("--task")
+    ci_logs.add_argument("--run-id")
+    ci_logs.add_argument("--head-sha")
+    ci_logs.add_argument("--branch")
+    ci_logs.add_argument("--workflow")
+    ci_logs.add_argument("--event")
+    ci_logs.add_argument("--limit", type=int)
+    ci_logs.set_defaults(func=cmd_ci_action)
+    ci_artifacts = ci_subparsers.add_parser("artifacts")
+    ci_artifacts.add_argument("--command")
+    ci_artifacts.add_argument("--task")
+    ci_artifacts.add_argument("--run-id")
+    ci_artifacts.add_argument("--head-sha")
+    ci_artifacts.add_argument("--branch")
+    ci_artifacts.add_argument("--workflow")
+    ci_artifacts.add_argument("--event")
+    ci_artifacts.add_argument("--limit", type=int)
+    ci_artifacts.add_argument("--download", action="store_true")
+    ci_artifacts.add_argument("--download-dir")
+    ci_artifacts.set_defaults(func=cmd_ci_action)
+    ci_rerun = ci_subparsers.add_parser("rerun")
+    ci_rerun.add_argument("--command")
+    ci_rerun.add_argument("--task")
+    ci_rerun.add_argument("--run-id")
+    ci_rerun.add_argument("--head-sha")
+    ci_rerun.add_argument("--branch")
+    ci_rerun.add_argument("--workflow")
+    ci_rerun.add_argument("--event")
+    ci_rerun.add_argument("--limit", type=int)
+    ci_rerun.add_argument("--failed", action="store_true")
+    ci_rerun.set_defaults(func=cmd_ci_action)
+    ci_dispatch = ci_subparsers.add_parser("dispatch")
+    ci_dispatch.add_argument("--command")
+    ci_dispatch.add_argument("--task")
+    ci_dispatch.add_argument("--workflow")
+    ci_dispatch.add_argument("--ref")
+    ci_dispatch.add_argument("--branch")
+    ci_dispatch.add_argument("--input", action="append", default=[])
+    ci_dispatch.set_defaults(func=cmd_ci_action)
     ci_subparsers.add_parser("providers").set_defaults(func=cmd_ci_provider_list)
 
     publish = subparsers.add_parser("publish")

@@ -156,6 +156,11 @@ python3 -m attestflow session resume TASK-0001
 python3 -m attestflow provider list
 python3 -m attestflow ci providers
 python3 -m attestflow ci status --task TASK-0001
+python3 -m attestflow ci await --head-sha abc123
+python3 -m attestflow ci logs --run-id 123456789
+python3 -m attestflow ci artifacts --run-id 123456789 --download-dir attestflow-artifacts
+python3 -m attestflow ci rerun --run-id 123456789 --failed
+python3 -m attestflow ci dispatch --workflow ci.yml --ref feature/my-change --input task=TASK-0001
 python3 -m attestflow pr ensure TASK-0001
 python3 -m attestflow pr status TASK-0001
 python3 -m attestflow release status
@@ -176,7 +181,7 @@ python3 -m attestflow secret-scan
 
 如果 `sessions.worktree.enabled: true`，每个 task run 会先创建独立 git worktree，默认路径为 `../.attestflow-worktrees/{project}/{task_id}-{run_id}`。session adapter、task-scoped capability 和 `verify --task` 都会在该 worktree 里执行；控制面证据仍写回主项目的 `harness/runs` 和 `harness/capability-runs`。`close` 会把 worktree 变更提交成 task commit，并用 `git merge --ff-only` 合回控制仓库；如果控制仓库已经漂移，close 会失败并保留任务在 `accepted`。run metadata 会记录 `commit_before`、`commit_after` 和是否已应用到控制仓库。
 
-`integrations.git_provider`、`integrations.ci_provider`、`integrations.pr_provider` 和 `integrations.release_provider` 是外部交付证据适配点。`provider: command` 会调用任意输出统一 JSON 的命令；`timeout_seconds` 会强制终止卡住的 provider 并保留日志。Git `provider: git` 会使用内置 adapter 执行提交和推送；`attestflow publish --task TASK-*` 会把输出写入 `task.evidence.git`。CI `github-actions` preset 会使用内置 adapter 调用 `gh run list`。PR provider 支持 `pr ensure [TASK-*]` 创建/更新 change request，以及 `pr status [TASK-*]` 查询合入状态；带 `TASK-*` 参数时会把输出写入对应 `task.evidence.pr_request` / `task.evidence.pr`。`ci status --task TASK-*` 会把 CI 输出写入 `task.evidence.ci`。配置 `capabilities.releaser` 时，autopilot 会在 release provider 前生成 release handoff evidence，并把它作为 `release_handoff` 传给 provider。CI/Release 返回 `running`、`queued` 或 `unknown` 时，autopilot 会记录 evidence 并暂停为 `pause_reason: external_status_pending`，下一次 `--resume` 重新采集。结果分别保存到 `harness/git-runs/git-*/`、`harness/ci-runs/ci-*/`、`harness/pr-runs/pr-*/` 和 `harness/release-runs/release-*/`。
+`integrations.git_provider`、`integrations.ci_provider`、`integrations.pr_provider` 和 `integrations.release_provider` 是外部交付证据适配点。`provider: command` 会调用任意输出统一 JSON 的命令；`timeout_seconds` 会强制终止卡住的 provider 并保留日志。Git `provider: git` 会使用内置 adapter 执行提交和推送；`attestflow publish --task TASK-*` 会把输出写入 `task.evidence.git`。CI `github-actions` preset 支持 `ci status`、`ci await`、`ci logs`、`ci artifacts`、`ci rerun` 和 `ci dispatch`：默认用 `gh run list` 读取状态，可按 branch、head SHA、workflow、event 精确筛选，失败时采集 failed jobs、annotations 和 failed log evidence。PR provider 支持 `pr ensure [TASK-*]` 创建/更新 change request，以及 `pr status [TASK-*]` 查询合入状态；带 `TASK-*` 参数时会把输出写入对应 `task.evidence.pr_request` / `task.evidence.pr`。`ci <action> --task TASK-*` 会把 CI 输出写入 `task.evidence.ci`。配置 `capabilities.releaser` 时，autopilot 会在 release provider 前生成 release handoff evidence，并把它作为 `release_handoff` 传给 provider。CI/Release 返回 `running`、`queued` 或 `unknown` 时，autopilot 会记录 evidence 并暂停为 `pause_reason: external_status_pending`，下一次 `--resume` 重新采集。结果分别保存到 `harness/git-runs/git-*/`、`harness/ci-runs/ci-*/`、`harness/pr-runs/pr-*/` 和 `harness/release-runs/release-*/`。
 
 ## 当前能力
 
@@ -210,7 +215,7 @@ python3 -m attestflow secret-scan
 - `session resume` 通过同一 session adapter 合同恢复外部编程 Agent 会话
 - 内置 session provider preset：Codex、Claude Code、OpenCode
 - Git provider contract：`publish` 提交并推送当前分支；`publish --task TASK-*` 同时写回 `task.evidence.git`；内置 `git` provider 会拒绝直接推送默认分支，除非显式允许
-- CI provider contract：`ci status` 保存外部 CI 状态 evidence；`ci status --task TASK-*` 同时写回 `task.evidence.ci`；内置 GitHub Actions preset
+- CI provider contract：`ci status` / `ci await` / `ci logs` / `ci artifacts` / `ci rerun` / `ci dispatch` 保存外部 CI 状态、日志、产物和动作 evidence；`--task TASK-*` 同时写回 `task.evidence.ci`；内置 GitHub Actions preset 支持 PR/SHA 精确筛选、failed log 和 artifact evidence
 - PR provider contract：`pr ensure` 创建或更新外部 PR/change request，`pr status` 保存外部 PR/change 状态 evidence；带 task id 时写回 `task.evidence.pr_request` / `task.evidence.pr`；可由 command provider 接任意代码托管系统
 - Release provider contract：`release status` 接收已完成任务摘要和 PR/CI evidence，保存外部发布 evidence；可由 command provider 接任意发布系统
 - `evidence export TASK-* --out DIR` 导出 task、run、ledger、capability output 和 manifest；`evidence bundle --run/--release` 导出顶层交付 evidence、release bundle、PR comment artifact、可复现 manifest 和 audit report；`evidence verify DIR --check-source` 校验 bundle hash/size 并检测源 evidence 是否过期

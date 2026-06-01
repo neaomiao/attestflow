@@ -125,7 +125,7 @@ python -m attestflow release providers
 
 CI 内置 provider：
 
-- `github-actions`
+- `github-actions`：支持 `status`、`await`、`logs`、`artifacts`、`rerun`、`dispatch`，可按 PR branch、head SHA、workflow 和 event 精确绑定 run evidence
 - `gitlab-ci`
 - `buildkite`
 - `circleci`
@@ -155,10 +155,14 @@ integrations:
       remote: origin
       push: true
   ci_provider:
-    provider: gitlab-ci
+    provider: github-actions
     provider_options:
-      command: glab
-      status_args: ["ci", "status", "--output", "json"]
+      command: gh
+      repository: owner/repo
+      branch: feature/my-change
+      head_sha: abc123
+      workflow: ci.yml
+      event: pull_request
   pr_provider:
     provider: github
     provider_options:

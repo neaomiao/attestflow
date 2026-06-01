@@ -210,8 +210,12 @@ def validate_ci_output(output: dict[str, Any], label: str = "ci-output") -> list
     _validate_usage(output, label, errors)
     _require_status(output, label, CI_STATUSES, errors)
     _require_summary(output, label, errors)
-    if not isinstance(output.get("checks", []), list):
-        errors.append(_field_error(label, "checks", "must be a list"))
+    for key in ("checks", "jobs", "annotations", "artifacts"):
+        if not isinstance(output.get(key, []), list):
+            errors.append(_field_error(label, key, "must be a list"))
+    for key in ("logs", "failure_summary"):
+        if key in output and not isinstance(output.get(key), dict):
+            errors.append(_field_error(label, key, "must be a mapping"))
     return errors
 
 

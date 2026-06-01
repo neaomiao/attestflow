@@ -19,6 +19,7 @@ BUILTIN_CI_PROVIDERS: dict[str, dict[str, str]] = {
     "circleci": {"command": "circleci", "description": "CircleCI workflows via attestflow.ci_adapters."},
 }
 
+
 @dataclass(frozen=True)
 class CIStatusResult:
     status: str
@@ -34,7 +35,23 @@ def list_ci_providers() -> list[dict[str, str]]:
 
 
 def run_ci_status(root: Path, config: dict[str, Any], *, command: str | None = None) -> CIStatusResult:
+    return run_ci_action(root, config, action="status", command=command)
+
+
+def run_ci_action(
+    root: Path,
+    config: dict[str, Any],
+    *,
+    action: str,
+    command: str | None = None,
+    provider_options: dict[str, Any] | None = None,
+) -> CIStatusResult:
     provider_config = _ci_provider_config(config)
+    if provider_options:
+        provider_config = dict(provider_config)
+        merged_options = _provider_options(provider_config)
+        merged_options.update(provider_options)
+        provider_config["provider_options"] = merged_options
     provider = str(provider_config.get("provider") or ("command" if command else ""))
     if not provider:
         raise ValueError("integrations.ci_provider must be configured or passed with --command")
@@ -45,7 +62,7 @@ def run_ci_status(root: Path, config: dict[str, Any], *, command: str | None = N
         raise ValueError(f"CI provider command not found for {provider}: {ci_command}")
 
     run_path = _new_ci_run_path(root, config)
-    payload = _ci_input(root, config, provider, provider_config)
+    payload = _ci_input(root, config, provider, provider_config, action=action)
     output = run_provider_json_command(
         root,
         ci_command,
@@ -74,10 +91,18 @@ def _configured_command(provider: str, provider_config: dict[str, Any]) -> str |
     return None
 
 
-def _ci_input(root: Path, config: dict[str, Any], provider: str, provider_config: dict[str, Any]) -> dict[str, Any]:
+def _ci_input(
+    root: Path,
+    config: dict[str, Any],
+    provider: str,
+    provider_config: dict[str, Any],
+    *,
+    action: str,
+) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "provider": provider,
+        "action": action,
         "provider_options": _provider_options(provider_config),
         "security": config.get("security", {}),
         "root": str(root),
@@ -88,7 +113,30 @@ def _ci_input(root: Path, config: dict[str, Any], provider: str, provider_config
 def _provider_options(provider_config: dict[str, Any]) -> dict[str, Any]:
     options = provider_config.get("provider_options", {})
     merged = dict(options) if isinstance(options, dict) else {}
-    for key in ("command", "repository", "status_args", "timeout_seconds"):
+    for key in (
+        "command",
+        "repository",
+        "status_args",
+        "timeout_seconds",
+        "run_id",
+        "head_sha",
+        "commit",
+        "branch",
+        "workflow",
+        "event",
+        "status_filter",
+        "limit",
+        "max_wait_seconds",
+        "poll_interval_seconds",
+        "view_json_fields",
+        "max_log_bytes",
+        "download_dir",
+        "download_artifacts",
+        "artifact_args",
+        "rerun_failed",
+        "ref",
+        "inputs",
+    ):
         if key in provider_config and key not in merged:
             merged[key] = provider_config[key]
     return merged
