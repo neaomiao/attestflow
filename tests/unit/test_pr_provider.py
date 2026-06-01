@@ -1,5 +1,6 @@
 from contextlib import redirect_stderr, redirect_stdout
 import io
+import json
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
@@ -7,7 +8,7 @@ import unittest
 
 import attestflow.cli as cli
 from attestflow.io import dump_data, load_data
-from attestflow.pr import run_pr_ensure, run_pr_status
+from attestflow.pr import run_pr_ensure, run_pr_merge, run_pr_status
 
 
 class PrProviderTests(unittest.TestCase):
@@ -100,6 +101,49 @@ json.dump(
             self.assertEqual(result.output["external_id"], "42")
             self.assertEqual(load_data(result.run_path / "input.json")["action"], "ensure")
             self.assertEqual(load_data(result.run_path / "output.json")["status"], "open")
+
+    def test_command_pr_merge_provider_records_merge_evidence(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider = root / "pr-provider.py"
+            provider.write_text(
+                """
+import json
+import sys
+
+payload = json.load(sys.stdin)
+assert payload["schema_version"] == 1
+assert payload["action"] == "merge"
+assert payload["task_id"] == "TASK-0001"
+json.dump(
+    {
+        "schema_version": 1,
+        "provider": "local-pr",
+        "status": "merged",
+        "summary": "PR #42 merged",
+        "external_id": "42",
+        "url": "https://git.example/pull/42",
+        "branch": "feature/TASK-0001",
+        "target_branch": "main",
+        "checks": [{"name": "merge", "status": "passed"}],
+    },
+    sys.stdout,
+)
+""".lstrip(),
+                encoding="utf-8",
+            )
+            config = {
+                "project": {"name": "demo"},
+                "paths": {"pr_runs": "harness/pr-runs"},
+                "integrations": {"pr_provider": {"provider": "command", "command": f"python3 {provider}"}},
+            }
+
+            result = run_pr_merge(root, config, task_id="TASK-0001")
+
+            self.assertEqual(result.status, "merged")
+            self.assertEqual(result.output["external_id"], "42")
+            self.assertEqual(load_data(result.run_path / "input.json")["action"], "merge")
+            self.assertEqual(load_data(result.run_path / "output.json")["status"], "merged")
 
     def test_pr_status_cli_runs_configured_provider(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -196,6 +240,56 @@ integrations:
             self.assertEqual(exit_code, 0)
             self.assertIn("pr ensure open:", output.getvalue())
             self.assertTrue(any((root / "harness" / "pr-runs").glob("pr-*")))
+
+    def test_pr_merge_cli_runs_configured_provider(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider = root / "pr-provider.py"
+            provider.write_text(
+                """
+import json
+import sys
+
+payload = json.load(sys.stdin)
+assert payload["action"] == "merge"
+assert payload["task_id"] == "TASK-0001"
+json.dump({"schema_version": 1, "provider": "local-pr", "status": "merged", "summary": "PR merged"}, sys.stdout)
+""".lstrip(),
+                encoding="utf-8",
+            )
+            (root / "harness.yml").write_text(
+                f"""
+schema_version: 1
+project:
+  name: demo
+paths:
+  tasks: harness/tasks
+  runs: harness/runs
+  pr_runs: harness/pr-runs
+commands: {{}}
+policies: {{}}
+integrations:
+  pr_provider:
+    provider: command
+    command: python3 {provider}
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            _write_ready_task(root, "TASK-0001")
+            original_root = cli.ROOT
+            cli.ROOT = root
+            try:
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    exit_code = cli.main(["pr", "merge", "TASK-0001"])
+            finally:
+                cli.ROOT = original_root
+
+            self.assertEqual(exit_code, 0)
+            self.assertIn("pr merge merged:", output.getvalue())
+            task = load_data(root / "harness" / "tasks" / "ready" / "TASK-0001.json")
+            self.assertIn("pr_merge", task["evidence"])
 
     def test_pr_status_rejects_invalid_contract(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -312,6 +406,57 @@ print(json.dumps({"schema_version": 1, "status": "merged", "summary": "too late"
                 self.assertEqual(output["provider"], provider_name)
                 self.assertEqual(output["external_id"], fixture["expected_id"])
                 self.assertTrue(output["summary"].startswith(provider_name))
+
+    def test_builtin_github_pr_merge_runs_merge_then_status(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            log_path = root / "gh-args.jsonl"
+            fake_cli = root / "fake-gh"
+            fake_cli.write_text(
+                "\n".join(
+                    [
+                        "#!/usr/bin/env python3",
+                        "import json, sys",
+                        "from pathlib import Path",
+                        f"log_path = Path({str(log_path)!r})",
+                        "args = sys.argv[1:]",
+                        "log_path.open('a', encoding='utf-8').write(json.dumps(args) + '\\n')",
+                        "if args[:2] == ['pr', 'view']:",
+                        "    json.dump({",
+                        "        'number': 42,",
+                        "        'url': 'https://github.example/acme/repo/pull/42',",
+                        "        'state': 'MERGED',",
+                        "        'isDraft': False,",
+                        "        'headRefName': 'codex/pr-auto-merge',",
+                        "        'baseRefName': 'main',",
+                        "    }, sys.stdout)",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            fake_cli.chmod(0o755)
+            config = {
+                "paths": {"pr_runs": "harness/pr-runs"},
+                "integrations": {
+                    "pr_provider": {
+                        "provider": "github",
+                        "provider_options": {
+                            "command": str(fake_cli),
+                            "merge_args": ["pr", "merge", "--auto", "--squash", "--delete-branch"],
+                            "status_args": ["pr", "view", "--json"],
+                            "repository": "acme/repo",
+                        },
+                    }
+                },
+            }
+
+            result = run_pr_merge(root, config, task_id="TASK-0001")
+
+            self.assertEqual(result.status, "merged")
+            calls = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(calls[0], ["pr", "merge", "--auto", "--squash", "--delete-branch", "--repo", "acme/repo"])
+            self.assertEqual(calls[1], ["pr", "view", "--json", "--repo", "acme/repo"])
 
     def test_cli_pr_providers_lists_builtin_adapters(self) -> None:
         output = io.StringIO()

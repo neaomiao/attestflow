@@ -52,6 +52,16 @@ def run_pr_ensure(
     return _run_pr_action(root, config, action="ensure", task_id=task_id, command=command)
 
 
+def run_pr_merge(
+    root: Path,
+    config: dict[str, Any],
+    *,
+    task_id: str | None = None,
+    command: str | None = None,
+) -> PRStatusResult:
+    return _run_pr_action(root, config, action="merge", task_id=task_id, command=command)
+
+
 def _run_pr_action(
     root: Path,
     config: dict[str, Any],
@@ -124,7 +134,7 @@ def _pr_input(
 def _provider_options(provider_config: dict[str, Any]) -> dict[str, Any]:
     options = provider_config.get("provider_options", {})
     merged = dict(options) if isinstance(options, dict) else {}
-    for key in ("command", "repository", "ensure_args", "status_args", "timeout_seconds"):
+    for key in ("command", "repository", "ensure_args", "merge_args", "status_args", "auto_merge", "timeout_seconds"):
         if key in provider_config and key not in merged:
             merged[key] = provider_config[key]
     return merged

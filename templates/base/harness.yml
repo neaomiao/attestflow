@@ -13,6 +13,7 @@ paths:
   git_runs: harness/git-runs
   pr_runs: harness/pr-runs
   release_runs: harness/release-runs
+  plugin_runs: harness/plugin-runs
   sources: harness/sources
   docs: docs
 commands:
@@ -35,6 +36,12 @@ security:
     allowlist: []
     max_output_bytes: 1048576
     require_approval_for_irreversible: true
+    sandbox:
+      mode: inherit-env
+      allowed_env: []
+      blocked_env: []
+      blocked_env_prefixes: []
+      network: provider-owned
   network:
     mode: provider-owned
   filesystem:
@@ -57,6 +64,7 @@ autopilot:
   resources:
     model_concurrency: 1
     max_test_cost: 1
+    max_model_tokens: 24000
     ci_queue: 1
 capabilities:
   planner:
@@ -99,6 +107,28 @@ context:
     - docs/contracts/session-adapter-schema.md
     - docs/contracts/task-schema.md
     - docs/design/universal-harness.md
+token_economy:
+  enabled: true
+  budgets:
+    default_input_tokens: 24000
+    planner_input_tokens: 32000
+    releaser_input_tokens: 32000
+  context_cache:
+    enabled: true
+    path: harness/context-cache
+    max_summary_bytes: 800
+  provider_cache:
+    enabled: false
+    path: harness/provider-cache
+  incremental_context:
+    enabled: true
+  dynamic_context:
+    enabled: true
+    auto_resolve: true
+    max_requests: 5
+  evidence_summary:
+    enabled: true
+    max_output_bytes: 2000
 execution:
   docker:
     enabled: false
@@ -111,3 +141,6 @@ integrations:
 plugins:
   directories:
     - harness/plugins
+policy_packs:
+  directories:
+    - harness/policies

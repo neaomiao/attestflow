@@ -638,6 +638,7 @@ sys.exit(0)
                 "resources": {
                     "model_concurrency": 0,
                     "max_test_cost": "large",
+                    "max_model_tokens": False,
                     "ci_queue": -1,
                 },
             },
@@ -651,6 +652,7 @@ sys.exit(0)
         self.assertIn("autopilot.loop_interval_seconds must be a non-negative number", errors)
         self.assertIn("autopilot.resources.model_concurrency must be a positive integer", errors)
         self.assertIn("autopilot.resources.max_test_cost must be a positive integer", errors)
+        self.assertIn("autopilot.resources.max_model_tokens must be a positive integer", errors)
         self.assertIn("autopilot.resources.ci_queue must be a positive integer", errors)
 
     def test_validate_config_rejects_invalid_context_fields(self) -> None:
@@ -676,6 +678,36 @@ sys.exit(0)
         self.assertIn("context.max_file_bytes must be a positive integer", errors)
         self.assertIn("context.documents must be a string or list of strings", errors)
         self.assertIn("context.focus_files must be a string or list of strings", errors)
+
+    def test_validate_config_rejects_invalid_token_economy_fields(self) -> None:
+        config = {
+            "schema_version": 1,
+            "project": {"name": "demo"},
+            "paths": {"tasks": "harness/tasks", "runs": "harness/runs"},
+            "commands": {},
+            "policies": {},
+            "token_economy": {
+                "enabled": "yes",
+                "budgets": {"default_input_tokens": 0, "reviewer_input_tokens": "large"},
+                "context_cache": {"enabled": "yes", "path": []},
+                "provider_cache": {"enabled": "yes", "path": {}},
+                "incremental_context": {"enabled": "yes"},
+                "evidence_summary": {"enabled": "yes", "max_output_bytes": 0},
+            },
+        }
+
+        errors = validate_config(config)
+
+        self.assertIn("token_economy.enabled must be a boolean", errors)
+        self.assertIn("token_economy.budgets.default_input_tokens must be a positive integer", errors)
+        self.assertIn("token_economy.budgets.reviewer_input_tokens must be a positive integer", errors)
+        self.assertIn("token_economy.context_cache.enabled must be a boolean", errors)
+        self.assertIn("token_economy.context_cache.path must be a string", errors)
+        self.assertIn("token_economy.provider_cache.enabled must be a boolean", errors)
+        self.assertIn("token_economy.provider_cache.path must be a string", errors)
+        self.assertIn("token_economy.incremental_context.enabled must be a boolean", errors)
+        self.assertIn("token_economy.evidence_summary.enabled must be a boolean", errors)
+        self.assertIn("token_economy.evidence_summary.max_output_bytes must be a positive integer", errors)
 
     def test_validate_config_rejects_invalid_integration_provider_fields(self) -> None:
         config = {

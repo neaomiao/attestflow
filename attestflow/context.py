@@ -251,6 +251,109 @@ def _dynamic_context_protocol() -> dict[str, Any]:
     }
 
 
+def resolve_dynamic_context_request(root: Path, config: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
+    request_id = str(request.get("request_id", ""))
+    request_type = str(request.get("type") or request.get("request") or "")
+    if request_type == "file_slice":
+        return _resolve_file_slice(root, request_id, request)
+    context = collect_repository_context(root, config)
+    if request_type == "symbol_lookup":
+        name = str(request.get("name", ""))
+        items = [item for item in context.get("symbols", []) if str(item.get("name")) == name]
+        return _dynamic_response(request_id, items)
+    if request_type == "dependency_neighbors":
+        path = str(request.get("path", ""))
+        items = [item for item in context.get("dependencies", []) if str(item.get("source")) == path]
+        return _dynamic_response(request_id, items)
+    if request_type == "semantic_search":
+        query_terms = set(_tokenize(str(request.get("query", ""))))
+        limit = _request_limit(request, 5)
+        scored = []
+        for item in context.get("semantic_index", []):
+            terms = set(str(term) for term in item.get("terms", [])) if isinstance(item, dict) else set()
+            haystack = " ".join([str(item.get("path", "")), *sorted(terms)]).lower() if isinstance(item, dict) else ""
+            score = len(query_terms & terms) + sum(1 for term in query_terms if term and term in haystack)
+            if score:
+                entry = dict(item)
+                entry["score"] = score
+                scored.append(entry)
+        return _dynamic_response(request_id, sorted(scored, key=lambda item: (-int(item["score"]), str(item["path"])))[:limit])
+    if request_type == "change_history":
+        path = str(request.get("path", ""))
+        items = []
+        for item in context.get("change_history", []):
+            files = item.get("files", []) if isinstance(item, dict) else []
+            if not path or path in files:
+                items.append(item)
+        return _dynamic_response(request_id, items[: _request_limit(request, 5)])
+    if request_type == "test_mapping":
+        path = str(request.get("path", ""))
+        items = []
+        for item in context.get("test_map", []):
+            if not path or item.get("source") == path or item.get("test") == path:
+                items.append(item)
+        return _dynamic_response(request_id, items[: _request_limit(request, 10)])
+    return {"request_id": request_id, "status": "blocked", "items": [], "summary": f"unsupported dynamic context request: {request_type}"}
+
+
+def _resolve_file_slice(root: Path, request_id: str, request: dict[str, Any]) -> dict[str, Any]:
+    rel = str(request.get("path", ""))
+    path = _safe_context_path(root, rel)
+    if path is None or not path.is_file():
+        return {"request_id": request_id, "status": "blocked", "items": [], "summary": f"context file not found: {rel}"}
+    content = _read_text_prefix(path, path.stat().st_size)
+    if content is None:
+        return {"request_id": request_id, "status": "blocked", "items": [], "summary": f"context file is not utf-8 text: {rel}"}
+    lines = content.splitlines(keepends=True)
+    start = _positive_request_int(request, "start_line", 1)
+    end = _positive_request_int(request, "end_line", start)
+    start = min(start, len(lines) + 1)
+    end = min(max(end, start), len(lines))
+    fragment = "".join(lines[start - 1 : end]) if lines else ""
+    return _dynamic_response(
+        request_id,
+        [
+            {
+                "path": rel,
+                "kind": "file_slice",
+                "start_line": start,
+                "end_line": end,
+                "content": fragment,
+            }
+        ],
+    )
+
+
+def _dynamic_response(request_id: str, items: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "request_id": request_id,
+        "status": "passed" if items else "blocked",
+        "items": items,
+    }
+
+
+def _request_limit(request: dict[str, Any], default: int) -> int:
+    value = request.get("limit")
+    return value if type(value) is int and value > 0 else default
+
+
+def _positive_request_int(request: dict[str, Any], key: str, default: int) -> int:
+    value = request.get(key)
+    return value if type(value) is int and value > 0 else default
+
+
+def _safe_context_path(root: Path, rel: str) -> Path | None:
+    normalized = rel.strip().strip("/")
+    if not normalized or _excluded(normalized):
+        return None
+    path = (root / normalized).resolve()
+    try:
+        path.relative_to(root.resolve())
+    except ValueError:
+        return None
+    return path
+
+
 def _python_ast(path: Path) -> ast.AST | None:
     content = _read_text_prefix(path, path.stat().st_size if path.exists() else 0)
     if content is None:
@@ -329,20 +432,26 @@ def _excluded(rel_path: str) -> bool:
     if parts & DEFAULT_EXCLUDES:
         return True
     runtime_roots = {
+        "harness/tasks",
         "harness/runs",
         "harness/capability-runs",
         "harness/ci-runs",
         "harness/git-runs",
         "harness/pr-runs",
         "harness/release-runs",
+        "harness/context-cache",
+        "harness/provider-cache",
     }
     return rel_path in runtime_roots or rel_path.startswith(
         (
+            "harness/tasks/",
             "harness/runs/",
             "harness/capability-runs/",
             "harness/ci-runs/",
             "harness/git-runs/",
             "harness/pr-runs/",
             "harness/release-runs/",
+            "harness/context-cache/",
+            "harness/provider-cache/",
         )
     )

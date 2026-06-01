@@ -171,6 +171,77 @@ json.dump({"schema_version": 1, "provider": "local-release", "status": "released
             release_input = load_data(result.run_path / "input.json")
             self.assertEqual(release_input["tasks"][0]["evidence"]["pr"]["output"]["external_id"], "42")
 
+    def test_release_provider_can_send_summarized_evidence_to_save_tokens(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "harness" / "tasks" / "done").mkdir(parents=True)
+            (root / "harness" / "ci-runs" / "ci-1").mkdir(parents=True)
+            (root / "harness" / "ci-runs" / "ci-1" / "output.json").write_text(
+                '{"schema_version": 1, "status": "passed", "summary": "ci passed", "logs": "'
+                + ("line " * 1000)
+                + '"}\n',
+                encoding="utf-8",
+            )
+            (root / "harness" / "tasks" / "done" / "TASK-0001.json").write_text(
+                """
+{
+  "schema_version": 1,
+  "id": "TASK-0001",
+  "title": "Ship login",
+  "state": "done",
+  "priority": 1,
+  "type": "feature",
+  "purpose": "Release notes need task context.",
+  "scope": ["login flow"],
+  "out_of_scope": ["billing"],
+  "requirements": {"confirmed": ["login works"], "unresolved": [], "assumptions": []},
+  "bdd_scenarios": ["User can log in."],
+  "unit_tests": ["tests/unit/test_login.py"],
+  "acceptance": ["login released"],
+  "dependencies": [],
+  "blocks": [],
+  "blockers": [],
+  "files": {"read": [], "write": ["src/login.py"]},
+  "agents": {"owner": "orchestrator", "allowed_roles": ["worker_agent"]},
+  "external_inputs": {"credentials": [], "services": [], "user_decisions": []},
+  "evidence": {"run_id": "run-1", "packet": "harness/runs/run-1/evidence.md", "ci": "harness/ci-runs/ci-1/output.json"},
+  "links": {"issues": [], "prs": [], "docs": []},
+  "risks": [],
+  "notes": [],
+  "created_at": "2026-05-30T00:00:00Z",
+  "updated_at": "2026-05-30T00:00:00Z"
+}
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            provider = root / "release-provider.py"
+            provider.write_text(
+                """
+import json
+import sys
+
+payload = json.load(sys.stdin)
+ci = payload["tasks"][0]["evidence"]["ci"]
+assert ci["output_summary"]["status"] == "passed"
+assert "output" not in ci
+json.dump({"schema_version": 1, "provider": "local-release", "status": "released", "summary": "Release completed"}, sys.stdout)
+""".lstrip(),
+                encoding="utf-8",
+            )
+            config = {
+                "project": {"name": "demo"},
+                "paths": {"tasks": "harness/tasks", "release_runs": "harness/release-runs"},
+                "integrations": {"release_provider": {"provider": "command", "command": f"python3 {provider}"}},
+                "token_economy": {"evidence_summary": {"enabled": True, "max_output_bytes": 120}},
+            }
+
+            result = run_release_status(root, config, done_tasks=["TASK-0001"])
+
+            self.assertEqual(result.status, "released")
+            release_input = load_data(result.run_path / "input.json")
+            self.assertNotIn("output", release_input["tasks"][0]["evidence"]["ci"])
+
     def test_release_status_cli_runs_configured_provider(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

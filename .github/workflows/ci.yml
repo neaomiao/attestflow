@@ -35,6 +35,13 @@ jobs:
         run: python -m attestflow verify
       - name: Smoke installed CLI
         run: attestflow install-smoke --offline
+      - name: Upload Attestflow verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: attestflow-verify-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: harness/runs/adhoc-verify
+          if-no-files-found: ignore
 
   install-matrix:
     name: install ${{ matrix.install-mode }} (${{ matrix.os }} / py${{ matrix.python-version }})

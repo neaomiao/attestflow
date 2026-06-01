@@ -21,6 +21,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "git_runs": "harness/git-runs",
         "pr_runs": "harness/pr-runs",
         "release_runs": "harness/release-runs",
+        "plugin_runs": "harness/plugin-runs",
         "sources": "harness/sources",
         "docs": "docs",
     },
@@ -46,6 +47,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "allowlist": [],
             "max_output_bytes": 1048576,
             "require_approval_for_irreversible": True,
+            "sandbox": {
+                "mode": "inherit-env",
+                "allowed_env": [],
+                "blocked_env": [],
+                "blocked_env_prefixes": [],
+                "network": "provider-owned",
+            },
         },
         "network": {"mode": "provider-owned"},
         "filesystem": {"mode": "write-scope-validated"},
@@ -105,6 +113,35 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "docs/design/universal-harness.md",
         ],
     },
+    "token_economy": {
+        "enabled": True,
+        "budgets": {
+            "default_input_tokens": 24000,
+            "planner_input_tokens": 32000,
+            "releaser_input_tokens": 32000,
+        },
+        "context_cache": {
+            "enabled": True,
+            "path": "harness/context-cache",
+            "max_summary_bytes": 800,
+        },
+        "provider_cache": {
+            "enabled": False,
+            "path": "harness/provider-cache",
+        },
+        "incremental_context": {
+            "enabled": True,
+        },
+        "dynamic_context": {
+            "enabled": True,
+            "auto_resolve": True,
+            "max_requests": 5,
+        },
+        "evidence_summary": {
+            "enabled": True,
+            "max_output_bytes": 2000,
+        },
+    },
     "integrations": {
         "git_provider": "optional",
         "ci_provider": "optional",
@@ -113,6 +150,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "plugins": {
         "directories": ["harness/plugins"],
+    },
+    "policy_packs": {
+        "directories": ["harness/policies"],
     },
 }
 
@@ -154,6 +194,9 @@ def validate_config(config: dict[str, Any]) -> list[str]:
     release_runs = config.get("paths", {}).get("release_runs")
     if release_runs is not None and not isinstance(release_runs, str):
         errors.append("paths.release_runs must be a string")
+    plugin_runs = config.get("paths", {}).get("plugin_runs")
+    if plugin_runs is not None and not isinstance(plugin_runs, str):
+        errors.append("paths.plugin_runs must be a string")
     sessions = config.get("sessions", {})
     if sessions is not None and not isinstance(sessions, dict):
         errors.append("sessions must be a mapping")
@@ -210,6 +253,23 @@ def validate_config(config: dict[str, Any]) -> list[str]:
             require_approval = provider_commands.get("require_approval_for_irreversible")
             if require_approval is not None and not isinstance(require_approval, bool):
                 errors.append("security.provider_commands.require_approval_for_irreversible must be a boolean")
+            sandbox = provider_commands.get("sandbox")
+            if sandbox is not None:
+                if not isinstance(sandbox, dict):
+                    errors.append("security.provider_commands.sandbox must be a mapping")
+                else:
+                    mode = sandbox.get("mode")
+                    if mode is not None and mode not in {"inherit-env", "restricted-env"}:
+                        errors.append("security.provider_commands.sandbox.mode must be inherit-env or restricted-env")
+                    network = sandbox.get("network")
+                    if network is not None and network not in {"provider-owned", "disabled"}:
+                        errors.append("security.provider_commands.sandbox.network must be provider-owned or disabled")
+                    for key in ("allowed_env", "blocked_env", "blocked_env_prefixes"):
+                        value = sandbox.get(key)
+                        if value is not None and (
+                            not isinstance(value, list) or not all(isinstance(item, str) for item in value)
+                        ):
+                            errors.append(f"security.provider_commands.sandbox.{key} must be a list of strings")
     plugins = config.get("plugins", {})
     if plugins is not None and not isinstance(plugins, dict):
         errors.append("plugins must be a mapping")
@@ -219,6 +279,15 @@ def validate_config(config: dict[str, Any]) -> list[str]:
             not isinstance(directories, list) or not all(isinstance(item, str) for item in directories)
         ):
             errors.append("plugins.directories must be a list of strings")
+    policy_packs = config.get("policy_packs", {})
+    if policy_packs is not None and not isinstance(policy_packs, dict):
+        errors.append("policy_packs must be a mapping")
+    elif isinstance(policy_packs, dict):
+        directories = policy_packs.get("directories", [])
+        if directories is not None and (
+            not isinstance(directories, list) or not all(isinstance(item, str) for item in directories)
+        ):
+            errors.append("policy_packs.directories must be a list of strings")
     autopilot = config.get("autopilot", {})
     if autopilot is not None and not isinstance(autopilot, dict):
         errors.append("autopilot must be a mapping")
@@ -247,7 +316,7 @@ def validate_config(config: dict[str, Any]) -> list[str]:
             if not isinstance(resources, dict):
                 errors.append("autopilot.resources must be a mapping")
             else:
-                for key in ("model_concurrency", "max_test_cost", "ci_queue"):
+                for key in ("model_concurrency", "max_test_cost", "max_model_tokens", "ci_queue"):
                     value = resources.get(key)
                     if value is not None and (type(value) is not int or value <= 0):
                         errors.append(f"autopilot.resources.{key} must be a positive integer")
@@ -287,6 +356,26 @@ def validate_config(config: dict[str, Any]) -> list[str]:
             value = context.get(key)
             if value is not None and not _is_string_or_string_list(value):
                 errors.append(f"context.{key} must be a string or list of strings")
+    token_economy = config.get("token_economy", {})
+    if token_economy is not None and not isinstance(token_economy, dict):
+        errors.append("token_economy must be a mapping")
+    elif isinstance(token_economy, dict):
+        enabled = token_economy.get("enabled")
+        if enabled is not None and not isinstance(enabled, bool):
+            errors.append("token_economy.enabled must be a boolean")
+        budgets = token_economy.get("budgets")
+        if budgets is not None:
+            if not isinstance(budgets, dict):
+                errors.append("token_economy.budgets must be a mapping")
+            else:
+                for key, value in budgets.items():
+                    if value is not None and (type(value) is not int or value <= 0):
+                        errors.append(f"token_economy.budgets.{key} must be a positive integer")
+        _validate_token_economy_toggle_section(errors, token_economy, "context_cache", path=True, max_summary_bytes=True)
+        _validate_token_economy_toggle_section(errors, token_economy, "provider_cache", path=True)
+        _validate_token_economy_toggle_section(errors, token_economy, "incremental_context")
+        _validate_token_economy_toggle_section(errors, token_economy, "dynamic_context", max_requests=True)
+        _validate_token_economy_toggle_section(errors, token_economy, "evidence_summary", max_output_bytes=True)
     integrations = config.get("integrations", {})
     if integrations is not None and not isinstance(integrations, dict):
         errors.append("integrations must be a mapping")
@@ -338,6 +427,42 @@ def _validate_provider_config(errors: list[str], integrations: dict[str, Any], k
             f"integrations.{key}.provider_options.timeout_seconds",
             provider_options.get("timeout_seconds"),
         )
+
+
+def _validate_token_economy_toggle_section(
+    errors: list[str],
+    token_economy: dict[str, Any],
+    key: str,
+    *,
+    path: bool = False,
+    max_summary_bytes: bool = False,
+    max_output_bytes: bool = False,
+    max_requests: bool = False,
+) -> None:
+    section = token_economy.get(key)
+    if section is None:
+        return
+    if not isinstance(section, dict):
+        errors.append(f"token_economy.{key} must be a mapping")
+        return
+    enabled = section.get("enabled")
+    if enabled is not None and not isinstance(enabled, bool):
+        errors.append(f"token_economy.{key}.enabled must be a boolean")
+    path_value = section.get("path")
+    if path and path_value is not None and not isinstance(path_value, str):
+        errors.append(f"token_economy.{key}.path must be a string")
+    summary_value = section.get("max_summary_bytes")
+    if max_summary_bytes and summary_value is not None and (type(summary_value) is not int or summary_value <= 0):
+        errors.append(f"token_economy.{key}.max_summary_bytes must be a positive integer")
+    output_value = section.get("max_output_bytes")
+    if max_output_bytes and output_value is not None and (type(output_value) is not int or output_value <= 0):
+        errors.append(f"token_economy.{key}.max_output_bytes must be a positive integer")
+    requests_value = section.get("max_requests")
+    if max_requests and requests_value is not None and (type(requests_value) is not int or requests_value <= 0):
+        errors.append(f"token_economy.{key}.max_requests must be a positive integer")
+    auto_resolve = section.get("auto_resolve")
+    if auto_resolve is not None and not isinstance(auto_resolve, bool):
+        errors.append(f"token_economy.{key}.auto_resolve must be a boolean")
 
 
 def _validate_timeout_seconds(errors: list[str], field: str, value: Any) -> None:

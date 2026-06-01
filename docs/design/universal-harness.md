@@ -181,6 +181,25 @@ context:
     - docs/contracts/task-schema.md
     - docs/design/universal-harness.md
 
+token_economy:
+  enabled: true
+  budgets:
+    default_input_tokens: 24000
+    planner_input_tokens: 32000
+    releaser_input_tokens: 32000
+  context_cache:
+    enabled: true
+    path: harness/context-cache
+    max_summary_bytes: 800
+  provider_cache:
+    enabled: false
+    path: harness/provider-cache
+  incremental_context:
+    enabled: true
+  evidence_summary:
+    enabled: true
+    max_output_bytes: 2000
+
 execution:
   docker:
     enabled: false
@@ -236,9 +255,12 @@ Provider input 包含 `repository_context`，由 Attestflow 确定性生成：
 - `tree`：受限文件树
 - `documents`：`README.md`、`harness.yml`、核心 contract/design 文档等
 - `files`：任务 `files.read` / `files.write` 指向的文本片段
+- `dynamic_context`：允许 provider 后续请求 `file_slice`、`symbol_lookup`、`dependency_neighbors`、`semantic_search`、`change_history` 或 `test_mapping`
 - `limits`：实际使用的上下文限制
 
-默认排除 `.git`、`node_modules`、`__pycache__`、`harness/runs`、`harness/capability-runs`、`harness/ci-runs`、`harness/pr-runs` 和 `harness/release-runs`，避免把运行证据、缓存和依赖目录传给编程 Agent。
+默认排除 `.git`、`node_modules`、`__pycache__`、`harness/tasks`、`harness/runs`、`harness/capability-runs`、`harness/ci-runs`、`harness/pr-runs`、`harness/release-runs`、`harness/context-cache` 和 `harness/provider-cache`，避免把运行证据、缓存和依赖目录传给编程 Agent。
+
+`token_economy` 是确定性省 token 层：预算门会在 provider 调用前估算 input token，超预算时把全文 context 替换为摘要、hash 和 cache key；`context resolve` 负责按需取片；`incremental_context` 只传已有 capability output 摘要；release handoff 默认摘要化大型 evidence；`usage report` 聚合真实 provider usage。`provider_cache.enabled` 默认关闭，因为它会复用上一次成功模型输出，适合 deterministic prompt 或 CI 中的重复验证场景。
 
 ## 每任务独立会话
 
@@ -324,7 +346,7 @@ dependencies -> state/DoR -> locks/files.write -> priority -> id
 - `state` 和 Definition of Ready 决定任务是否可执行；`blocked`、`needs_clarification`、schema 不合法或仍有 external inputs 的任务会被跳过并报告原因。
 - 有效 file locks 会阻止任务进入 dry-run 批次；stale lock 会在 autopilot run/resume 开始时自动释放并写入 recovery 事件。
 - 同一批次内 `files.write` 不能重叠；冲突任务会被推迟到后续批次。
-- `autopilot.resources.model_concurrency`、`max_test_cost` 和 `ci_queue` 会限制同一批 active action 或 ready batch 的资源预算。
+- `autopilot.resources.model_concurrency`、`max_test_cost`、`max_model_tokens` 和 `ci_queue` 会限制同一批 active action 或 ready batch 的资源预算。
 - 在满足以上条件后，任务按 `priority, id` 排序。
 
 `python -m attestflow autopilot --dry-run --limit N` 是顶层自治执行前的只读计划视图。如果已有 `in_progress`、`review`、`verified` 或 `accepted` 任务，它会先展示这些 active task 的下一步动作，避免继续扩大 WIP；否则才模拟每一批 ready 任务完成后的后续可执行批次，输出批次和跳过原因。它不调用 Agent、不创建 run、不移动任务状态。这个命令承担 “plan-order” 能力，是后续 `autopilot run` 的确定性决策核心。
@@ -365,6 +387,7 @@ accepted -> apply_worktree -> publish_changes -> pr_ensure -> ci_status -> pr_st
 - 如果配置了 `integrations.git_provider`，accepted 任务会运行 `publish_changes`，把 `harness/git-runs/*/output.json` 写入 `task.evidence.git`；`published` 或 `skipped` 表示可以继续后续 gate，`blocked` 会停止本轮 autopilot。
 - 如果配置了 `integrations.pr_provider`，accepted 任务会先运行 `pr_ensure`，把 `harness/pr-runs/*/output.json` 写入 `task.evidence.pr_request`；`open`、`draft`、`merged` 或 `skipped` 表示 change request 已可继续后续 gate，`blocked` 会停止本轮 autopilot。
 - 如果配置了 `integrations.ci_provider`，accepted 任务会运行 `ci_status`，把 `harness/ci-runs/*/output.json` 写入 `task.evidence.ci`；CI `passed` 或 `skipped` 才继续，`running`、`queued` 或 `unknown` 会暂停等待 resume 重新采集。
+- 如果配置了 `integrations.pr_provider.auto_merge: true`，且 PR request 为 `open`，accepted 任务会在 CI 通过后运行 `pr_merge`，把 `harness/pr-runs/*/output.json` 写入 `task.evidence.pr_merge`；`merged` 或 `skipped` 才继续最终状态采集，`unknown` 会暂停等待 resume，`open`、`draft` 或 `blocked` 会停止本轮。
 - 如果配置了 `integrations.pr_provider`，accepted 任务会运行 `pr_status`，把 `harness/pr-runs/*/output.json` 写入 `task.evidence.pr`；PR `merged` 或 `skipped` 才继续 close，`unknown` 会暂停等待 resume 重新采集。
 - 如果配置了 `capabilities.releaser`，所有任务都有效地处于 `done` 或 `archived` 后，autopilot 会先运行 top-level releaser capability，把 release handoff 写入 `metadata.json.releaser` 和 `metadata.json.releaser_tasks`。有效完成要求 task registry 没有重复 id，文件名和 id 一致，目录状态和文件内 `state` 一致，并通过 task schema 校验。
 - 如果配置了 `integrations.release_provider`，release gate 会把已完成任务摘要、task run evidence、CI evidence、PR evidence 和可选 `release_handoff` 一起传给 provider；如果 completed task 或其 JSON/YAML evidence 损坏，Attestflow 会在创建 release run 前 fail closed。输出 `harness/release-runs/*/output.json` 写入 autopilot `metadata.json.release`，provider 状态写入 `metadata.json.release_status`。只有 `released` 或 `skipped` 算 release gate 完成；`running`、`queued` 或 `unknown` 会暂停等待 resume 重新采集，`blocked` 会停止本轮；`failed` 且 planner capability 已配置时，会把 release failure summary、release evidence 和可选 release handoff summary 交给 planner 生成修复任务，导入后回到普通 task loop。
@@ -397,7 +420,8 @@ python -m attestflow capability run reviewer TASK-0001
 执行规则：
 
 - 加载 runtime task JSON
-- 构造 capability input，包含 task、project、commands、repository_context、capability contract 和固定 instructions
+- 构造 capability input，包含 task、project、commands、repository_context、incremental_context、capability contract 和固定 instructions
+- 先经过 token budget gate；命中 provider cache 时直接写新 run evidence，不调用外部模型 provider
 - 调用 `--command`、`capabilities.<name>.command` 或内置 provider adapter
 - 保存 `input.json`、`stdout.log`、`stderr.log` 和 `output.json`
 - provider 非零退出、stdout 不是 JSON object 或 capability output schema 不合法时失败
@@ -553,6 +577,7 @@ python -m attestflow verify --task TASK
 python -m attestflow ci providers
 python -m attestflow ci status --task TASK
 python -m attestflow pr ensure TASK
+python -m attestflow pr merge TASK
 python -m attestflow pr status TASK
 python -m attestflow release status
 python -m attestflow close TASK
@@ -574,7 +599,7 @@ python -m attestflow secret-scan
 - `tasks`：按状态和优先级列出任务。
 - `next`：返回最高优先级、依赖已完成、文件未锁定的 `ready` 任务。
 - `autopilot --dry-run`：只读生成自动执行计划，优先展示 active task 下一步动作和 repair mode，否则展示可执行 ready 批次和不可执行任务原因，不启动 Agent、不改状态。
-- `autopilot --run`：创建顶层运行台账，先按 `limit` 和 `autopilot.resources` 批量推进 active task capability/状态动作，失败时按来源选择 repair target，accepted 任务会先 apply worktree，再执行 `pr ensure`，随后采集已配置 CI/PR status evidence；全部任务完成后会采集 release evidence，并记录动作、恢复、修复、CI、PR、release、分发或失败事件；`max_steps` 到点但仍有下一步时记录为 `paused`。
+- `autopilot --run`：创建顶层运行台账，先按 `limit` 和 `autopilot.resources` 批量推进 active task capability/状态动作，失败时按来源选择 repair target，accepted 任务会先 apply worktree，再执行 `pr ensure`，随后采集 CI evidence；若 `integrations.pr_provider.auto_merge: true` 且 PR 可合并，会执行 `pr merge`，最后采集 PR status evidence；全部任务完成后会采集 release evidence，并记录动作、恢复、修复、CI、PR、release、分发或失败事件；`max_steps` 到点但仍有下一步时记录为 `paused`。
 - `autopilot --run/--resume --loop` / `--until terminal`：在同一个 top-level run 上自动续跑 paused 状态，受 `harness.yml` batch/step/loop policy 和 CLI override 限制，并记录 `loop_stop_reason`，不隐藏终态失败或阻塞。
 - `autopilot --resume`：复用最新 autopilot run 的 `metadata.json` 和 `ledger.jsonl`，继续执行并追加事件。
 - `autopilot --status`：读取最新 autopilot run 的 `metadata.json`，输出状态、暂停原因、步数、actions、planned、dispatched、releaser、release、failed 和 blocked 摘要；`--json` 输出完整 metadata。
@@ -594,6 +619,7 @@ python -m attestflow secret-scan
 - `ci providers`：列出内置 CI provider preset。
 - `ci status`：执行 CI provider contract，保存外部 CI 状态 evidence；带 `--task TASK-*` 时写入 `task.evidence.ci`。
 - `pr ensure`：执行 PR provider contract，创建或更新外部 PR/change request evidence；带 task id 时写入 `task.evidence.pr_request`。
+- `pr merge`：执行 PR provider contract，请求合并外部 PR/change request；带 task id 时写入 `task.evidence.pr_merge`。
 - `pr status`：执行 PR provider contract，保存外部 PR/change 状态 evidence；带 task id 时写入 `task.evidence.pr`。
 - `release status`：执行 Release provider contract，传入已完成任务摘要和可解析交付 evidence，保存外部发布 evidence。
 - `close`：校验当前 run 的 DoD evidence，释放锁，写最终证据并移动到 `done`。
@@ -618,7 +644,7 @@ PR provider 创建/更新并采集外部 PR/change 状态：
 Git provider -> provider command -> PR output JSON -> harness/pr-runs evidence
 ```
 
-`integrations.pr_provider.provider: command` 调用项目配置的任意命令。`pr ensure [TASK-*]` 创建或更新 change request，并把输出写为 `task.evidence.pr_request`；`pr status [TASK-*]` 保存 PR 状态快照，并把输出写为 `task.evidence.pr`。autopilot 会在 `accepted` 阶段先 `ensure`，再跑 CI/status gate。`status` 的 `merged` 和 `skipped` 允许继续 close；`open`、`draft` 或 `blocked` 会让 autopilot 停在 blocked，等待外部系统状态变化。
+`integrations.pr_provider.provider: command` 调用项目配置的任意命令。`pr ensure [TASK-*]` 创建或更新 change request，并把输出写为 `task.evidence.pr_request`；`pr merge [TASK-*]` 请求合并，并把输出写为 `task.evidence.pr_merge`；`pr status [TASK-*]` 保存 PR 状态快照，并把输出写为 `task.evidence.pr`。autopilot 会在 `accepted` 阶段先 `ensure`，再跑 CI gate；只有显式配置 `integrations.pr_provider.auto_merge: true` 时才会在 CI 通过后执行 `merge`。`status` 的 `merged` 和 `skipped` 允许继续 close；`open`、`draft` 或 `blocked` 会让 autopilot 停在 blocked，等待外部系统状态变化。
 
 ## Release Provider
 
@@ -756,7 +782,7 @@ python -m attestflow verify
 10. 运行 `python -m attestflow transition TASK-* review`。
 11. 运行 `python -m attestflow verify --task TASK-*`，把验证结果绑定到当前 run。
 12. 运行 `python -m attestflow transition TASK-* verified` 和 `python -m attestflow transition TASK-* accepted`。
-13. 如配置了外部交付 provider，运行 `python -m attestflow pr ensure TASK-*`、`python -m attestflow ci status --task TASK-*`、`python -m attestflow pr status TASK-*` 保存 evidence。
+13. 如配置了外部交付 provider，运行 `python -m attestflow pr ensure TASK-*`、`python -m attestflow ci status --task TASK-*`、可选 `python -m attestflow pr merge TASK-*`、`python -m attestflow pr status TASK-*` 保存 evidence。
 14. 运行 `python -m attestflow close TASK-*`。
 15. 重复 `autopilot --dry-run -> autopilot --run`；自动路径会把 PR/CI/release evidence 收敛进同一个可恢复 autopilot loop。
 

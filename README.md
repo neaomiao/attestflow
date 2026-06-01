@@ -121,6 +121,10 @@ python3 -m attestflow schema migrate --kind harness-config --from-json harness.y
 python3 -m attestflow schema export --type task --json
 python3 -m attestflow schema openapi --json
 python3 -m attestflow plugin list --json
+python3 -m attestflow plugin run demo-plugin echo --from-json input.json --json
+python3 -m attestflow policy list --json
+python3 -m attestflow policy validate strict-local --json
+python3 -m attestflow policy apply strict-local --out merged-harness.yml --json
 python3 -m attestflow governance policy --json
 python3 -m attestflow validate-task harness/tasks/ready/TASK-0001.json
 python3 -m attestflow contract validate capability-output output.json
@@ -151,6 +155,8 @@ python3 -m attestflow evidence export TASK-0001 --out attestflow-artifacts/TASK-
 python3 -m attestflow evidence bundle --run RUN --out attestflow-artifacts/RUN
 python3 -m attestflow evidence bundle --release RELEASE --out attestflow-artifacts/RELEASE
 python3 -m attestflow evidence verify attestflow-artifacts/RUN --check-source
+python3 -m attestflow evidence maintain --retention-days 90 --redact --compact --apply
+python3 -m attestflow dashboard export --out attestflow-dashboard --json
 python3 -m attestflow resume
 python3 -m attestflow session resume TASK-0001
 python3 -m attestflow provider list
@@ -162,8 +168,10 @@ python3 -m attestflow ci artifacts --run-id 123456789 --download-dir attestflow-
 python3 -m attestflow ci rerun --run-id 123456789 --failed
 python3 -m attestflow ci dispatch --workflow ci.yml --ref feature/my-change --input task=TASK-0001
 python3 -m attestflow pr ensure TASK-0001
+python3 -m attestflow pr merge TASK-0001
 python3 -m attestflow pr status TASK-0001
 python3 -m attestflow release status
+python3 -m attestflow release trust --out attestflow-release-trust --json
 python3 -m attestflow secret-scan
 ```
 
@@ -171,7 +179,7 @@ python3 -m attestflow secret-scan
 
 任务顺序不是靠单个 JSON 文件的文件名隐式决定，而是由调度器聚合所有 task JSON 后按 `dependencies -> state/DoR -> locks/files.write -> priority -> id` 计算。`autopilot --dry-run --limit N` 会只读输出可执行批次和跳过原因，用来审计下一轮自动执行顺序；它不会启动 Agent，也不会推进任务状态。
 
-`autopilot --run --limit N --max-steps M` 是当前的最小顶层执行入口。它会创建 `harness/autopilot-runs/<run>/metadata.json` 和 `ledger.jsonl`，按 dry-run 同一套规则优先批量推进已开始任务的下一步动作，再分发新的 ready 批次。默认 batch size 和 step budget 来自 `harness.yml` 的 `autopilot.default_limit` / `autopilot.max_steps`，CLI 参数只作为临时覆盖。传入 `--goal "..."` 时，autopilot 会先调用 planner capability，把目标生成并导入 runtime task JSON，然后在同一轮继续调度。当前 run 能自动完成“goal -> plan -> active action batch or dispatch -> ledger”：`in_progress` 会按 `bdd -> tdd -> implementer -> review` 推进，`review` 会按 `reviewer -> optional verifier -> verify` 推进，`verified` 会进入 `accepted`，`accepted` 会先把 worktree 变更合回控制仓库，再执行已配置的 `publish`，随后执行已配置的 `pr ensure`、采集 CI 和 PR status evidence，最后尝试 `close`。active task actions 会按 `limit` 和 `files.write` 冲突组成批次，同一 top-level step 内推进多个互不冲突的任务。只有全部任务都进入 `done` 或 `archived` 后，如果配置了 release provider，autopilot 才会把已完成任务摘要和交付 evidence 汇总给 release provider，采集 release evidence 并写入顶层 metadata 的 `release` / `release_status`。`release_status` 只有 `released` 或 `skipped` 才算完成；`running`、`queued` 或 `unknown` 会暂停等待 `--resume` 重试；`failed` 且 planner capability 已配置时，会把 release failure summary、release evidence 和可选 release handoff summary 交给 planner 生成修复任务并导入 runtime task JSON。blocked run 会以非零退出码结束，`metadata.json` 会保留 goal/planner/planned/blocked/skipped/release/release_repair_planner 索引。没有可执行 batch 但仍存在未完成的 skipped task 时，run 也会记录为 `blocked`，避免把等待人工输入、无效依赖或非法任务误判成完成。`--max-steps` 到点且仍有 active task、ready batch 或 release gate 时，run 会写成 `status: paused` 与 `pause_reason: max_steps_reached`，表示可用 `--resume` 继续，而不是已经完成。`--loop` 会在同一个 top-level run 上受限地反复 resume paused run，直到 `finished`、`blocked`、`failed` 或 cycle 用完；默认 cycle 上限和等待时间来自 `harness.yml` 的 `autopilot.max_loop_cycles` / `autopilot.loop_interval_seconds`，也可以用 `--max-cycles N` / `--interval-seconds S` 临时覆盖。metadata 会记录 `resume_count`、`loop_cycles` 和 `loop_stop_reason`，其中 `resume_count` 是同一 run 被恢复的次数，`max_cycles_reached` 表示安全阈值触发且仍需后续 resume，`terminal_status` 表示已进入终态。在 capability 命令配置完整且验证门禁通过时，单个任务可以自动推进到 `done`。`autopilot --resume --max-steps M` 会复用最新 autopilot run 目录，追加 ledger 并累加 metadata，适合 `--max-steps` 到点或进程中断后继续同一轮自治执行。
+`autopilot --run --limit N --max-steps M` 是当前的最小顶层执行入口。它会创建 `harness/autopilot-runs/<run>/metadata.json` 和 `ledger.jsonl`，按 dry-run 同一套规则优先批量推进已开始任务的下一步动作，再分发新的 ready 批次。默认 batch size 和 step budget 来自 `harness.yml` 的 `autopilot.default_limit` / `autopilot.max_steps`，CLI 参数只作为临时覆盖。传入 `--goal "..."` 时，autopilot 会先调用 planner capability，把目标生成并导入 runtime task JSON，然后在同一轮继续调度。当前 run 能自动完成“goal -> plan -> active action batch or dispatch -> ledger”：`in_progress` 会按 `bdd -> tdd -> implementer -> review` 推进，`review` 会按 `reviewer -> optional verifier -> verify` 推进，`verified` 会进入 `accepted`，`accepted` 会先把 worktree 变更合回控制仓库，再执行已配置的 `publish`，随后执行已配置的 `pr ensure`、采集 CI evidence；如果 `integrations.pr_provider.auto_merge: true` 且 PR request 为 `open`，会在 CI 通过后执行 `pr merge`，再采集最终 PR status evidence，最后尝试 `close`。active task actions 会按 `limit` 和 `files.write` 冲突组成批次，同一 top-level step 内推进多个互不冲突的任务。只有全部任务都进入 `done` 或 `archived` 后，如果配置了 release provider，autopilot 才会把已完成任务摘要和交付 evidence 汇总给 release provider，采集 release evidence 并写入顶层 metadata 的 `release` / `release_status`。`release_status` 只有 `released` 或 `skipped` 才算完成；`running`、`queued` 或 `unknown` 会暂停等待 `--resume` 重试；`failed` 且 planner capability 已配置时，会把 release failure summary、release evidence 和可选 release handoff summary 交给 planner 生成修复任务并导入 runtime task JSON。blocked run 会以非零退出码结束，`metadata.json` 会保留 goal/planner/planned/blocked/skipped/release/release_repair_planner 索引。没有可执行 batch 但仍存在未完成的 skipped task 时，run 也会记录为 `blocked`，避免把等待人工输入、无效依赖或非法任务误判成完成。`--max-steps` 到点且仍有 active task、ready batch 或 release gate 时，run 会写成 `status: paused` 与 `pause_reason: max_steps_reached`，表示可用 `--resume` 继续，而不是已经完成。`--loop` 会在同一个 top-level run 上受限地反复 resume paused run，直到 `finished`、`blocked`、`failed` 或 cycle 用完；默认 cycle 上限和等待时间来自 `harness.yml` 的 `autopilot.max_loop_cycles` / `autopilot.loop_interval_seconds`，也可以用 `--max-cycles N` / `--interval-seconds S` 临时覆盖。metadata 会记录 `resume_count`、`loop_cycles` 和 `loop_stop_reason`，其中 `resume_count` 是同一 run 被恢复的次数，`max_cycles_reached` 表示安全阈值触发且仍需后续 resume，`terminal_status` 表示已进入终态。在 capability 命令配置完整且验证门禁通过时，单个任务可以自动推进到 `done`。`autopilot --resume --max-steps M` 会复用最新 autopilot run 目录，追加 ledger 并累加 metadata，适合 `--max-steps` 到点或进程中断后继续同一轮自治执行。
 
 `dispatch` 是 AI-first 执行入口。它会把 `ready` 任务移到 `in_progress`，创建 run、locks、独立 agent session、`prompt.md` 和 `session.yml`。`dispatch --limit N` 会按依赖、现有锁和同批次 `files.write` 冲突自动挑选可并行任务。如果 `harness.yml` 配置了 `sessions.launch_command`，Attestflow 会按 `docs/contracts/session-adapter-schema.md` 执行 command adapter 来启动真实外部 AI 会话；否则会生成可恢复的 session packet，等待接入层消费。
 
@@ -181,7 +189,7 @@ python3 -m attestflow secret-scan
 
 如果 `sessions.worktree.enabled: true`，每个 task run 会先创建独立 git worktree，默认路径为 `../.attestflow-worktrees/{project}/{task_id}-{run_id}`。session adapter、task-scoped capability 和 `verify --task` 都会在该 worktree 里执行；控制面证据仍写回主项目的 `harness/runs` 和 `harness/capability-runs`。`close` 会把 worktree 变更提交成 task commit，并用 `git merge --ff-only` 合回控制仓库；如果控制仓库已经漂移，close 会失败并保留任务在 `accepted`。run metadata 会记录 `commit_before`、`commit_after` 和是否已应用到控制仓库。
 
-`integrations.git_provider`、`integrations.ci_provider`、`integrations.pr_provider` 和 `integrations.release_provider` 是外部交付证据适配点。`provider: command` 会调用任意输出统一 JSON 的命令；`timeout_seconds` 会强制终止卡住的 provider 并保留日志。Git `provider: git` 会使用内置 adapter 执行提交和推送；`attestflow publish --task TASK-*` 会把输出写入 `task.evidence.git`。CI `github-actions` preset 支持 `ci status`、`ci await`、`ci logs`、`ci artifacts`、`ci rerun` 和 `ci dispatch`：默认用 `gh run list` 读取状态，可按 branch、head SHA、workflow、event 精确筛选，失败时采集 failed jobs、annotations 和 failed log evidence。PR provider 支持 `pr ensure [TASK-*]` 创建/更新 change request，以及 `pr status [TASK-*]` 查询合入状态；带 `TASK-*` 参数时会把输出写入对应 `task.evidence.pr_request` / `task.evidence.pr`。`ci <action> --task TASK-*` 会把 CI 输出写入 `task.evidence.ci`。配置 `capabilities.releaser` 时，autopilot 会在 release provider 前生成 release handoff evidence，并把它作为 `release_handoff` 传给 provider。CI/Release 返回 `running`、`queued` 或 `unknown` 时，autopilot 会记录 evidence 并暂停为 `pause_reason: external_status_pending`，下一次 `--resume` 重新采集。结果分别保存到 `harness/git-runs/git-*/`、`harness/ci-runs/ci-*/`、`harness/pr-runs/pr-*/` 和 `harness/release-runs/release-*/`。
+`integrations.git_provider`、`integrations.ci_provider`、`integrations.pr_provider` 和 `integrations.release_provider` 是外部交付证据适配点。`provider: command` 会调用任意输出统一 JSON 的命令；`timeout_seconds` 会强制终止卡住的 provider 并保留日志。Git `provider: git` 会使用内置 adapter 执行提交和推送；`attestflow publish --task TASK-*` 会把输出写入 `task.evidence.git`。CI `github-actions` preset 支持 `ci status`、`ci await`、`ci logs`、`ci artifacts`、`ci rerun` 和 `ci dispatch`：默认用 `gh run list` 读取状态，可按 branch、head SHA、workflow、event 精确筛选，失败时采集 failed jobs、annotations 和 failed log evidence。PR provider 支持 `pr ensure [TASK-*]` 创建/更新 change request、`pr merge [TASK-*]` 请求合并，以及 `pr status [TASK-*]` 查询合入状态；带 `TASK-*` 参数时会把输出写入对应 `task.evidence.pr_request` / `task.evidence.pr_merge` / `task.evidence.pr`。`ci <action> --task TASK-*` 会把 CI 输出写入 `task.evidence.ci`。配置 `capabilities.releaser` 时，autopilot 会在 release provider 前生成 release handoff evidence，并把它作为 `release_handoff` 传给 provider。CI/Release 返回 `running`、`queued` 或 `unknown` 时，autopilot 会记录 evidence 并暂停为 `pause_reason: external_status_pending`，下一次 `--resume` 重新采集。结果分别保存到 `harness/git-runs/git-*/`、`harness/ci-runs/ci-*/`、`harness/pr-runs/pr-*/` 和 `harness/release-runs/release-*/`。
 
 ## 当前能力
 
@@ -189,36 +197,39 @@ python3 -m attestflow secret-scan
 
 - 受限 YAML 子集读写
 - `harness.yml` 校验
-- `init --adapter <adapter> --agent-provider codex|claude-code|opencode` 写入项目 adapter 和内置 provider preset；内置 adapter 覆盖 generic、Python、Node、Go、Rust、monorepo、Docker、Bazel、Java、Kotlin、.NET、Swift、Dart、Ruby、PHP，并按项目文件生成基础验证命令；`doctor` 检查配置、项目命令 executable、runtime 目录、任务 schema、provider CLI 和 provider preflight
+- `init --adapter <adapter> --agent-provider codex|claude-code|opencode` 写入项目 adapter 和内置 provider preset；内置 adapter 覆盖 generic、Python、Node、Go、Rust、monorepo、Docker、Bazel、Java、Kotlin、.NET、Swift、Dart、Ruby、PHP，并按项目文件生成基础验证命令；`doctor` 和 `autonomy doctor` 使用同一组 runtime 目录真相源检查任务、run、Git/CI/PR/release/plugin evidence 目录、任务 schema、provider CLI 和 provider preflight；`recover --apply` 可重建缺失 runtime 目录
 - `contract validate` 校验 planner、capability、session、Git、CI、PR、release 和 runtime task contract，provider 作者可以直接定位输出字段错误
-- provider output 可选记录真实模型 `usage`，成功 run 会保留 `usage.json` 或 session usage evidence，用于后续 token/cost 审计
+- provider output 可选记录真实模型 `usage`，成功 run 会保留 `usage.json` 或 session usage evidence；`usage report` 会聚合 capability、session、CI、Git、PR、release 和 plugin provider 的 token/cost 用量
+- token economy 控制层：输入预算门、context cache、动态 context resolve、incremental context、evidence 摘要和可选 provider result cache，用于减少重复上下文和重复模型调用；capability output 可返回 `artifacts.context_requests[]`，Attestflow 会本地解析允许的局部 context 并自动重试一次
 - 内置 capability registry：intake、planner、bdd、tdd、implementer、reviewer、verifier、releaser
 - 内置 capability provider adapter：Codex、Claude Code、OpenCode preset 可直接驱动 `plan` 和 `capability run`
 - `plan` programming agent provider：调用编程 Agent provider，保存 capability 输入/输出证据并导入 runtime task JSON
 - `capability run` task programming agent provider：对单个任务执行 `bdd`、`tdd`、`implementer`、`reviewer` 或 `verifier`，校验 capability output schema，保存 evidence 并写回任务证据索引；`releaser` 由 top-level release gate 调用
-- 自动仓库上下文：收集文件树、核心文档和任务 focus files，写入 capability provider input
+- 自动仓库上下文：收集文件树、核心文档和任务 focus files，写入 capability provider input；超过 token budget 时自动把全文替换为摘要和 cache key，并允许 provider 后续按需请求局部 context；自动解析结果保存在 `dynamic-context.json`
 - AI planner JSON 导入为 runtime task JSON
 - 外部来源导入：GitHub issue、Linear/Jira ticket、PR review comment 和 CI failure 会保存 source evidence，并进入 `proposed` task 队列等待 intake/planner
-- 治理和版本演进：`schema migrate/export/openapi`、provider `contract_version` 校验、`plugin list` 注册发现、`governance policy` 发布和破坏性变更规则
+- 治理和版本演进：`schema migrate/export/openapi`、provider `contract_version` 校验、`plugin list` 注册发现、`plugin run` 执行 manifest command、`policy list/validate/apply` 本地 policy pack、`governance policy` 发布和破坏性变更规则
 - task schema 校验
 - `next` 调度单个最高优先级任务
-- `autopilot --dry-run` 生成只读执行计划，优先展示 active-task 下一步动作和 repair mode，否则按依赖、优先级、锁和写范围冲突展示 ready 批次与跳过原因
+- `autopilot --dry-run` 生成只读执行计划，优先展示 active-task 下一步动作和 repair mode，否则按依赖、优先级、锁、写范围冲突、`max_test_cost` 和 `max_model_tokens` 展示 ready 批次与跳过原因
 - `autopilot --run --goal` 调用 planner capability 生成并导入 runtime task JSON，然后进入同一轮自治执行
-- `autopilot --run` 创建顶层 run ledger，先按 `limit` 批量推进 active-task capability/状态动作，失败时按 repair_attempts 限制回到 implementer 修复，accepted 任务会先 apply worktree，再执行已配置的 `publish` 和 `pr ensure`，随后采集已配置 CI/PR status evidence；全部任务完成后才会采集 release evidence；agent session、Git、PR、CI 或 release 返回 blocked 时记录为 blocked run 并返回非零退出码；`max_steps` 到点但仍有后续工作时记录为 `paused`
+- `autopilot --run` 创建顶层 run ledger，先按 `limit` 批量推进 active-task capability/状态动作，失败时按 repair_attempts 限制回到 implementer 修复，accepted 任务会先 apply worktree，再执行已配置的 `publish` 和 `pr ensure`，随后采集 CI evidence；若 `integrations.pr_provider.auto_merge: true` 且 PR 可合并，会执行 `pr merge`，最后采集 PR status evidence；全部任务完成后才会采集 release evidence；agent session、Git、PR、CI 或 release 返回 blocked 时记录为 blocked run 并返回非零退出码；`max_steps` 到点但仍有后续工作时记录为 `paused`
 - `autopilot --run/--resume --loop` 在同一个 run 上自动续跑 paused 状态，直到终态或 cycle 上限；默认 batch、step 和 loop policy 来自 `harness.yml`，CLI 参数可覆盖
 - `autopilot --resume` 复用最新 autopilot run 的 `metadata.json` 和 `ledger.jsonl`，继续执行并追加事件
 - `autopilot --status` 读取最新 `harness/autopilot-runs/*/metadata.json`，输出顶层 run 状态、暂停原因、planned tasks、releaser、release 和 blocked/failed 摘要，支持 `--json`
 - `inspect --run RUN` 把 autopilot run 的 `metadata.json`、`ledger.jsonl`、blocked task 文件和 provider `failure.json` 汇总成 timeline、blocker dashboard、provider failure drilldown 和 next-action；`inspect --diff OLD NEW` 对比两个 run 的状态、actions、planned/dispatched 和 release 变化，支持 `--json`
-- `recover` 检查孤儿 autopilot run、task 文件状态错位、已 finalized 但未清理的 worktree、被取消的 provider session；默认只报告，`recover --apply` 会修复可确定修复的 runtime 状态并写入 `harness/snapshots/ledger-snapshot-*.json`；`--resume-interrupted` 会显式调用 session resume adapter 恢复中断 provider session
+- `recover` 检查缺失 runtime 目录、孤儿 autopilot run、task 文件状态错位、已 finalized 但未清理的 worktree、被取消的 provider session；默认只报告，`recover --apply` 会修复可确定修复的 runtime 状态并写入 `harness/snapshots/ledger-snapshot-*.json`；`--resume-interrupted` 会显式调用 session resume adapter 恢复中断 provider session
 - `dispatch --limit N` 批量调度依赖已满足、写范围不冲突且未被锁定的 ready 任务；每个任务自动创建独立 agent session、prompt packet、锁和 run evidence，并可调用编程 Agent session adapter
 - 可选 per-task git worktree 隔离：session adapter、capability 和 verify command 在任务 worktree 中执行，close 时用 ff-only merge 把 task commit 合回控制项目
 - `session resume` 通过同一 session adapter 合同恢复外部编程 Agent 会话
 - 内置 session provider preset：Codex、Claude Code、OpenCode
 - Git provider contract：`publish` 提交并推送当前分支；`publish --task TASK-*` 同时写回 `task.evidence.git`；内置 `git` provider 会拒绝直接推送默认分支，除非显式允许
 - CI provider contract：`ci status` / `ci await` / `ci logs` / `ci artifacts` / `ci rerun` / `ci dispatch` 保存外部 CI 状态、日志、产物和动作 evidence；`--task TASK-*` 同时写回 `task.evidence.ci`；内置 GitHub Actions preset 支持 PR/SHA 精确筛选、failed log 和 artifact evidence
-- PR provider contract：`pr ensure` 创建或更新外部 PR/change request，`pr status` 保存外部 PR/change 状态 evidence；带 task id 时写回 `task.evidence.pr_request` / `task.evidence.pr`；可由 command provider 接任意代码托管系统
+- PR provider contract：`pr ensure` 创建或更新外部 PR/change request，`pr merge` 请求合并，`pr status` 保存外部 PR/change 状态 evidence；带 task id 时写回 `task.evidence.pr_request` / `task.evidence.pr_merge` / `task.evidence.pr`；可由 command provider 接任意代码托管系统
 - Release provider contract：`release status` 接收已完成任务摘要和 PR/CI evidence，保存外部发布 evidence；可由 command provider 接任意发布系统
-- `evidence export TASK-* --out DIR` 导出 task、run、ledger、capability output 和 manifest；`evidence bundle --run/--release` 导出顶层交付 evidence、release bundle、PR comment artifact、可复现 manifest 和 audit report；`evidence verify DIR --check-source` 校验 bundle hash/size 并检测源 evidence 是否过期
+- `evidence export TASK-* --out DIR` 导出 task、run、ledger、capability output 和 manifest；`evidence bundle --run/--release` 导出顶层交付 evidence、release bundle、PR comment artifact、可复现 manifest 和 audit report；`evidence verify DIR --check-source` 校验 bundle hash/size 并检测源 evidence 是否过期；`evidence maintain` 可按 retention 做本地 GC、secret redaction 和大日志 compaction
+- `dashboard export --out DIR` 生成零依赖本地 HTML dashboard 和 `data.json`，用于查看 task state、最新 run 和交付 evidence 状态
+- `release trust --out DIR` 生成本地 release trust 包：`sbom.json`、`provenance.json`、`checklist.md`、`report.json` 和带 SHA-256 的 `manifest.json`，检查 pyproject、Python matrix、build、install-smoke 和 artifact upload
 - `start` 低层状态推进入口，也会创建 session packet
 - 结构化 blocker 协议：`blockers[]` 记录 reason、unblock condition、owner、source；`block` / `unblock` 推进阻塞生命周期
 - session adapter 或 capability output 返回 `blocked` 时，自动把任务移入 `blocked` 并写入 active blocker

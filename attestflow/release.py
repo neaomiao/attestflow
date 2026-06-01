@@ -11,6 +11,7 @@ from .evidence import utc_timestamp
 from .io import dump_data, load_data
 from .provider_commands import provider_timeout_seconds, run_provider_json_command, shell_command_exists
 from .tasks import iter_tasks, validate_task
+from .token_economy import summarize_evidence_reference
 
 
 BUILTIN_RELEASE_PROVIDERS: dict[str, dict[str, str]] = {
@@ -131,7 +132,7 @@ def _task_summaries(root: Path, config: dict[str, Any], done_tasks: list[str]) -
 
 def release_task_summaries(root: Path, config: dict[str, Any], done_tasks: list[str]) -> list[dict[str, Any]]:
     summaries = {
-        str(task.get("id")): _task_summary(root, task)
+        str(task.get("id")): _task_summary(root, config, task)
         for task in _completed_tasks(root, config)
     }
     if done_tasks:
@@ -175,7 +176,7 @@ def _completed_tasks(root: Path, config: dict[str, Any]) -> list[dict[str, Any]]
     return tasks
 
 
-def _task_summary(root: Path, task: dict[str, Any]) -> dict[str, Any]:
+def _task_summary(root: Path, config: dict[str, Any], task: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": task.get("id"),
         "title": task.get("title"),
@@ -185,11 +186,11 @@ def _task_summary(root: Path, task: dict[str, Any]) -> dict[str, Any]:
         "scope": task.get("scope", []),
         "acceptance": task.get("acceptance", []),
         "links": task.get("links", {}),
-        "evidence": _evidence_summary(root, task.get("evidence", {})),
+        "evidence": _evidence_summary(root, config, task.get("evidence", {})),
     }
 
 
-def _evidence_summary(root: Path, evidence: Any) -> dict[str, Any]:
+def _evidence_summary(root: Path, config: dict[str, Any], evidence: Any) -> dict[str, Any]:
     if not isinstance(evidence, dict):
         return {}
     summary: dict[str, Any] = {}
@@ -199,27 +200,16 @@ def _evidence_summary(root: Path, evidence: Any) -> dict[str, Any]:
         if key == "run_id":
             summary[key] = str(value)
             continue
-        summary[str(key)] = _evidence_value(root, value)
+        summary[str(key)] = _evidence_value(root, config, value)
     return summary
 
 
-def _evidence_value(root: Path, value: Any) -> Any:
+def _evidence_value(root: Path, config: dict[str, Any], value: Any) -> Any:
     if isinstance(value, dict):
-        return {str(key): _evidence_value(root, item) for key, item in value.items() if item is not None}
+        return {str(key): _evidence_value(root, config, item) for key, item in value.items() if item is not None}
     if not isinstance(value, str):
         return value
-    path = Path(value)
-    absolute_path = path if path.is_absolute() else root / path
-    item: dict[str, Any] = {
-        "path": value,
-        "exists": absolute_path.exists(),
-    }
-    if absolute_path.exists() and absolute_path.suffix in {".json", ".yml", ".yaml"}:
-        try:
-            item["output"] = load_data(absolute_path)
-        except (OSError, ValueError) as exc:
-            raise ValueError(f"failed to load evidence {absolute_path}: {exc}") from exc
-    return item
+    return summarize_evidence_reference(root, value, config)
 
 
 def _provider_options(provider_config: dict[str, Any]) -> dict[str, Any]:

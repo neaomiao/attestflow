@@ -162,7 +162,7 @@ archived
 
 `blockers`：结构化阻塞记录。`ready`、`in_progress`、`review`、`verified`、`accepted`、`done` 不能有 active blocker；`blocked` 必须至少有一个 active blocker。
 
-`evidence`：`in_progress`、`review`、`verified` 和 `accepted` 必须包含 `evidence.run_id` 和 `evidence.session`，确保活跃任务能恢复到确定的 run 和 agent session；`review`、`verified`、`accepted`、`done` 和 `archived` 还必须引用真实 run packet。外部交付证据使用可选字段记录相对路径：`git` 指向 `publish` output，`ci` 指向 CI provider output，`pr_request` 指向 `pr ensure` output，`pr` 指向 `pr status` output，`release` 不写入单任务 evidence，而写入顶层 autopilot metadata。
+`evidence`：`in_progress`、`review`、`verified` 和 `accepted` 必须包含 `evidence.run_id` 和 `evidence.session`，确保活跃任务能恢复到确定的 run 和 agent session；`review`、`verified`、`accepted`、`done` 和 `archived` 还必须引用真实 run packet。外部交付证据使用可选字段记录相对路径：`git` 指向 `publish` output，`ci` 指向 CI provider output，`pr_request` 指向 `pr ensure` output，`pr_merge` 指向 `pr merge` output，`pr` 指向 `pr status` output，`release` 不写入单任务 evidence，而写入顶层 autopilot metadata。
 
 `links.issues`、`links.prs`、`links.docs`：如果存在，必须是字符串 list。
 
