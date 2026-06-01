@@ -69,6 +69,7 @@ policies:
             config = load_data(root / "harness.yml")
 
             self.assertEqual(exit_code, 0)
+            self.assertEqual(config["project"]["language"], "en")
             self.assertEqual(config["project"]["adapter"], "generic")
             self.assertTrue((root / "harness" / "adapters" / "generic" / "README.md").exists())
             self.assertNotIn("skills", config.get("integrations", {}))
@@ -76,6 +77,30 @@ policies:
             self.assertEqual(config["sessions"]["provider_options"], {})
             self.assertNotIn("provider", config["sessions"])
             self.assertEqual(config["capabilities"]["planner"]["agent_provider"], "command")
+
+    def test_init_can_write_selected_harness_language(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            exit_code = cmd_init(
+                SimpleNamespace(
+                    path=str(root),
+                    adapter="generic",
+                    agent_provider="command",
+                    agent_command=None,
+                    language="zh-CN",
+                )
+            )
+            config = load_data(root / "harness.yml")
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(config["project"]["language"], "zh-CN")
+
+    def test_validate_config_rejects_invalid_project_language(self) -> None:
+        config = load_config(Path("/tmp/attestflow-missing"))
+        config["project"]["language"] = "fr"
+
+        self.assertIn("project.language must be one of: en, zh-CN", validate_config(config))
 
     def test_init_copies_selected_adapter_template(self) -> None:
         with TemporaryDirectory() as tmp:

@@ -3,6 +3,7 @@ project:
   name: attestflow
   adapter: attestflow
   default_branch: main
+  language: en
 paths:
   tasks: harness/tasks
   runs: harness/runs
@@ -95,6 +96,7 @@ context:
   max_index_files: 400
   documents:
     - README.md
+    - README.zh-CN.md
     - AGENTS.md
     - harness.yml
     - pyproject.toml

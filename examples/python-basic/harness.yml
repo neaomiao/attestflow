@@ -3,6 +3,7 @@ project:
   name: python-basic
   default_branch: main
   adapter: python
+  language: en
 commands:
   bdd: python -m unittest discover -s tests/bdd
   unit: python -m unittest discover -s tests/unit

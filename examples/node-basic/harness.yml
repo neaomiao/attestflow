@@ -3,6 +3,7 @@ project:
   name: node-basic
   default_branch: main
   adapter: node
+  language: en
 commands:
   bdd: node --test tests/bdd/*.test.mjs
   unit: node --test tests/unit/*.test.mjs
