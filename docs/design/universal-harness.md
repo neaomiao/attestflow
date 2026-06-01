@@ -365,6 +365,7 @@ accepted -> apply_worktree -> publish_changes -> pr_ensure -> ci_status -> pr_st
 - 如果配置了 `integrations.git_provider`，accepted 任务会运行 `publish_changes`，把 `harness/git-runs/*/output.json` 写入 `task.evidence.git`；`published` 或 `skipped` 表示可以继续后续 gate，`blocked` 会停止本轮 autopilot。
 - 如果配置了 `integrations.pr_provider`，accepted 任务会先运行 `pr_ensure`，把 `harness/pr-runs/*/output.json` 写入 `task.evidence.pr_request`；`open`、`draft`、`merged` 或 `skipped` 表示 change request 已可继续后续 gate，`blocked` 会停止本轮 autopilot。
 - 如果配置了 `integrations.ci_provider`，accepted 任务会运行 `ci_status`，把 `harness/ci-runs/*/output.json` 写入 `task.evidence.ci`；CI `passed` 或 `skipped` 才继续，`running`、`queued` 或 `unknown` 会暂停等待 resume 重新采集。
+- 如果配置了 `integrations.pr_provider.auto_merge: true`，且 PR request 为 `open`，accepted 任务会在 CI 通过后运行 `pr_merge`，把 `harness/pr-runs/*/output.json` 写入 `task.evidence.pr_merge`；`merged` 或 `skipped` 才继续最终状态采集，`unknown` 会暂停等待 resume，`open`、`draft` 或 `blocked` 会停止本轮。
 - 如果配置了 `integrations.pr_provider`，accepted 任务会运行 `pr_status`，把 `harness/pr-runs/*/output.json` 写入 `task.evidence.pr`；PR `merged` 或 `skipped` 才继续 close，`unknown` 会暂停等待 resume 重新采集。
 - 如果配置了 `capabilities.releaser`，所有任务都有效地处于 `done` 或 `archived` 后，autopilot 会先运行 top-level releaser capability，把 release handoff 写入 `metadata.json.releaser` 和 `metadata.json.releaser_tasks`。有效完成要求 task registry 没有重复 id，文件名和 id 一致，目录状态和文件内 `state` 一致，并通过 task schema 校验。
 - 如果配置了 `integrations.release_provider`，release gate 会把已完成任务摘要、task run evidence、CI evidence、PR evidence 和可选 `release_handoff` 一起传给 provider；如果 completed task 或其 JSON/YAML evidence 损坏，Attestflow 会在创建 release run 前 fail closed。输出 `harness/release-runs/*/output.json` 写入 autopilot `metadata.json.release`，provider 状态写入 `metadata.json.release_status`。只有 `released` 或 `skipped` 算 release gate 完成；`running`、`queued` 或 `unknown` 会暂停等待 resume 重新采集，`blocked` 会停止本轮；`failed` 且 planner capability 已配置时，会把 release failure summary、release evidence 和可选 release handoff summary 交给 planner 生成修复任务，导入后回到普通 task loop。
@@ -553,6 +554,7 @@ python -m attestflow verify --task TASK
 python -m attestflow ci providers
 python -m attestflow ci status --task TASK
 python -m attestflow pr ensure TASK
+python -m attestflow pr merge TASK
 python -m attestflow pr status TASK
 python -m attestflow release status
 python -m attestflow close TASK
@@ -574,7 +576,7 @@ python -m attestflow secret-scan
 - `tasks`：按状态和优先级列出任务。
 - `next`：返回最高优先级、依赖已完成、文件未锁定的 `ready` 任务。
 - `autopilot --dry-run`：只读生成自动执行计划，优先展示 active task 下一步动作和 repair mode，否则展示可执行 ready 批次和不可执行任务原因，不启动 Agent、不改状态。
-- `autopilot --run`：创建顶层运行台账，先按 `limit` 和 `autopilot.resources` 批量推进 active task capability/状态动作，失败时按来源选择 repair target，accepted 任务会先 apply worktree，再执行 `pr ensure`，随后采集已配置 CI/PR status evidence；全部任务完成后会采集 release evidence，并记录动作、恢复、修复、CI、PR、release、分发或失败事件；`max_steps` 到点但仍有下一步时记录为 `paused`。
+- `autopilot --run`：创建顶层运行台账，先按 `limit` 和 `autopilot.resources` 批量推进 active task capability/状态动作，失败时按来源选择 repair target，accepted 任务会先 apply worktree，再执行 `pr ensure`，随后采集 CI evidence；若 `integrations.pr_provider.auto_merge: true` 且 PR 可合并，会执行 `pr merge`，最后采集 PR status evidence；全部任务完成后会采集 release evidence，并记录动作、恢复、修复、CI、PR、release、分发或失败事件；`max_steps` 到点但仍有下一步时记录为 `paused`。
 - `autopilot --run/--resume --loop` / `--until terminal`：在同一个 top-level run 上自动续跑 paused 状态，受 `harness.yml` batch/step/loop policy 和 CLI override 限制，并记录 `loop_stop_reason`，不隐藏终态失败或阻塞。
 - `autopilot --resume`：复用最新 autopilot run 的 `metadata.json` 和 `ledger.jsonl`，继续执行并追加事件。
 - `autopilot --status`：读取最新 autopilot run 的 `metadata.json`，输出状态、暂停原因、步数、actions、planned、dispatched、releaser、release、failed 和 blocked 摘要；`--json` 输出完整 metadata。
@@ -594,6 +596,7 @@ python -m attestflow secret-scan
 - `ci providers`：列出内置 CI provider preset。
 - `ci status`：执行 CI provider contract，保存外部 CI 状态 evidence；带 `--task TASK-*` 时写入 `task.evidence.ci`。
 - `pr ensure`：执行 PR provider contract，创建或更新外部 PR/change request evidence；带 task id 时写入 `task.evidence.pr_request`。
+- `pr merge`：执行 PR provider contract，请求合并外部 PR/change request；带 task id 时写入 `task.evidence.pr_merge`。
 - `pr status`：执行 PR provider contract，保存外部 PR/change 状态 evidence；带 task id 时写入 `task.evidence.pr`。
 - `release status`：执行 Release provider contract，传入已完成任务摘要和可解析交付 evidence，保存外部发布 evidence。
 - `close`：校验当前 run 的 DoD evidence，释放锁，写最终证据并移动到 `done`。
@@ -618,7 +621,7 @@ PR provider 创建/更新并采集外部 PR/change 状态：
 Git provider -> provider command -> PR output JSON -> harness/pr-runs evidence
 ```
 
-`integrations.pr_provider.provider: command` 调用项目配置的任意命令。`pr ensure [TASK-*]` 创建或更新 change request，并把输出写为 `task.evidence.pr_request`；`pr status [TASK-*]` 保存 PR 状态快照，并把输出写为 `task.evidence.pr`。autopilot 会在 `accepted` 阶段先 `ensure`，再跑 CI/status gate。`status` 的 `merged` 和 `skipped` 允许继续 close；`open`、`draft` 或 `blocked` 会让 autopilot 停在 blocked，等待外部系统状态变化。
+`integrations.pr_provider.provider: command` 调用项目配置的任意命令。`pr ensure [TASK-*]` 创建或更新 change request，并把输出写为 `task.evidence.pr_request`；`pr merge [TASK-*]` 请求合并，并把输出写为 `task.evidence.pr_merge`；`pr status [TASK-*]` 保存 PR 状态快照，并把输出写为 `task.evidence.pr`。autopilot 会在 `accepted` 阶段先 `ensure`，再跑 CI gate；只有显式配置 `integrations.pr_provider.auto_merge: true` 时才会在 CI 通过后执行 `merge`。`status` 的 `merged` 和 `skipped` 允许继续 close；`open`、`draft` 或 `blocked` 会让 autopilot 停在 blocked，等待外部系统状态变化。
 
 ## Release Provider
 
@@ -756,7 +759,7 @@ python -m attestflow verify
 10. 运行 `python -m attestflow transition TASK-* review`。
 11. 运行 `python -m attestflow verify --task TASK-*`，把验证结果绑定到当前 run。
 12. 运行 `python -m attestflow transition TASK-* verified` 和 `python -m attestflow transition TASK-* accepted`。
-13. 如配置了外部交付 provider，运行 `python -m attestflow pr ensure TASK-*`、`python -m attestflow ci status --task TASK-*`、`python -m attestflow pr status TASK-*` 保存 evidence。
+13. 如配置了外部交付 provider，运行 `python -m attestflow pr ensure TASK-*`、`python -m attestflow ci status --task TASK-*`、可选 `python -m attestflow pr merge TASK-*`、`python -m attestflow pr status TASK-*` 保存 evidence。
 14. 运行 `python -m attestflow close TASK-*`。
 15. 重复 `autopilot --dry-run -> autopilot --run`；自动路径会把 PR/CI/release evidence 收敛进同一个可恢复 autopilot loop。
 

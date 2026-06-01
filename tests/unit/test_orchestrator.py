@@ -1812,6 +1812,88 @@ class OrchestratorTests(unittest.TestCase):
             self.assertIn("pr_request", done["evidence"])
             self.assertIn("pr", done["evidence"])
 
+    def test_autopilot_auto_merges_pr_after_passing_ci(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = deepcopy(DEFAULT_CONFIG)
+            config["policies"]["require_fresh_verify_for_done"] = False
+            config["policies"]["require_agent_session_for_task"] = False
+            pr_script = root / "pr_stub.py"
+            ci_script = root / "ci_stub.py"
+            action_log = root / "delivery-actions.jsonl"
+            pr_script.write_text(
+                "\n".join(
+                    [
+                        "import json, sys",
+                        "from pathlib import Path",
+                        "payload = json.load(sys.stdin)",
+                        f"Path({str(action_log)!r}).open('a', encoding='utf-8').write(json.dumps({{'action': payload['action'], 'task_id': payload['task_id']}}) + '\\n')",
+                        "status = {'ensure': 'open', 'merge': 'merged', 'status': 'merged'}[payload['action']]",
+                        "print(json.dumps({",
+                        "    'schema_version': 1,",
+                        "    'status': status,",
+                        "    'summary': f'pr {status}',",
+                        "    'checks': []",
+                        "}))",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            ci_script.write_text(
+                "\n".join(
+                    [
+                        "import json",
+                        "from pathlib import Path",
+                        f"Path({str(action_log)!r}).open('a', encoding='utf-8').write(json.dumps({{'action': 'ci_status', 'task_id': 'TASK-0001'}}) + '\\n')",
+                        "print(json.dumps({",
+                        "    'schema_version': 1,",
+                        "    'provider': 'local-ci',",
+                        "    'status': 'passed',",
+                        "    'summary': 'ci passed',",
+                        "    'checks': []",
+                        "}))",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            config["integrations"]["ci_provider"] = {
+                "provider": "command",
+                "command": f"{shlex.quote(sys.executable)} {shlex.quote(str(ci_script))}",
+            }
+            config["integrations"]["pr_provider"] = {
+                "provider": "command",
+                "command": f"{shlex.quote(sys.executable)} {shlex.quote(str(pr_script))}",
+                "auto_merge": True,
+            }
+            task = active_task(ready_task("TASK-0001", priority=1), state="accepted")
+            packet = root / "harness" / "runs" / "run-TASK-0001" / "evidence.md"
+            packet.parent.mkdir(parents=True)
+            packet.write_text("- ID: TASK-0001\n- Run: run-TASK-0001\n", encoding="utf-8")
+            dump_data(
+                {"schema_version": 1, "run_id": "run-TASK-0001", "task_id": "TASK-0001"},
+                root / "harness" / "runs" / "run-TASK-0001" / "metadata.yml",
+            )
+            write_task(root, "accepted", "TASK-0001", task)
+
+            result = run_autopilot(root, config, limit=1, max_steps=5)
+
+            self.assertEqual(result.failed, [])
+            self.assertEqual(result.blocked, [])
+            calls = [json.loads(line) for line in action_log.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual([call["action"] for call in calls], ["ensure", "ci_status", "merge", "status"])
+            done = json.loads((root / "harness" / "tasks" / "done" / "TASK-0001.json").read_text(encoding="utf-8"))
+            self.assertIn("pr_merge", done["evidence"])
+            self.assertIn("pr", done["evidence"])
+            metadata = json.loads((result.path / "metadata.json").read_text(encoding="utf-8"))
+            self.assertLess(
+                metadata["actions"].index("TASK-0001:ci_status"),
+                metadata["actions"].index("TASK-0001:pr_merge"),
+            )
+            self.assertLess(
+                metadata["actions"].index("TASK-0001:pr_merge"),
+                metadata["actions"].index("TASK-0001:pr_status"),
+            )
+
     def test_autopilot_publishes_git_changes_before_pr_ensure(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

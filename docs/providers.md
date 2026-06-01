@@ -165,10 +165,12 @@ integrations:
       event: pull_request
   pr_provider:
     provider: github
+    auto_merge: true
     provider_options:
       command: gh
       status_args: ["pr", "view", "--json", "number,url,state,isDraft,headRefName,baseRefName"]
       ensure_args: ["pr", "create", "--json", "number,url,state,isDraft,headRefName,baseRefName"]
+      merge_args: ["pr", "merge", "--auto", "--merge", "--delete-branch"]
   release_provider:
     provider: self-hosted-release
     provider_options:

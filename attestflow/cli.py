@@ -33,7 +33,7 @@ from .orchestrator import (
 )
 from .planner import import_planner_tasks
 from .plugins import discover_plugins
-from .pr import list_pr_providers, run_pr_ensure, run_pr_status
+from .pr import list_pr_providers, run_pr_ensure, run_pr_merge, run_pr_status
 from .provider_commands import shell_command_exists as _shared_shell_command_exists
 from .provider_contracts import run_provider_contract_suite
 from .provider_smoke import run_provider_readiness_suite
@@ -2076,6 +2076,19 @@ def cmd_pr_ensure(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_pr_merge(args: argparse.Namespace) -> int:
+    try:
+        config = load_config(ROOT)
+        result = run_pr_merge(ROOT, config, task_id=args.task, command=args.command)
+        if args.task:
+            record_task_evidence_reference(ROOT, config, args.task, "pr_merge", result.run_path / "output.json")
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    print(f"pr merge {result.status}: {result.run_path}")
+    return 0
+
+
 def cmd_release_status(args: argparse.Namespace) -> int:
     try:
         result = run_release_status(ROOT, load_config(ROOT), command=args.command)
@@ -2460,6 +2473,10 @@ def build_parser() -> argparse.ArgumentParser:
     pr_status.add_argument("task", nargs="?")
     pr_status.add_argument("--command")
     pr_status.set_defaults(func=cmd_pr_status)
+    pr_merge = pr_subparsers.add_parser("merge")
+    pr_merge.add_argument("task", nargs="?")
+    pr_merge.add_argument("--command")
+    pr_merge.set_defaults(func=cmd_pr_merge)
 
     release = subparsers.add_parser("release")
     release_subparsers = release.add_subparsers(dest="release_command", required=True)

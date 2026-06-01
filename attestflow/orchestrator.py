@@ -20,7 +20,7 @@ from .evidence import append_ledger, update_run_workspace, utc_timestamp
 from .git import run_git_publish
 from .io import dump_data, load_data
 from .locks import file_lock_path, locks_root, normalize_file_path, release_locks_for_task
-from .pr import run_pr_ensure, run_pr_status
+from .pr import run_pr_ensure, run_pr_merge, run_pr_status
 from .release import run_release_status
 from .sessions import launch_agent_session
 from .tasks import (
@@ -1265,6 +1265,12 @@ def _next_task_action(root: Path, config: dict[str, Any], record: TaskRecord) ->
             return TaskAction(task_id=task_id, state=state, action="pr_ensure", path=record.path)
         if _ci_configured(config) and not _passed_ci_evidence(root, record.task):
             return TaskAction(task_id=task_id, state=state, action="ci_status", path=record.path)
+        if (
+            _pr_auto_merge_enabled(config)
+            and not _passed_pr_merge_evidence(root, record.task)
+            and _pr_request_ready_for_merge(root, record.task)
+        ):
+            return TaskAction(task_id=task_id, state=state, action="pr_merge", path=record.path)
         if _pr_configured(config) and not _passed_pr_evidence(root, record.task):
             return TaskAction(task_id=task_id, state=state, action="pr_status", path=record.path)
         return TaskAction(task_id=task_id, state=state, action="close_task", path=record.path, target_state="done")
@@ -1353,6 +1359,16 @@ def _pr_configured(config: dict[str, Any]) -> bool:
     return isinstance(pr_provider, dict) and bool(pr_provider.get("provider") or pr_provider.get("command"))
 
 
+def _pr_auto_merge_enabled(config: dict[str, Any]) -> bool:
+    integrations = config.get("integrations", {})
+    pr_provider = integrations.get("pr_provider") if isinstance(integrations, dict) else None
+    if not isinstance(pr_provider, dict):
+        return False
+    options = pr_provider.get("provider_options", {})
+    option_enabled = isinstance(options, dict) and options.get("auto_merge") is True
+    return pr_provider.get("auto_merge") is True or option_enabled
+
+
 def _passed_pr_evidence(root: Path, task: dict[str, Any]) -> bool:
     evidence = task.get("evidence", {})
     if not isinstance(evidence, dict) or not evidence.get("pr"):
@@ -1365,6 +1381,34 @@ def _passed_pr_evidence(root: Path, task: dict[str, Any]) -> bool:
     except ValueError:
         return False
     return output.get("status") in {"merged", "skipped"}
+
+
+def _passed_pr_merge_evidence(root: Path, task: dict[str, Any]) -> bool:
+    evidence = task.get("evidence", {})
+    if not isinstance(evidence, dict) or not evidence.get("pr_merge"):
+        return False
+    output_path = root / str(evidence["pr_merge"])
+    if not output_path.exists():
+        return False
+    try:
+        output = load_data(output_path)
+    except ValueError:
+        return False
+    return output.get("status") in {"merged", "skipped"}
+
+
+def _pr_request_ready_for_merge(root: Path, task: dict[str, Any]) -> bool:
+    evidence = task.get("evidence", {})
+    if not isinstance(evidence, dict) or not evidence.get("pr_request"):
+        return False
+    output_path = root / str(evidence["pr_request"])
+    if not output_path.exists():
+        return False
+    try:
+        output = load_data(output_path)
+    except ValueError:
+        return False
+    return output.get("status") == "open"
 
 
 def _passed_pr_request_evidence(root: Path, task: dict[str, Any]) -> bool:
@@ -1556,6 +1600,25 @@ def _execute_task_action(root: Path, config: dict[str, Any], run_path: Path, act
             _append_autopilot_event(
                 run_path,
                 "pr_status_finished",
+                task_id=action.task_id,
+                data={"step": step, "status": result.status, "run_path": str(result.run_path.relative_to(root))},
+            )
+            if result.status in EXTERNAL_PENDING_STATUSES:
+                return "pending"
+            if result.status in {"open", "draft", "blocked"}:
+                return "blocked"
+            return "passed" if result.status in {"merged", "skipped"} else "failed"
+        if action.action == "pr_merge":
+            result = run_pr_merge(root, config, task_id=action.task_id)
+            record = _find_task_record(root, config, action.task_id)
+            updated = dict(record.task)
+            evidence = dict(updated.get("evidence", {}))
+            evidence["pr_merge"] = str((result.run_path / "output.json").relative_to(root))
+            updated["evidence"] = evidence
+            dump_data(updated, record.path)
+            _append_autopilot_event(
+                run_path,
+                "pr_merge_finished",
                 task_id=action.task_id,
                 data={"step": step, "status": result.status, "run_path": str(result.run_path.relative_to(root))},
             )
@@ -2024,6 +2087,8 @@ def _is_repairable_failure(action: TaskAction) -> bool:
         return True
     if action.action == "pr_status":
         return True
+    if action.action == "pr_merge":
+        return True
     return action.action == "run_capability" and action.capability in {
         "bdd",
         "tdd",
@@ -2052,6 +2117,8 @@ def _repair_target_capability(
             return "tdd"
         return "implementer"
     if action.action == "pr_status":
+        return "reviewer"
+    if action.action == "pr_merge":
         return "reviewer"
     return "implementer"
 

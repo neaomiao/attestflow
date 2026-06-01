@@ -16,12 +16,14 @@ PR_PROVIDER_DEFAULTS: dict[str, dict[str, Any]] = {
         "env": "ATTESTFLOW_GITHUB_PR_COMMAND",
         "status_args": ["pr", "view", "--json", "number,url,state,isDraft,headRefName,baseRefName"],
         "ensure_args": ["pr", "create", "--json", "number,url,state,isDraft,headRefName,baseRefName"],
+        "merge_args": ["pr", "merge", "--auto", "--merge", "--delete-branch"],
     },
     "gitlab": {
         "command": "glab",
         "env": "ATTESTFLOW_GITLAB_PR_COMMAND",
         "status_args": ["mr", "view", "--output", "json"],
         "ensure_args": ["mr", "create", "--output", "json"],
+        "merge_args": ["mr", "merge"],
     },
 }
 
@@ -45,10 +47,11 @@ def run_pr_provider(payload: dict[str, Any], provider: str) -> dict[str, Any]:
     command = _command(options, provider)
     if not _command_exists(command):
         return _blocked(provider, f"{provider} command not found: {command}")
-    args = _action_args(options, provider, str(payload.get("action") or "status"))
-    repository = options.get("repository")
-    if repository:
-        args.extend(["--repo", str(repository)])
+    action = str(payload.get("action") or "status")
+    if action == "merge":
+        return _run_merge_provider(payload, provider, command, options)
+    args = _action_args(options, provider, action)
+    _append_repository(args, options)
     completed = _run_command(payload, provider, command, args, options)
     if isinstance(completed, dict):
         return completed
@@ -60,6 +63,38 @@ def run_pr_provider(payload: dict[str, Any], provider: str) -> dict[str, Any]:
     if not item:
         return _blocked(provider, f"{provider} PR command returned no PR data")
     return _pr_output(provider, item)
+
+
+def _run_merge_provider(
+    payload: dict[str, Any],
+    provider: str,
+    command: str,
+    options: dict[str, Any],
+) -> dict[str, Any]:
+    merge_args = _action_args(options, provider, "merge")
+    _append_repository(merge_args, options)
+    completed = _run_command(payload, provider, command, merge_args, options)
+    if isinstance(completed, dict):
+        return completed
+
+    status_args = _action_args(options, provider, "status")
+    _append_repository(status_args, options)
+    status_completed = _run_command(payload, provider, command, status_args, options)
+    if isinstance(status_completed, dict):
+        return status_completed
+    try:
+        raw = json.loads(status_completed.stdout)
+    except json.JSONDecodeError as exc:
+        return _blocked(provider, f"{provider} PR status command did not return JSON after merge: {exc}")
+    item = _first_record(raw)
+    if not item:
+        return _blocked(provider, f"{provider} PR status command returned no PR data after merge")
+    output = _pr_output(provider, item)
+    output["merge"] = {
+        "stdout": _text(completed.stdout),
+        "stderr": _text(completed.stderr),
+    }
+    return output
 
 
 def _run_command(
@@ -138,11 +173,17 @@ def _command(options: dict[str, Any], provider: str) -> str:
 
 
 def _action_args(options: dict[str, Any], provider: str, action: str) -> list[str]:
-    key = "ensure_args" if action == "ensure" else "status_args"
+    key = {"ensure": "ensure_args", "merge": "merge_args"}.get(action, "status_args")
     configured = options.get(key)
     if configured is None:
         configured = PR_PROVIDER_DEFAULTS[provider][key]
     return [str(item) for item in configured] if isinstance(configured, list) else shlex.split(str(configured))
+
+
+def _append_repository(args: list[str], options: dict[str, Any]) -> None:
+    repository = options.get("repository")
+    if repository:
+        args.extend(["--repo", str(repository)])
 
 
 def _timeout(options: dict[str, Any]) -> int:

@@ -284,6 +284,7 @@ Capability、CI、PR、release provider output 如果包含 `usage`，run 目录
 - `task.evidence.ci`：`harness/ci-runs/ci-*/output.json`
 - `task.evidence.git`：`harness/git-runs/git-*/output.json`，来自 `publish`
 - `task.evidence.pr_request`：`harness/pr-runs/pr-*/output.json`，来自 `pr ensure`
+- `task.evidence.pr_merge`：`harness/pr-runs/pr-*/output.json`，来自 `pr merge`
 - `task.evidence.pr`：`harness/pr-runs/pr-*/output.json`，来自 `pr status`
 
 这些 evidence 证明外部系统状态，不替代当前 task run 的本地 verification evidence。release evidence 属于顶层 autopilot run，写入 `harness/autopilot-runs/*/metadata.json.release`。
