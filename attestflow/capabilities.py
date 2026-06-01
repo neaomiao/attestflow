@@ -10,7 +10,7 @@ import sys
 from typing import Any
 
 from .contracts import raise_contract_errors, validate_planner_output, validate_typed_capability_output
-from .context import collect_repository_context
+from .context import collect_repository_context, resolve_dynamic_context_request
 from .evidence import workspace_root_for_run
 from .io import dump_data, load_data
 from .planner import import_planner_tasks
@@ -580,11 +580,65 @@ def _run_json_command(
         capability_name,
         timeout_seconds=_capability_timeout_seconds(config, capability_name),
     )
+    context_requests = _context_requests(output)
+    if context_requests and _auto_resolve_dynamic_context(config):
+        dump_data(output, run_path / "output.context-request.json")
+        dynamic_context = _resolve_dynamic_context_requests(cwd, config, context_requests)
+        dump_data(dynamic_context, run_path / "dynamic-context.json")
+        retry_payload = deepcopy(optimized_payload)
+        retry_payload["resolved_dynamic_context"] = dynamic_context
+        retry_payload.setdefault("instructions", [])
+        if isinstance(retry_payload["instructions"], list):
+            retry_payload["instructions"].append("Use resolved_dynamic_context before asking for the same context again.")
+        output = run_provider_json_command(
+            cwd,
+            command,
+            retry_payload,
+            run_path,
+            capability_name,
+            timeout_seconds=_capability_timeout_seconds(config, capability_name),
+        )
+        cache_payload = deepcopy(retry_payload)
     dump_data(output, run_path / "output.json")
     cache_metadata = store_provider_cache(cache_root, config, capability_name, command, cache_payload, output)
     if cache_metadata is not None:
         dump_data(cache_metadata, run_path / "cache.json")
     return output
+
+
+def _context_requests(output: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates = output.get("context_requests")
+    if candidates is None:
+        artifacts = output.get("artifacts", {})
+        candidates = artifacts.get("context_requests") if isinstance(artifacts, dict) else None
+    if not isinstance(candidates, list):
+        return []
+    return [item for item in candidates if isinstance(item, dict)]
+
+
+def _auto_resolve_dynamic_context(config: dict[str, Any]) -> bool:
+    token_economy = config.get("token_economy", {})
+    if not isinstance(token_economy, dict) or token_economy.get("enabled") is False:
+        return False
+    dynamic_context = token_economy.get("dynamic_context", {})
+    if not isinstance(dynamic_context, dict):
+        return True
+    return dynamic_context.get("enabled", True) is not False and dynamic_context.get("auto_resolve", True) is not False
+
+
+def _resolve_dynamic_context_requests(root: Path, config: dict[str, Any], requests: list[dict[str, Any]]) -> dict[str, Any]:
+    token_economy = config.get("token_economy", {})
+    dynamic_context = token_economy.get("dynamic_context", {}) if isinstance(token_economy, dict) else {}
+    max_requests = dynamic_context.get("max_requests", 5) if isinstance(dynamic_context, dict) else 5
+    if type(max_requests) is not int or max_requests <= 0:
+        max_requests = 5
+    responses = [resolve_dynamic_context_request(root, config, request) for request in requests[:max_requests]]
+    return {
+        "schema_version": 1,
+        "auto_resolved": True,
+        "requests": requests[:max_requests],
+        "responses": responses,
+    }
 
 
 def _write_provider_cache_logs(run_path: Path, *, hit: bool) -> None:

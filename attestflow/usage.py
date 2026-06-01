@@ -14,6 +14,7 @@ DEFAULT_RUNTIME_PATHS = {
     "git_runs": "harness/git-runs",
     "pr_runs": "harness/pr-runs",
     "release_runs": "harness/release-runs",
+    "plugin_runs": "harness/plugin-runs",
 }
 
 

@@ -17,5 +17,8 @@ graphify-out/
 harness/runs/
 harness/capability-runs/
 harness/ci-runs/
-harness/git-runs/
+harness/git-runs/*
+!harness/git-runs/.gitkeep
+harness/plugin-runs/*
+!harness/plugin-runs/.gitkeep
 harness/locks/

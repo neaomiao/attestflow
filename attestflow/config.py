@@ -21,6 +21,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "git_runs": "harness/git-runs",
         "pr_runs": "harness/pr-runs",
         "release_runs": "harness/release-runs",
+        "plugin_runs": "harness/plugin-runs",
         "sources": "harness/sources",
         "docs": "docs",
     },
@@ -46,6 +47,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "allowlist": [],
             "max_output_bytes": 1048576,
             "require_approval_for_irreversible": True,
+            "sandbox": {
+                "mode": "inherit-env",
+                "allowed_env": [],
+                "blocked_env": [],
+                "blocked_env_prefixes": [],
+                "network": "provider-owned",
+            },
         },
         "network": {"mode": "provider-owned"},
         "filesystem": {"mode": "write-scope-validated"},
@@ -124,6 +132,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "incremental_context": {
             "enabled": True,
         },
+        "dynamic_context": {
+            "enabled": True,
+            "auto_resolve": True,
+            "max_requests": 5,
+        },
         "evidence_summary": {
             "enabled": True,
             "max_output_bytes": 2000,
@@ -137,6 +150,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "plugins": {
         "directories": ["harness/plugins"],
+    },
+    "policy_packs": {
+        "directories": ["harness/policies"],
     },
 }
 
@@ -178,6 +194,9 @@ def validate_config(config: dict[str, Any]) -> list[str]:
     release_runs = config.get("paths", {}).get("release_runs")
     if release_runs is not None and not isinstance(release_runs, str):
         errors.append("paths.release_runs must be a string")
+    plugin_runs = config.get("paths", {}).get("plugin_runs")
+    if plugin_runs is not None and not isinstance(plugin_runs, str):
+        errors.append("paths.plugin_runs must be a string")
     sessions = config.get("sessions", {})
     if sessions is not None and not isinstance(sessions, dict):
         errors.append("sessions must be a mapping")
@@ -234,6 +253,23 @@ def validate_config(config: dict[str, Any]) -> list[str]:
             require_approval = provider_commands.get("require_approval_for_irreversible")
             if require_approval is not None and not isinstance(require_approval, bool):
                 errors.append("security.provider_commands.require_approval_for_irreversible must be a boolean")
+            sandbox = provider_commands.get("sandbox")
+            if sandbox is not None:
+                if not isinstance(sandbox, dict):
+                    errors.append("security.provider_commands.sandbox must be a mapping")
+                else:
+                    mode = sandbox.get("mode")
+                    if mode is not None and mode not in {"inherit-env", "restricted-env"}:
+                        errors.append("security.provider_commands.sandbox.mode must be inherit-env or restricted-env")
+                    network = sandbox.get("network")
+                    if network is not None and network not in {"provider-owned", "disabled"}:
+                        errors.append("security.provider_commands.sandbox.network must be provider-owned or disabled")
+                    for key in ("allowed_env", "blocked_env", "blocked_env_prefixes"):
+                        value = sandbox.get(key)
+                        if value is not None and (
+                            not isinstance(value, list) or not all(isinstance(item, str) for item in value)
+                        ):
+                            errors.append(f"security.provider_commands.sandbox.{key} must be a list of strings")
     plugins = config.get("plugins", {})
     if plugins is not None and not isinstance(plugins, dict):
         errors.append("plugins must be a mapping")
@@ -243,6 +279,15 @@ def validate_config(config: dict[str, Any]) -> list[str]:
             not isinstance(directories, list) or not all(isinstance(item, str) for item in directories)
         ):
             errors.append("plugins.directories must be a list of strings")
+    policy_packs = config.get("policy_packs", {})
+    if policy_packs is not None and not isinstance(policy_packs, dict):
+        errors.append("policy_packs must be a mapping")
+    elif isinstance(policy_packs, dict):
+        directories = policy_packs.get("directories", [])
+        if directories is not None and (
+            not isinstance(directories, list) or not all(isinstance(item, str) for item in directories)
+        ):
+            errors.append("policy_packs.directories must be a list of strings")
     autopilot = config.get("autopilot", {})
     if autopilot is not None and not isinstance(autopilot, dict):
         errors.append("autopilot must be a mapping")
@@ -329,6 +374,7 @@ def validate_config(config: dict[str, Any]) -> list[str]:
         _validate_token_economy_toggle_section(errors, token_economy, "context_cache", path=True, max_summary_bytes=True)
         _validate_token_economy_toggle_section(errors, token_economy, "provider_cache", path=True)
         _validate_token_economy_toggle_section(errors, token_economy, "incremental_context")
+        _validate_token_economy_toggle_section(errors, token_economy, "dynamic_context", max_requests=True)
         _validate_token_economy_toggle_section(errors, token_economy, "evidence_summary", max_output_bytes=True)
     integrations = config.get("integrations", {})
     if integrations is not None and not isinstance(integrations, dict):
@@ -391,6 +437,7 @@ def _validate_token_economy_toggle_section(
     path: bool = False,
     max_summary_bytes: bool = False,
     max_output_bytes: bool = False,
+    max_requests: bool = False,
 ) -> None:
     section = token_economy.get(key)
     if section is None:
@@ -410,6 +457,12 @@ def _validate_token_economy_toggle_section(
     output_value = section.get("max_output_bytes")
     if max_output_bytes and output_value is not None and (type(output_value) is not int or output_value <= 0):
         errors.append(f"token_economy.{key}.max_output_bytes must be a positive integer")
+    requests_value = section.get("max_requests")
+    if max_requests and requests_value is not None and (type(requests_value) is not int or requests_value <= 0):
+        errors.append(f"token_economy.{key}.max_requests must be a positive integer")
+    auto_resolve = section.get("auto_resolve")
+    if auto_resolve is not None and not isinstance(auto_resolve, bool):
+        errors.append(f"token_economy.{key}.auto_resolve must be a boolean")
 
 
 def _validate_timeout_seconds(errors: list[str], field: str, value: Any) -> None:

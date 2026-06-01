@@ -157,6 +157,7 @@ Programming Agent Provider 要求：
 - `evidence` 必须是数组。
 - `usage` 可选；如果 provider 能拿到真实模型消耗，必须用非负整数填写 `input_tokens`、`output_tokens`、`total_tokens`、`cached_input_tokens` 或 `reasoning_tokens`，可用非负数字填写 `cost_usd`。Attestflow 会保留原始 `output.json`，并把 `usage` 单独写为 `usage.json`，方便后续成本审计。
 - 当 `token_economy.provider_cache.enabled: true` 且 capability input 规范化后命中缓存，Attestflow 会复用成功 provider output，写出新的 `input.json`、`output.json`、`usage.json` 和 `cache.json`，不会再次调用外部模型 provider。
+- 如果 provider 因缺少局部上下文返回 `artifacts.context_requests[]` 或顶层 `context_requests[]`，且 `token_economy.dynamic_context.auto_resolve: true`，Attestflow 会按 `context resolve` 同一协议本地解析请求，写出 `dynamic-context.json` 和 `output.context-request.json`，把 `resolved_dynamic_context` 注入下一次 provider input，并自动重试一次。重试后仍 `blocked` 时按普通 blocked capability 处理。
 
 Task-scoped typed artifact 规则：
 

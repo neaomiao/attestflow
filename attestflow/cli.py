@@ -19,6 +19,8 @@ from .ci import BUILTIN_CI_PROVIDERS, list_ci_providers, run_ci_action, run_ci_s
 from .config import load_config, validate_config
 from .context import resolve_dynamic_context_request
 from .contracts import CONTRACT_TYPES, validate_contract_file
+from .dashboard import export_dashboard
+from .evidence_lifecycle import maintain_evidence
 from .governance import SCHEMA_TYPES, governance_policy, json_schema_for, migrate_file, openapi_document
 from .io import dump_data, load_data
 from .evidence_export import export_autopilot_bundle, export_release_bundle, export_task_evidence, verify_evidence_bundle
@@ -33,13 +35,15 @@ from .orchestrator import (
     run_autopilot,
 )
 from .planner import import_planner_tasks
-from .plugins import discover_plugins
+from .plugins import discover_plugins, run_plugin_command
+from .policy_packs import apply_policy_pack, list_policy_packs, validate_policy_pack
 from .pr import list_pr_providers, run_pr_ensure, run_pr_merge, run_pr_status
 from .provider_commands import shell_command_exists as _shared_shell_command_exists
 from .provider_contracts import run_provider_contract_suite
 from .provider_smoke import run_provider_readiness_suite
 from .recovery import recover_runtime
 from .release import list_release_providers, run_release_status
+from .release_trust import generate_release_trust
 from .resume import resume_summary
 from .runner import run_verification
 from .secrets import secret_scan
@@ -123,6 +127,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     (target / "harness" / "git-runs").mkdir(parents=True, exist_ok=True)
     (target / "harness" / "pr-runs").mkdir(parents=True, exist_ok=True)
     (target / "harness" / "release-runs").mkdir(parents=True, exist_ok=True)
+    (target / "harness" / "plugin-runs").mkdir(parents=True, exist_ok=True)
     (target / "harness" / "context-cache").mkdir(parents=True, exist_ok=True)
     (target / "harness" / "provider-cache").mkdir(parents=True, exist_ok=True)
     (target / "harness" / "locks").mkdir(parents=True, exist_ok=True)
@@ -235,6 +240,64 @@ def cmd_plugin_list(args: argparse.Namespace) -> int:
         for error in report["errors"]:
             print(f"ERROR: {error['manifest']}: {error['error']}", file=sys.stderr)
     return 1 if report["errors"] else 0
+
+
+def cmd_plugin_run(args: argparse.Namespace) -> int:
+    try:
+        input_payload = load_data(Path(args.from_json))
+        result = run_plugin_command(ROOT, load_config(ROOT), args.plugin, args.plugin_command_name, input_payload)
+    except (OSError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        print(f"plugin {result['plugin']}.{result['command']}: {result['run_path']}")
+    return 0
+
+
+def cmd_policy_list(args: argparse.Namespace) -> int:
+    report = list_policy_packs(ROOT, load_config(ROOT))
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        if not report["packs"]:
+            print("no policy packs found")
+        for pack in report["packs"]:
+            print(f"{pack['name']}\t{pack['version']}\t{pack['path']}")
+        for error in report["errors"]:
+            print(f"ERROR: {error['path']}: {error['error']}", file=sys.stderr)
+    return 1 if report["errors"] else 0
+
+
+def cmd_policy_validate(args: argparse.Namespace) -> int:
+    try:
+        report = validate_policy_pack(ROOT, load_config(ROOT), args.name)
+    except (OSError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    elif report["status"] == "passed":
+        print(f"policy pack valid: {args.name}")
+    else:
+        for error in report["errors"]:
+            print(f"ERROR: {error}", file=sys.stderr)
+    return 0 if report["status"] == "passed" else 1
+
+
+def cmd_policy_apply(args: argparse.Namespace) -> int:
+    try:
+        result = apply_policy_pack(ROOT, load_config(ROOT), args.name, output_path=Path(args.out) if args.out else None)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        suffix = f": {result['output_path']}" if result.get("output_path") else ""
+        print(f"policy pack applied: {args.name}{suffix}")
+    return 0
 
 
 def cmd_governance_policy(args: argparse.Namespace) -> int:
@@ -872,6 +935,7 @@ def _doctor_runtime_layout_errors(root: Path, config: dict) -> list[str]:
         ("git_runs", "harness/git-runs"),
         ("pr_runs", "harness/pr-runs"),
         ("release_runs", "harness/release-runs"),
+        ("plugin_runs", "harness/plugin-runs"),
     ):
         path = root / str(paths.get(key, default))
         if not path.is_dir():
@@ -1758,8 +1822,10 @@ def cmd_evidence(args: argparse.Namespace) -> int:
             return _cmd_evidence_bundle(evidence_args[1:])
         if evidence_args[0] == "verify":
             return _cmd_evidence_verify(evidence_args[1:])
+        if evidence_args[0] == "maintain":
+            return _cmd_evidence_maintain(evidence_args[1:])
         if len(evidence_args) != 1:
-            print("ERROR: use evidence TASK, evidence export TASK --out DIR, evidence bundle, or evidence verify", file=sys.stderr)
+            print("ERROR: use evidence TASK, evidence export TASK --out DIR, evidence bundle, evidence verify, or evidence maintain", file=sys.stderr)
             return 1
         task_id = evidence_args[0]
     else:
@@ -1854,6 +1920,63 @@ def _cmd_evidence_bundle(args: list[str]) -> int:
         return 1
     print(f"manifest: {result.manifest_path}")
     print(f"audit: {result.output_dir / 'audit.md'}")
+    return 0
+
+
+def _cmd_evidence_maintain(args: list[str]) -> int:
+    retention_days: int | None = None
+    max_file_bytes = 131072
+    apply = False
+    redact = False
+    compact = False
+    json_output = False
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--retention-days" and index + 1 < len(args):
+            retention_days = int(args[index + 1])
+            index += 2
+            continue
+        if arg == "--max-file-bytes" and index + 1 < len(args):
+            max_file_bytes = int(args[index + 1])
+            index += 2
+            continue
+        if arg == "--apply":
+            apply = True
+            index += 1
+            continue
+        if arg == "--redact":
+            redact = True
+            index += 1
+            continue
+        if arg == "--compact":
+            compact = True
+            index += 1
+            continue
+        if arg == "--json":
+            json_output = True
+            index += 1
+            continue
+        print(f"ERROR: unknown evidence maintain argument: {arg}", file=sys.stderr)
+        return 1
+    try:
+        report = maintain_evidence(
+            ROOT,
+            load_config(ROOT),
+            retention_days=retention_days,
+            apply=apply,
+            redact=redact,
+            compact=compact,
+            max_file_bytes=max_file_bytes,
+        )
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    if json_output:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        mode = "applied" if report["applied"] else "dry-run"
+        print(f"evidence maintain {mode}: {len(report['actions'])} actions")
     return 0
 
 
@@ -2104,9 +2227,35 @@ def cmd_release_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_release_trust(args: argparse.Namespace) -> int:
+    try:
+        report = generate_release_trust(ROOT, load_config(ROOT), output_dir=Path(args.out) if args.out else None)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(f"release trust {report['status']}: {report.get('output_dir')}")
+    return 0 if report["status"] == "passed" else 1
+
+
 def cmd_release_provider_list(_: argparse.Namespace) -> int:
     for provider in list_release_providers():
         print(f"{provider['name']}\t{provider['command']}\t{provider['description']}")
+    return 0
+
+
+def cmd_dashboard_export(args: argparse.Namespace) -> int:
+    try:
+        report = export_dashboard(ROOT, load_config(ROOT), Path(args.out))
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(f"dashboard exported: {report['output_dir']}")
     return 0
 
 
@@ -2314,6 +2463,27 @@ def build_parser() -> argparse.ArgumentParser:
     plugin_list = plugin_subparsers.add_parser("list")
     plugin_list.add_argument("--json", action="store_true")
     plugin_list.set_defaults(func=cmd_plugin_list)
+    plugin_run = plugin_subparsers.add_parser("run")
+    plugin_run.add_argument("plugin")
+    plugin_run.add_argument("plugin_command_name")
+    plugin_run.add_argument("--from-json", required=True)
+    plugin_run.add_argument("--json", action="store_true")
+    plugin_run.set_defaults(func=cmd_plugin_run)
+
+    policy = subparsers.add_parser("policy")
+    policy_subparsers = policy.add_subparsers(dest="policy_command", required=True)
+    policy_list = policy_subparsers.add_parser("list")
+    policy_list.add_argument("--json", action="store_true")
+    policy_list.set_defaults(func=cmd_policy_list)
+    policy_validate = policy_subparsers.add_parser("validate")
+    policy_validate.add_argument("name")
+    policy_validate.add_argument("--json", action="store_true")
+    policy_validate.set_defaults(func=cmd_policy_validate)
+    policy_apply = policy_subparsers.add_parser("apply")
+    policy_apply.add_argument("name")
+    policy_apply.add_argument("--out")
+    policy_apply.add_argument("--json", action="store_true")
+    policy_apply.set_defaults(func=cmd_policy_apply)
 
     governance = subparsers.add_parser("governance")
     governance_subparsers = governance.add_subparsers(dest="governance_command", required=True)
@@ -2532,8 +2702,18 @@ def build_parser() -> argparse.ArgumentParser:
     release_status = release_subparsers.add_parser("status")
     release_status.add_argument("--command")
     release_status.set_defaults(func=cmd_release_status)
+    release_trust = release_subparsers.add_parser("trust")
+    release_trust.add_argument("--out")
+    release_trust.add_argument("--json", action="store_true")
+    release_trust.set_defaults(func=cmd_release_trust)
 
     subparsers.add_parser("secret-scan").set_defaults(func=cmd_secret_scan)
+    dashboard = subparsers.add_parser("dashboard")
+    dashboard_subparsers = dashboard.add_subparsers(dest="dashboard_command", required=True)
+    dashboard_export = dashboard_subparsers.add_parser("export")
+    dashboard_export.add_argument("--out", required=True)
+    dashboard_export.add_argument("--json", action="store_true")
+    dashboard_export.set_defaults(func=cmd_dashboard_export)
     verify = subparsers.add_parser("verify")
     verify.add_argument("--task")
     verify.set_defaults(func=cmd_verify)

@@ -34,6 +34,7 @@ def recover_runtime(
 ) -> dict[str, Any]:
     issues: list[dict[str, Any]] = []
     actions: list[dict[str, Any]] = []
+    issues.extend(_missing_runtime_directory_issues(root, config))
     issues.extend(_orphan_autopilot_run_issues(root, config))
     issues.extend(_task_state_mismatch_issues(root, config))
     issues.extend(_stale_worktree_issues(root, config))
@@ -70,6 +71,29 @@ def _orphan_autopilot_run_issues(root: Path, config: dict[str, Any]) -> list[dic
             }
         )
     return issues
+
+
+def _missing_runtime_directory_issues(root: Path, config: dict[str, Any]) -> list[dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    task_root = _path(root, config, "tasks", "harness/tasks")
+    for state in sorted(TASK_STATES):
+        path = task_root / state
+        if not path.is_dir():
+            issues.append(_missing_directory_issue(root, path))
+    for key, default in _runtime_directory_defaults().items():
+        path = _path(root, config, key, default)
+        if not path.is_dir():
+            issues.append(_missing_directory_issue(root, path))
+    return issues
+
+
+def _missing_directory_issue(root: Path, path: Path) -> dict[str, Any]:
+    return {
+        "type": "missing_runtime_directory",
+        "path": _relative(root, path),
+        "summary": "runtime directory is missing",
+        "repair": "create the configured runtime directory",
+    }
 
 
 def _task_state_mismatch_issues(root: Path, config: dict[str, Any]) -> list[dict[str, Any]]:
@@ -182,6 +206,8 @@ def _apply_issue(
     issue_type = issue.get("type")
     if issue_type == "orphan_autopilot_run":
         return _repair_orphan_autopilot_run(root, config, issue)
+    if issue_type == "missing_runtime_directory":
+        return _create_runtime_directory(root, issue)
     if issue_type == "task_state_mismatch":
         return _move_task_to_recorded_state(root, config, issue)
     if issue_type == "stale_worktree":
@@ -189,6 +215,16 @@ def _apply_issue(
     if issue_type == "interrupted_session" and resume_interrupted:
         return _resume_interrupted_session(root, config, issue)
     return None
+
+
+def _create_runtime_directory(root: Path, issue: dict[str, Any]) -> dict[str, Any]:
+    path = root / str(issue["path"])
+    path.mkdir(parents=True, exist_ok=True)
+    return {
+        "type": "create_runtime_directory",
+        "status": "applied",
+        "path": _relative(root, path),
+    }
 
 
 def _repair_orphan_autopilot_run(root: Path, config: dict[str, Any], issue: dict[str, Any]) -> dict[str, Any]:
@@ -327,10 +363,26 @@ def _ledger_roots(root: Path, config: dict[str, Any]) -> list[Path]:
         "autopilot_runs": "harness/autopilot-runs",
         "capability_runs": "harness/capability-runs",
         "ci_runs": "harness/ci-runs",
+        "git_runs": "harness/git-runs",
         "pr_runs": "harness/pr-runs",
         "release_runs": "harness/release-runs",
+        "plugin_runs": "harness/plugin-runs",
     }
     return [_path(root, config, key, default) for key, default in defaults.items()]
+
+
+def _runtime_directory_defaults() -> dict[str, str]:
+    return {
+        "runs": "harness/runs",
+        "locks": "harness/locks",
+        "capability_runs": "harness/capability-runs",
+        "autopilot_runs": "harness/autopilot-runs",
+        "ci_runs": "harness/ci-runs",
+        "git_runs": "harness/git-runs",
+        "pr_runs": "harness/pr-runs",
+        "release_runs": "harness/release-runs",
+        "plugin_runs": "harness/plugin-runs",
+    }
 
 
 def _safe_to_remove(root: Path, path: Path) -> bool:

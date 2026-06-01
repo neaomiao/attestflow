@@ -121,6 +121,10 @@ python3 -m attestflow schema migrate --kind harness-config --from-json harness.y
 python3 -m attestflow schema export --type task --json
 python3 -m attestflow schema openapi --json
 python3 -m attestflow plugin list --json
+python3 -m attestflow plugin run demo-plugin echo --from-json input.json --json
+python3 -m attestflow policy list --json
+python3 -m attestflow policy validate strict-local --json
+python3 -m attestflow policy apply strict-local --out merged-harness.yml --json
 python3 -m attestflow governance policy --json
 python3 -m attestflow validate-task harness/tasks/ready/TASK-0001.json
 python3 -m attestflow contract validate capability-output output.json
@@ -151,6 +155,8 @@ python3 -m attestflow evidence export TASK-0001 --out attestflow-artifacts/TASK-
 python3 -m attestflow evidence bundle --run RUN --out attestflow-artifacts/RUN
 python3 -m attestflow evidence bundle --release RELEASE --out attestflow-artifacts/RELEASE
 python3 -m attestflow evidence verify attestflow-artifacts/RUN --check-source
+python3 -m attestflow evidence maintain --retention-days 90 --redact --compact --apply
+python3 -m attestflow dashboard export --out attestflow-dashboard --json
 python3 -m attestflow resume
 python3 -m attestflow session resume TASK-0001
 python3 -m attestflow provider list
@@ -165,6 +171,7 @@ python3 -m attestflow pr ensure TASK-0001
 python3 -m attestflow pr merge TASK-0001
 python3 -m attestflow pr status TASK-0001
 python3 -m attestflow release status
+python3 -m attestflow release trust --out attestflow-release-trust --json
 python3 -m attestflow secret-scan
 ```
 
@@ -190,18 +197,18 @@ python3 -m attestflow secret-scan
 
 - 受限 YAML 子集读写
 - `harness.yml` 校验
-- `init --adapter <adapter> --agent-provider codex|claude-code|opencode` 写入项目 adapter 和内置 provider preset；内置 adapter 覆盖 generic、Python、Node、Go、Rust、monorepo、Docker、Bazel、Java、Kotlin、.NET、Swift、Dart、Ruby、PHP，并按项目文件生成基础验证命令；`doctor` 检查配置、项目命令 executable、runtime 目录、任务 schema、provider CLI 和 provider preflight
+- `init --adapter <adapter> --agent-provider codex|claude-code|opencode` 写入项目 adapter 和内置 provider preset；内置 adapter 覆盖 generic、Python、Node、Go、Rust、monorepo、Docker、Bazel、Java、Kotlin、.NET、Swift、Dart、Ruby、PHP，并按项目文件生成基础验证命令；`doctor` 和 `autonomy doctor` 使用同一组 runtime 目录真相源检查任务、run、Git/CI/PR/release/plugin evidence 目录、任务 schema、provider CLI 和 provider preflight；`recover --apply` 可重建缺失 runtime 目录
 - `contract validate` 校验 planner、capability、session、Git、CI、PR、release 和 runtime task contract，provider 作者可以直接定位输出字段错误
-- provider output 可选记录真实模型 `usage`，成功 run 会保留 `usage.json` 或 session usage evidence；`usage report` 会聚合 capability、session、CI、Git、PR 和 release provider 的 token/cost 用量
-- token economy 控制层：输入预算门、context cache、动态 context resolve、incremental context、evidence 摘要和可选 provider result cache，用于减少重复上下文和重复模型调用
+- provider output 可选记录真实模型 `usage`，成功 run 会保留 `usage.json` 或 session usage evidence；`usage report` 会聚合 capability、session、CI、Git、PR、release 和 plugin provider 的 token/cost 用量
+- token economy 控制层：输入预算门、context cache、动态 context resolve、incremental context、evidence 摘要和可选 provider result cache，用于减少重复上下文和重复模型调用；capability output 可返回 `artifacts.context_requests[]`，Attestflow 会本地解析允许的局部 context 并自动重试一次
 - 内置 capability registry：intake、planner、bdd、tdd、implementer、reviewer、verifier、releaser
 - 内置 capability provider adapter：Codex、Claude Code、OpenCode preset 可直接驱动 `plan` 和 `capability run`
 - `plan` programming agent provider：调用编程 Agent provider，保存 capability 输入/输出证据并导入 runtime task JSON
 - `capability run` task programming agent provider：对单个任务执行 `bdd`、`tdd`、`implementer`、`reviewer` 或 `verifier`，校验 capability output schema，保存 evidence 并写回任务证据索引；`releaser` 由 top-level release gate 调用
-- 自动仓库上下文：收集文件树、核心文档和任务 focus files，写入 capability provider input；超过 token budget 时自动把全文替换为摘要和 cache key，并允许 provider 后续按需请求局部 context
+- 自动仓库上下文：收集文件树、核心文档和任务 focus files，写入 capability provider input；超过 token budget 时自动把全文替换为摘要和 cache key，并允许 provider 后续按需请求局部 context；自动解析结果保存在 `dynamic-context.json`
 - AI planner JSON 导入为 runtime task JSON
 - 外部来源导入：GitHub issue、Linear/Jira ticket、PR review comment 和 CI failure 会保存 source evidence，并进入 `proposed` task 队列等待 intake/planner
-- 治理和版本演进：`schema migrate/export/openapi`、provider `contract_version` 校验、`plugin list` 注册发现、`governance policy` 发布和破坏性变更规则
+- 治理和版本演进：`schema migrate/export/openapi`、provider `contract_version` 校验、`plugin list` 注册发现、`plugin run` 执行 manifest command、`policy list/validate/apply` 本地 policy pack、`governance policy` 发布和破坏性变更规则
 - task schema 校验
 - `next` 调度单个最高优先级任务
 - `autopilot --dry-run` 生成只读执行计划，优先展示 active-task 下一步动作和 repair mode，否则按依赖、优先级、锁、写范围冲突、`max_test_cost` 和 `max_model_tokens` 展示 ready 批次与跳过原因
@@ -211,7 +218,7 @@ python3 -m attestflow secret-scan
 - `autopilot --resume` 复用最新 autopilot run 的 `metadata.json` 和 `ledger.jsonl`，继续执行并追加事件
 - `autopilot --status` 读取最新 `harness/autopilot-runs/*/metadata.json`，输出顶层 run 状态、暂停原因、planned tasks、releaser、release 和 blocked/failed 摘要，支持 `--json`
 - `inspect --run RUN` 把 autopilot run 的 `metadata.json`、`ledger.jsonl`、blocked task 文件和 provider `failure.json` 汇总成 timeline、blocker dashboard、provider failure drilldown 和 next-action；`inspect --diff OLD NEW` 对比两个 run 的状态、actions、planned/dispatched 和 release 变化，支持 `--json`
-- `recover` 检查孤儿 autopilot run、task 文件状态错位、已 finalized 但未清理的 worktree、被取消的 provider session；默认只报告，`recover --apply` 会修复可确定修复的 runtime 状态并写入 `harness/snapshots/ledger-snapshot-*.json`；`--resume-interrupted` 会显式调用 session resume adapter 恢复中断 provider session
+- `recover` 检查缺失 runtime 目录、孤儿 autopilot run、task 文件状态错位、已 finalized 但未清理的 worktree、被取消的 provider session；默认只报告，`recover --apply` 会修复可确定修复的 runtime 状态并写入 `harness/snapshots/ledger-snapshot-*.json`；`--resume-interrupted` 会显式调用 session resume adapter 恢复中断 provider session
 - `dispatch --limit N` 批量调度依赖已满足、写范围不冲突且未被锁定的 ready 任务；每个任务自动创建独立 agent session、prompt packet、锁和 run evidence，并可调用编程 Agent session adapter
 - 可选 per-task git worktree 隔离：session adapter、capability 和 verify command 在任务 worktree 中执行，close 时用 ff-only merge 把 task commit 合回控制项目
 - `session resume` 通过同一 session adapter 合同恢复外部编程 Agent 会话
@@ -220,7 +227,9 @@ python3 -m attestflow secret-scan
 - CI provider contract：`ci status` / `ci await` / `ci logs` / `ci artifacts` / `ci rerun` / `ci dispatch` 保存外部 CI 状态、日志、产物和动作 evidence；`--task TASK-*` 同时写回 `task.evidence.ci`；内置 GitHub Actions preset 支持 PR/SHA 精确筛选、failed log 和 artifact evidence
 - PR provider contract：`pr ensure` 创建或更新外部 PR/change request，`pr merge` 请求合并，`pr status` 保存外部 PR/change 状态 evidence；带 task id 时写回 `task.evidence.pr_request` / `task.evidence.pr_merge` / `task.evidence.pr`；可由 command provider 接任意代码托管系统
 - Release provider contract：`release status` 接收已完成任务摘要和 PR/CI evidence，保存外部发布 evidence；可由 command provider 接任意发布系统
-- `evidence export TASK-* --out DIR` 导出 task、run、ledger、capability output 和 manifest；`evidence bundle --run/--release` 导出顶层交付 evidence、release bundle、PR comment artifact、可复现 manifest 和 audit report；`evidence verify DIR --check-source` 校验 bundle hash/size 并检测源 evidence 是否过期
+- `evidence export TASK-* --out DIR` 导出 task、run、ledger、capability output 和 manifest；`evidence bundle --run/--release` 导出顶层交付 evidence、release bundle、PR comment artifact、可复现 manifest 和 audit report；`evidence verify DIR --check-source` 校验 bundle hash/size 并检测源 evidence 是否过期；`evidence maintain` 可按 retention 做本地 GC、secret redaction 和大日志 compaction
+- `dashboard export --out DIR` 生成零依赖本地 HTML dashboard 和 `data.json`，用于查看 task state、最新 run 和交付 evidence 状态
+- `release trust --out DIR` 生成本地 release trust 包：`sbom.json`、`provenance.json`、`checklist.md`、`report.json` 和带 SHA-256 的 `manifest.json`，检查 pyproject、Python matrix、build、install-smoke 和 artifact upload
 - `start` 低层状态推进入口，也会创建 session packet
 - 结构化 blocker 协议：`blockers[]` 记录 reason、unblock condition、owner、source；`block` / `unblock` 推进阻塞生命周期
 - session adapter 或 capability output 返回 `blocked` 时，自动把任务移入 `blocked` 并写入 active blocker

@@ -49,8 +49,10 @@ def _runtime_layout_check(root: Path, config: dict[str, Any]) -> dict[str, str]:
         ("capability_runs", "harness/capability-runs"),
         ("autopilot_runs", "harness/autopilot-runs"),
         ("ci_runs", "harness/ci-runs"),
+        ("git_runs", "harness/git-runs"),
         ("pr_runs", "harness/pr-runs"),
         ("release_runs", "harness/release-runs"),
+        ("plugin_runs", "harness/plugin-runs"),
     ):
         if not (root / str(paths.get(key, default))).is_dir():
             missing.append(str(root / str(paths.get(key, default))))
@@ -135,6 +137,8 @@ def _permission_boundary_check(root: Path, config: dict[str, Any]) -> dict[str, 
             ("locks", "harness/locks"),
             ("capability_runs", "harness/capability-runs"),
             ("autopilot_runs", "harness/autopilot-runs"),
+            ("git_runs", "harness/git-runs"),
+            ("plugin_runs", "harness/plugin-runs"),
         )
     ]
     missing_parent = [str(path.parent) for path in writable_paths if not path.exists() and not path.parent.exists()]

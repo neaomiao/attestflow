@@ -87,6 +87,7 @@ def run_provider_json_command(
     argv = provider_command_argv(command)
     policy = _provider_command_policy(payload)
     payload["security"] = _provider_security_payload(root, payload, policy)
+    policy = payload["security"]["provider_commands"]
     dump_data(payload, run_path / "input.json")
     command_error = _command_allowlist_error(argv, policy)
     if command_error:
@@ -101,6 +102,7 @@ def run_provider_json_command(
     process = subprocess.Popen(
         argv,
         cwd=root,
+        env=_provider_process_env(policy),
         text=True,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
@@ -224,9 +226,73 @@ def _provider_command_policy(payload: dict[str, Any]) -> dict[str, Any]:
 def _provider_security_payload(root: Path, payload: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
     security = payload.get("security", {})
     normalized = dict(security) if isinstance(security, dict) else {}
-    normalized["provider_commands"] = dict(policy)
+    normalized_policy = dict(policy)
+    normalized_policy["sandbox"] = _sandbox_policy(normalized_policy, security)
+    normalized["provider_commands"] = normalized_policy
     normalized["approval"] = _approval_payload(root, payload, policy)
     return normalized
+
+
+def _sandbox_policy(policy: dict[str, Any], security: Any) -> dict[str, Any]:
+    sandbox = policy.get("sandbox", {})
+    sandbox = sandbox if isinstance(sandbox, dict) else {}
+    network = sandbox.get("network")
+    if not network and isinstance(security, dict):
+        network_config = security.get("network", {})
+        if isinstance(network_config, dict):
+            network = network_config.get("mode")
+    mode = sandbox.get("mode")
+    return {
+        "mode": mode if mode in {"inherit-env", "restricted-env"} else "inherit-env",
+        "allowed_env": _string_list(sandbox.get("allowed_env")),
+        "blocked_env": _string_list(sandbox.get("blocked_env")),
+        "blocked_env_prefixes": _string_list(sandbox.get("blocked_env_prefixes")),
+        "network": network if network in {"provider-owned", "disabled"} else "provider-owned",
+    }
+
+
+def _provider_process_env(policy: dict[str, Any]) -> dict[str, str]:
+    sandbox = _sandbox_policy(policy, {})
+    if sandbox["mode"] == "restricted-env":
+        env = _restricted_base_env()
+        for key in sandbox["allowed_env"]:
+            if key in os.environ:
+                env[key] = os.environ[key]
+    else:
+        env = dict(os.environ)
+    for key in sandbox["blocked_env"]:
+        env.pop(key, None)
+    for prefix in sandbox["blocked_env_prefixes"]:
+        for key in list(env):
+            if key.startswith(prefix):
+                env.pop(key, None)
+    if sandbox["network"] == "disabled":
+        env["ATTESTFLOW_NETWORK"] = "disabled"
+        for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+            env.pop(key, None)
+    return env
+
+
+def _restricted_base_env() -> dict[str, str]:
+    defaults = (
+        "PATH",
+        "HOME",
+        "TMPDIR",
+        "TEMP",
+        "TMP",
+        "LANG",
+        "LC_ALL",
+        "SYSTEMROOT",
+        "COMSPEC",
+        "PATHEXT",
+    )
+    return {key: os.environ[key] for key in defaults if key in os.environ}
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item)]
 
 
 def _command_allowlist_error(argv: list[str], policy: dict[str, Any]) -> str | None:

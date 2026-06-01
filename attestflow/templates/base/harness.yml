@@ -13,6 +13,7 @@ paths:
   git_runs: harness/git-runs
   pr_runs: harness/pr-runs
   release_runs: harness/release-runs
+  plugin_runs: harness/plugin-runs
   sources: harness/sources
   docs: docs
 commands:
@@ -35,6 +36,12 @@ security:
     allowlist: []
     max_output_bytes: 1048576
     require_approval_for_irreversible: true
+    sandbox:
+      mode: inherit-env
+      allowed_env: []
+      blocked_env: []
+      blocked_env_prefixes: []
+      network: provider-owned
   network:
     mode: provider-owned
   filesystem:
@@ -115,6 +122,10 @@ token_economy:
     path: harness/provider-cache
   incremental_context:
     enabled: true
+  dynamic_context:
+    enabled: true
+    auto_resolve: true
+    max_requests: 5
   evidence_summary:
     enabled: true
     max_output_bytes: 2000
@@ -130,3 +141,6 @@ integrations:
 plugins:
   directories:
     - harness/plugins
+policy_packs:
+  directories:
+    - harness/policies
