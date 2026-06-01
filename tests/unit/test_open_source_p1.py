@@ -436,6 +436,9 @@ class OpenSourceP1Tests(unittest.TestCase):
             self.assertIn(f"install-mode: {install_mode}", text)
         self.assertIn("attestflow install-smoke --offline", text)
         self.assertIn("attestflow install-smoke --check-template-mirror", text)
+        self.assertIn('PATH="$PWD/.venv/bin:$PATH" attestflow install-smoke --offline', text)
+        self.assertIn('PIPX_BIN_DIR="$(python -m pipx environment --value PIPX_BIN_DIR)"', text)
+        self.assertIn('PATH="$PIPX_BIN_DIR:$PATH" attestflow install-smoke --offline', text)
 
     def test_package_data_explicitly_includes_dot_github_template(self) -> None:
         pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
