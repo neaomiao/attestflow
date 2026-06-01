@@ -69,6 +69,7 @@ class BilingualOnboardingTests(unittest.TestCase):
             target = Path(tmp) / "repo"
             target.mkdir()
             (target / "pyproject.toml").write_text("[project]\nname = 'demo'\n", encoding="utf-8")
+            (target / "README.zh-CN.md").write_text("用户已有中文 README\n", encoding="utf-8")
             env = os.environ.copy()
             env["PYTHONPATH"] = str(ROOT)
             env["ATTESTFLOW_SKIP_INSTALL"] = "1"
@@ -101,7 +102,17 @@ class BilingualOnboardingTests(unittest.TestCase):
             self.assertEqual(config["project"]["adapter"], "python")
             adapter_readme = target / "harness" / "adapters" / "python" / "README.md"
             self.assertIn("用于 Python 项目", adapter_readme.read_text(encoding="utf-8"))
-            self.assertFalse((target / "harness" / "adapters" / "python" / "README.zh-CN.md").exists())
+            ready_gate = target / "harness" / "gates" / "definition_of_ready.yml"
+            roles = target / "harness" / "agents" / "roles.yml"
+            planner_example = target / "harness" / "planner-output.example.json"
+            workflow = target / ".github" / "workflows" / "ci.yml"
+            self.assertIn("实现开始前，任务状态必须是 ready", ready_gate.read_text(encoding="utf-8"))
+            self.assertIn("任务状态", roles.read_text(encoding="utf-8"))
+            self.assertIn("替换为 AI planner 正在拆解的用户目标", planner_example.read_text(encoding="utf-8"))
+            self.assertIn("安装 Attestflow", workflow.read_text(encoding="utf-8"))
+            self.assertEqual((target / "README.zh-CN.md").read_text(encoding="utf-8"), "用户已有中文 README\n")
+            self.assertEqual(list((target / "harness").rglob("*zh-CN*")), [])
+            self.assertEqual(list((target / ".github").rglob("*zh-CN*")), [])
 
     def test_bootstrap_script_runs_under_zsh_when_available(self) -> None:
         zsh = shutil.which("zsh")
@@ -139,7 +150,11 @@ class BilingualOnboardingTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             config = load_data(target / "harness.yml")
             self.assertEqual(config["project"]["language"], "en")
-            self.assertFalse((target / "harness" / "adapters" / "generic" / "README.zh-CN.md").exists())
+            ready_gate = target / "harness" / "gates" / "definition_of_ready.yml"
+            planner_example = target / "harness" / "planner-output.example.json"
+            self.assertIn("state must be ready before implementation starts", ready_gate.read_text(encoding="utf-8"))
+            self.assertIn("Replace this with the user goal", planner_example.read_text(encoding="utf-8"))
+            self.assertEqual(list(target.rglob("*zh-CN*")), [])
 
 
 if __name__ == "__main__":

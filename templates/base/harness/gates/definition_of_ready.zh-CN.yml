@@ -1,0 +1,14 @@
+required:
+  - purpose
+  - scope
+  - out_of_scope
+  - bdd_scenarios
+  - unit_tests
+  - acceptance
+  - dependencies
+  - files.write
+rules:
+  - 实现开始前，任务状态必须是 ready
+  - requirements.unresolved 必须为空，除非任务类型是 spike
+  - files.write 必须与活动 locks 不重叠
+  - 必需的外部输入必须存在，否则任务必须进入 blocked

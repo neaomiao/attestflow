@@ -120,7 +120,8 @@ def cmd_init(args: argparse.Namespace) -> int:
         return 1
     shutil.copytree(source, target, dirs_exist_ok=True)
     shutil.copytree(adapter_source, target / "harness" / "adapters" / str(adapter), dirs_exist_ok=True)
-    _select_initialized_adapter_language(target, str(adapter), str(language))
+    _select_initialized_language_files(target, source, str(language))
+    _select_initialized_language_files(target / "harness" / "adapters" / str(adapter), adapter_source, str(language))
     _configure_initialized_adapter(target, str(adapter))
     _configure_initialized_language(target, str(language))
     _configure_initialized_agent_provider(target, agent_provider, agent_command)
@@ -467,14 +468,25 @@ def _configure_initialized_language(target: Path, language: str) -> None:
     dump_data(config, config_path)
 
 
-def _select_initialized_adapter_language(target: Path, adapter: str, language: str) -> None:
-    adapter_dir = target / "harness" / "adapters" / adapter
-    english_readme = adapter_dir / "README.md"
-    chinese_readme = adapter_dir / "README.zh-CN.md"
-    if language == "zh-CN" and chinese_readme.exists():
-        english_readme.write_text(chinese_readme.read_text(encoding="utf-8"), encoding="utf-8")
-    if chinese_readme.exists():
-        chinese_readme.unlink()
+def _select_initialized_language_files(target_root: Path, template_root: Path, language: str) -> None:
+    for template_variant in sorted(template_root.rglob("*")):
+        if not template_variant.is_file():
+            continue
+        base_relative = _language_variant_base_path(template_variant.relative_to(template_root))
+        if base_relative is None:
+            continue
+        variant = target_root / template_variant.relative_to(template_root)
+        base_path = target_root / base_relative
+        if language == "zh-CN":
+            base_path.write_bytes(variant.read_bytes())
+        variant.unlink()
+
+
+def _language_variant_base_path(path: Path) -> Path | None:
+    marker = ".zh-CN."
+    if marker not in path.name:
+        return None
+    return path.with_name(path.name.replace(marker, ".", 1))
 
 
 def _configure_python_adapter_defaults(target: Path, config: dict, project: dict) -> None:
