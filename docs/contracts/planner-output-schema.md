@@ -72,7 +72,7 @@ Planner 必须输出 JSON object：
 
 ## 导入规则
 
-`attestflow task import --from-json PLAN` 和 `attestflow plan "目标"` 必须最终走同一套导入规则：
+`attestflow task import --from-json PLAN` 和 planner capability 输出必须最终走同一套导入规则。二者只能消费 approved spec 派生出的上下文，或已经由外部流程批准边界的 planner JSON；raw 文本、raw PRD 或未批准 source evidence 必须先走 `attestflow go <requirement source>` 生成并批准 spec。
 
 - 分配递增的 `TASK-*` ID
 - 忽略或覆盖编程 Agent 提供的 task id
@@ -82,7 +82,7 @@ Planner 必须输出 JSON object：
 - 任一任务不合法时拒绝整个导入
 - 全部任务通过校验后才写入任务文件
 
-`attestflow plan` 额外负责：
+Planner capability 额外负责：
 
 - 构造 planner capability input
 - 调用 `capabilities.planner.command` 或 `--command`

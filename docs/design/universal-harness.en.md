@@ -171,11 +171,12 @@ Adapter-generated files can be edited by the project; `harness.yml` remains the 
 1. Run the one-command bootstrap or `python -m attestflow init --adapter <adapter> --language en|zh-CN --agent-provider <provider>`.
 2. Run `python -m attestflow doctor`.
 3. Have the programming agent review generated config and project commands.
-4. Generate planner JSON from the goal and repository context.
-5. Run `python -m attestflow task import --from-json plan.json`.
-6. Audit execution with `autopilot --dry-run`.
-7. Run `autopilot --run` or `dispatch`.
-8. Let capabilities advance BDD, unit tests, implementation, review, verification, PR/CI gates, close, and release evidence.
+4. Run `python -m attestflow go <requirement-source>` so raw text or documents become source evidence and a draft spec.
+5. Review the draft spec, complete clarification, and ensure `Open Questions` is `None`, `无`, or empty.
+6. After approval, run `python -m attestflow go --from-spec harness/specs/SPEC-0001/spec.md --approve --non-interactive` so the approved spec becomes planner JSON and imported tasks. Advanced flows may pass planner JSON derived from an approved spec to `python -m attestflow task import --from-json plan.json`.
+7. Audit execution with `autopilot --dry-run`.
+8. Run `autopilot --run` or `dispatch`.
+9. Let capabilities advance BDD, unit tests, implementation, review, verification, PR/CI gates, close, and release evidence.
 
 ## Acceptance Criteria
 

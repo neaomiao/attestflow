@@ -46,7 +46,7 @@ Each task must have purpose, scope, out-of-scope, BDD scenarios, unit tests, acc
 
 ## Source Intake
 
-External tickets, issues, review comments, and CI failures should first enter through `source import`. Planner output then turns that source evidence into executable task boundaries.
+External tickets, issues, review comments, and CI failures should first enter through source intake and then converge into an approved spec. Planner output turns the approved spec, not raw source evidence, into executable task JSON.
 
 ## Retry
 

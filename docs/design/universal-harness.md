@@ -317,17 +317,18 @@ git merge --ff-only <task-commit>
 任务产生分两层：
 
 ```text
-programming agent provider -> planner JSON -> attestflow task import -> task JSON
+approved spec -> programming agent provider -> planner JSON -> attestflow task import -> task JSON
 ```
 
-编程 Agent 负责判断和拆解，不直接写 `harness/tasks/**/*.json`。现在有两条等价入口：
+编程 Agent 负责判断和拆解，不直接写 `harness/tasks/**/*.json`。正式 requirement source 入口只有一条：
 
 ```bash
-python -m attestflow plan "目标描述"
-python -m attestflow task import --from-json PLAN.json
+python -m attestflow go <requirement-source>
 ```
 
-`plan` 会构造标准 capability input，调用 `--command`、`capabilities.planner.command` 或内置 provider adapter，将 stdout 作为 planner JSON，再复用 `task import`。Attestflow 接收 planner JSON 后执行确定性处理：
+Raw 文本、PRD、Issue、评审意见或 CI failure 不能绕过 draft spec 和 approval 直接进入 planner 或 `task import`。低层 `plan` / `task import --from-json` 能力仍然存在，但只能用于 approved spec 派生出的上下文，或已经由外部流程批准边界的 planner JSON；它们不是 raw goal 的等价入口。
+
+`go --from-spec SPEC-####/spec.md --approve` 会把 approved spec 内容作为 planner capability input，调用 `--command`、`capabilities.planner.command` 或内置 provider adapter，将 stdout 作为 planner JSON，再复用 `task import`。Attestflow 接收 planner JSON 后执行确定性处理：
 
 - 分配递增的 `TASK-*` ID
 - 解析 planner 内部 `key` 依赖
@@ -547,6 +548,8 @@ python -m attestflow init --adapter python --agent-provider codex
 python -m attestflow doctor
 python -m attestflow validate-config
 python -m attestflow validate-task TASK
+python -m attestflow go REQUIREMENT_SOURCE
+python -m attestflow go --from-spec harness/specs/SPEC-0001/spec.md --approve --non-interactive
 python -m attestflow task import --from-json PLAN.json
 python -m attestflow source import --kind github-issue --from-json ISSUE.json
 python -m attestflow schema migrate --kind harness-config --from-json harness.yml --write
@@ -596,8 +599,10 @@ python -m attestflow secret-scan
 - `doctor`：检查配置、项目命令 executable、runtime 目录、任务 schema、provider CLI 和 provider preflight；不执行项目任务，但会尽早暴露缺少测试命令、登录、授权或凭证不可用。
 - `validate-config`：验证 `harness.yml`。
 - `validate-task`：验证 schema、状态、目录、依赖和门禁。
-- `task import --from-json`：导入编程 Agent 输出的 planner JSON，校验后写入 runtime task JSON。
-- `source import --kind github-issue|linear-ticket|jira-ticket|pr-review-comment|ci-failure --from-json FILE`：保存外部来源快照到 `harness/sources`，并创建带 `source` 元数据的 `proposed` task；后续仍由 intake/planner 生成可执行 ready task。
+- `go REQUIREMENT_SOURCE`：把 raw 文本或文档保存为 source evidence，生成 draft spec，并在 approval 前停止。
+- `go --from-spec SPEC --approve`：只在 spec 已批准且没有 open questions 时，把 approved spec 交给 planner/autopilot。
+- `task import --from-json`：导入已经批准边界的 planner JSON，校验后写入 runtime task JSON；它不是 raw PRD 或 raw goal 的入口。
+- `source import --kind github-issue|linear-ticket|jira-ticket|pr-review-comment|ci-failure --from-json FILE`：保存外部来源快照到 `harness/sources`，并创建带 `source` 元数据的 `proposed` task；source evidence 后续必须先收敛成 approved spec，再由 planner 生成可执行 ready task。
 - `schema migrate/export/openapi`：迁移旧 harness 配置、导出 JSON Schema，并输出 OpenAPI 3.1 component schema，供 provider 作者和 CI 使用。
 - `plugin list`：从 `plugins.directories` 扫描 `plugin.json`，只做注册发现和 manifest 校验，不执行插件代码。
 - `governance policy`：输出支持的 schema version、provider contract version、稳定发布流程和 `1.0` 前破坏性变更规则。
@@ -778,18 +783,19 @@ python -m attestflow verify
 1. 运行 `python -m attestflow init --adapter python --agent-provider codex`，或按项目选择 `generic` / `node` / `monorepo` / `docker` / `bazel` / `java` / `kotlin` / `dotnet` / `swift` / `dart` / `ruby` / `php` 和 `claude-code` / `opencode`。
 2. 运行 `python -m attestflow doctor`，确认配置、目录、provider CLI 和 provider preflight 可用。
 3. 让 Agent 审核生成的 `harness.yml` 和项目命令，只有凭证或业务取舍需要人工确认。
-4. 让编程 Agent 根据目标和仓库上下文输出 planner JSON。
-5. 运行 `python -m attestflow task import --from-json plan.json`。
-6. 用 `python -m attestflow next` 选择下一个 ready 任务。
-7. 用 `python -m attestflow autopilot --dry-run --limit N` 审计执行批次和跳过原因。
-8. 用 `python -m attestflow autopilot --run --limit N --max-steps M` 创建顶层运行台账，并自动推进 planner、capability、review、verify、worktree apply、PR/CI gate、close 和 release provider；也可以运行 `python -m attestflow dispatch TASK-*` 或 `python -m attestflow dispatch --limit N` 手动分发。
-9. Agent 按 BDD -> unit -> implementation 执行。
-10. 运行 `python -m attestflow transition TASK-* review`。
-11. 运行 `python -m attestflow verify --task TASK-*`，把验证结果绑定到当前 run。
-12. 运行 `python -m attestflow transition TASK-* verified` 和 `python -m attestflow transition TASK-* accepted`。
-13. 如配置了外部交付 provider，运行 `python -m attestflow pr ensure TASK-*`、`python -m attestflow ci status --task TASK-*`、可选 `python -m attestflow pr merge TASK-*`、`python -m attestflow pr status TASK-*` 保存 evidence。
-14. 运行 `python -m attestflow close TASK-*`。
-15. 重复 `autopilot --dry-run -> autopilot --run`；自动路径会把 PR/CI/release evidence 收敛进同一个可恢复 autopilot loop。
+4. 运行 `python -m attestflow go <requirement-source>`，把 raw 文本或文档保存为 source evidence 并生成 draft spec。
+5. 审阅 draft spec，完成 clarification，确保 `Open Questions` 为 `None`、`无` 或空。
+6. 批准 spec 后运行 `python -m attestflow go --from-spec harness/specs/SPEC-0001/spec.md --approve --non-interactive`，由 approved spec 生成 planner JSON 并导入任务；高级流程也可以把 approved spec 派生出的 planner JSON 交给 `python -m attestflow task import --from-json plan.json`。
+7. 用 `python -m attestflow next` 选择下一个 ready 任务。
+8. 用 `python -m attestflow autopilot --dry-run --limit N` 审计执行批次和跳过原因。
+9. 用 `python -m attestflow autopilot --run --limit N --max-steps M` 创建顶层运行台账，并自动推进 planner、capability、review、verify、worktree apply、PR/CI gate、close 和 release provider；也可以运行 `python -m attestflow dispatch TASK-*` 或 `python -m attestflow dispatch --limit N` 手动分发。
+10. Agent 按 BDD -> unit -> implementation 执行。
+11. 运行 `python -m attestflow transition TASK-* review`。
+12. 运行 `python -m attestflow verify --task TASK-*`，把验证结果绑定到当前 run。
+13. 运行 `python -m attestflow transition TASK-* verified` 和 `python -m attestflow transition TASK-* accepted`。
+14. 如配置了外部交付 provider，运行 `python -m attestflow pr ensure TASK-*`、`python -m attestflow ci status --task TASK-*`、可选 `python -m attestflow pr merge TASK-*`、`python -m attestflow pr status TASK-*` 保存 evidence。
+15. 运行 `python -m attestflow close TASK-*`。
+16. 重复 `autopilot --dry-run -> autopilot --run`；自动路径会把 PR/CI/release evidence 收敛进同一个可恢复 autopilot loop。
 
 ## 验收标准
 
