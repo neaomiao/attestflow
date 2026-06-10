@@ -2,14 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import re
 from typing import Any
 
 from .requirements import ingest_requirement_source
-from .specs import create_draft_spec, require_approved_spec
-
-
-SPEC_PATH_ID_PATTERN = re.compile(r"^SPEC-\d{4}$")
+from .specs import approve_spec, create_draft_spec, require_approved_spec, validate_spec_path
 
 
 @dataclass(frozen=True)
@@ -28,12 +24,22 @@ def prepare_go_run(
     from_spec: Path | None = None,
     approve: bool = False,
     non_interactive: bool = False,
+    approved_by: str = "local-user",
 ) -> GoRunResult:
     if from_spec is not None:
         if not approve:
             raise ValueError("--from-spec requires --approve before execution")
-        _validate_from_spec_path(root, config, from_spec)
-        require_approved_spec(from_spec)
+        from_spec = validate_spec_path(root, config, from_spec)
+        if non_interactive:
+            require_approved_spec(from_spec)
+        else:
+            try:
+                require_approved_spec(from_spec)
+            except ValueError as exc:
+                if "spec is not approved" not in str(exc):
+                    raise
+                approve_spec(from_spec, approved_by=approved_by)
+                require_approved_spec(from_spec)
         return GoRunResult(
             status="approved",
             spec_id=from_spec.parent.name,
@@ -61,19 +67,3 @@ def _title_from_source(source: str, source_path: Path | None) -> str:
         title = source_path.stem.replace("-", " ").replace("_", " ").strip()
         return title or "Requirement Source"
     return source.strip().splitlines()[0][:80] or "Requirement Source"
-
-
-def _validate_from_spec_path(root: Path, config: dict[str, Any], from_spec: Path) -> None:
-    project_root = root.resolve()
-    specs_root = (root / str(config.get("paths", {}).get("specs", "harness/specs"))).resolve()
-    try:
-        specs_root.relative_to(project_root)
-    except ValueError as exc:
-        raise ValueError("configured specs directory must be under project root") from exc
-    spec_path = from_spec.resolve()
-    try:
-        relative = spec_path.relative_to(specs_root)
-    except ValueError as exc:
-        raise ValueError("spec path must be under configured specs directory") from exc
-    if len(relative.parts) != 2 or not SPEC_PATH_ID_PATTERN.match(relative.parts[0]) or relative.parts[1] != "spec.md":
-        raise ValueError("spec path must be SPEC-####/spec.md")

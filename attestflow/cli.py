@@ -36,6 +36,7 @@ from .orchestrator import (
     run_autopilot,
 )
 from .planner import import_planner_tasks
+from .specs import validate_approved_spec_provenance
 from .plugins import discover_plugins, run_plugin_command
 from .policy_packs import apply_policy_pack, list_policy_packs, validate_policy_pack
 from .pr import list_pr_providers, run_pr_ensure, run_pr_merge, run_pr_status
@@ -1198,7 +1199,13 @@ def cmd_autopilot(args: argparse.Namespace) -> int:
         print("ERROR: use --dry-run, --run, --resume, or --status; or --cancel/--logs", file=sys.stderr)
         return 1
     if args.goal and not args.run:
-        print("ERROR: --goal can only be used with --run", file=sys.stderr)
+        print("ERROR: --goal is not a user entrypoint; use attestflow go <requirement source>", file=sys.stderr)
+        return 1
+    if args.goal:
+        print(
+            "ERROR: --goal is not a user entrypoint; use attestflow go <requirement source> or go --from-spec SPEC --approve",
+            file=sys.stderr,
+        )
         return 1
     if args.loop and not (args.run or args.resume):
         print("ERROR: --loop can only be used with --run or --resume", file=sys.stderr)
@@ -1237,6 +1244,7 @@ def cmd_autopilot(args: argparse.Namespace) -> int:
                     actor_role=args.actor,
                     resume_path=resume_path,
                     goal=args.goal,
+                    approved_spec_path=None,
                     max_cycles=max_cycles,
                     interval_seconds=interval_seconds,
                 )
@@ -1305,6 +1313,7 @@ def _run_autopilot_loop(
     actor_role: str,
     resume_path: Path | None,
     goal: str | None,
+    approved_spec_path: Path | None,
     max_cycles: int,
     interval_seconds: float,
 ) -> tuple[AutopilotRunResult, int, str]:
@@ -1321,6 +1330,7 @@ def _run_autopilot_loop(
             actor_role=actor_role,
             resume_path=current_resume_path,
             goal=current_goal,
+            approved_spec_path=approved_spec_path,
         )
         cycles += 1
         if result.status != "paused":
@@ -2331,12 +2341,19 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 def cmd_task_import(args: argparse.Namespace) -> int:
     try:
+        if not args.from_spec or not args.approve:
+            raise ValueError("task import requires --from-spec SPEC-####/spec.md --approve")
+        config = load_config(ROOT)
+        spec_path = Path(args.from_spec)
+        if not spec_path.is_absolute():
+            spec_path = ROOT / spec_path
+        spec_path = validate_approved_spec_provenance(ROOT, config, spec_path)
         if args.from_json == "-":
             plan = json.load(sys.stdin)
         else:
             with Path(args.from_json).open(encoding="utf-8") as handle:
                 plan = json.load(handle)
-        records = import_planner_tasks(ROOT, load_config(ROOT), plan)
+        records = import_planner_tasks(ROOT, config, plan, approved_spec_path=spec_path)
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
@@ -2437,28 +2454,24 @@ def cmd_context_resolve(args: argparse.Namespace) -> int:
 
 
 def cmd_plan(args: argparse.Namespace) -> int:
-    goal = " ".join(args.goal).strip()
-    try:
-        result = run_planner_capability(ROOT, load_config(ROOT), goal, command=args.command)
-    except ValueError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
-    task_ids = ", ".join(str(record.task["id"]) for record in result.records)
-    print(f"planned and imported {len(result.records)} task(s): {task_ids}")
-    print(f"capability run: {result.run_path}")
-    return 0
+    print("ERROR: plan is disabled for raw goals; use attestflow go <requirement source>", file=sys.stderr)
+    return 1
 
 
 def cmd_go(args: argparse.Namespace) -> int:
     try:
         config = load_config(ROOT)
+        from_spec = Path(args.from_spec) if args.from_spec else None
+        if from_spec is not None and not from_spec.is_absolute():
+            from_spec = ROOT / from_spec
         result = prepare_go_run(
             ROOT,
             config,
             args.source,
-            from_spec=Path(args.from_spec) if args.from_spec else None,
+            from_spec=from_spec,
             approve=args.approve,
             non_interactive=args.non_interactive,
+            approved_by=args.approved_by,
         )
     except (FileNotFoundError, ValueError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -2470,18 +2483,43 @@ def cmd_go(args: argparse.Namespace) -> int:
     if result.status == "approved":
         print(f"spec approved: {result.spec_path}")
         try:
-            result_run = run_autopilot(
-                ROOT,
-                config,
-                limit=_autopilot_limit(config, args.limit),
-                max_steps=_autopilot_max_steps(config, args.max_steps),
-                actor_role="orchestrator",
-                goal=result.goal,
-            )
+            limit = _autopilot_limit(config, args.limit)
+            max_steps = _autopilot_max_steps(config, args.max_steps)
+            run_until_terminal = args.until == "terminal"
+            should_loop = args.loop or run_until_terminal
+            if should_loop:
+                result_run, loop_cycles, loop_stop_reason = _run_autopilot_loop(
+                    ROOT,
+                    config,
+                    limit=limit,
+                    max_steps=max_steps,
+                    actor_role="orchestrator",
+                    resume_path=None,
+                    goal=result.goal,
+                    approved_spec_path=result.spec_path,
+                    max_cycles=_autopilot_loop_max_cycles(config, args.max_cycles, until_terminal=run_until_terminal),
+                    interval_seconds=_autopilot_loop_interval_seconds(config, args.interval_seconds),
+                )
+            else:
+                result_run = run_autopilot(
+                    ROOT,
+                    config,
+                    limit=limit,
+                    max_steps=max_steps,
+                    actor_role="orchestrator",
+                    goal=result.goal,
+                    approved_spec_path=result.spec_path,
+                )
+                loop_cycles = None
+                loop_stop_reason = None
         except (FileNotFoundError, ValueError) as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 1
         _print_autopilot_run_result(result_run)
+        if loop_cycles is not None:
+            print(f"loop cycles={loop_cycles}")
+        if loop_stop_reason is not None:
+            print(f"loop_stop_reason={loop_stop_reason}")
         if result_run.status != "finished" or result_run.failed or result_run.blocked or result_run.cancelled:
             return 1
         return 0
@@ -2802,6 +2840,8 @@ def build_parser() -> argparse.ArgumentParser:
     task_subparsers = task.add_subparsers(dest="task_command", required=True)
     task_import = task_subparsers.add_parser("import")
     task_import.add_argument("--from-json", required=True)
+    task_import.add_argument("--from-spec")
+    task_import.add_argument("--approve", action="store_true")
     task_import.set_defaults(func=cmd_task_import)
 
     source = subparsers.add_parser("source")
@@ -2833,9 +2873,14 @@ def build_parser() -> argparse.ArgumentParser:
     go.add_argument("source", nargs="?")
     go.add_argument("--from-spec")
     go.add_argument("--approve", action="store_true")
+    go.add_argument("--approved-by", default="local-user")
     go.add_argument("--non-interactive", action="store_true")
     go.add_argument("--limit", type=int)
     go.add_argument("--max-steps", type=int)
+    go.add_argument("--loop", action="store_true")
+    go.add_argument("--until", choices=["terminal"])
+    go.add_argument("--max-cycles", type=int)
+    go.add_argument("--interval-seconds", type=float)
     go.set_defaults(func=cmd_go)
     return parser
 

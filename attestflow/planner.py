@@ -6,13 +6,32 @@ from pathlib import Path
 from typing import Any
 
 from .io import dump_data
+from .specs import validate_approved_spec_provenance
 from .tasks import TaskRecord, iter_tasks, task_root, validate_task
 
 
 TASK_ID_PATTERN = re.compile(r"^TASK-(\d+)$")
+APPROVED_SPEC_REQUIRED_MESSAGE = (
+    "planner import requires approved spec provenance; use attestflow go <requirement source>"
+)
 
 
-def import_planner_tasks(root: Path, config: dict[str, Any], plan: dict[str, Any]) -> list[TaskRecord]:
+def import_planner_tasks(
+    root: Path,
+    config: dict[str, Any],
+    plan: dict[str, Any],
+    *,
+    approved_spec_path: Path | None = None,
+    allow_unapproved: bool = False,
+    provenance_label: str | None = None,
+) -> list[TaskRecord]:
+    if approved_spec_path is not None:
+        validate_approved_spec_provenance(root, config, approved_spec_path)
+    elif not allow_unapproved:
+        raise ValueError(APPROVED_SPEC_REQUIRED_MESSAGE)
+    elif not str(provenance_label or "").strip():
+        raise ValueError("unapproved planner import requires an internal provenance label")
+
     raw_tasks = plan.get("tasks")
     if not isinstance(raw_tasks, list) or not raw_tasks:
         raise ValueError("planner output must include a non-empty tasks list")

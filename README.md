@@ -55,7 +55,9 @@ The Python example uses the deterministic local provider and does not require a 
 ```bash
 cd examples/python-basic
 PYTHONPATH=../.. python3 -m attestflow doctor
-PYTHONPATH=../.. python3 -m attestflow autopilot --run --goal "Add greeting support" --loop --max-cycles 12 --max-steps 1
+PYTHONPATH=../.. python3 -m attestflow go "Add greeting support"
+# Review harness/specs/SPEC-0001/spec.md, resolve Open Questions, then approve/run:
+PYTHONPATH=../.. python3 -m attestflow go --from-spec harness/specs/SPEC-0001/spec.md --approve --loop --max-cycles 12 --max-steps 1
 PYTHONPATH=../.. python3 -m attestflow tasks
 ```
 
@@ -81,12 +83,10 @@ Markdown, TXT, DOCX, and copyable text-layer PDF inputs are supported. DOCX and 
 python3 -m attestflow validate-config
 python3 -m attestflow doctor
 python3 -m attestflow install-smoke --offline
-python3 -m attestflow plan "Implement login"
 python3 -m attestflow go "Implement login"
 python3 -m attestflow go PRD.md
 python3 -m attestflow go --from-spec harness/specs/SPEC-0001/spec.md --approve --non-interactive
-python3 -m attestflow task import --from-json plan.json
-python3 -m attestflow autopilot --run --goal "Implement login" --loop --max-cycles 20 --max-steps 1
+python3 -m attestflow task import --from-json plan.json --from-spec harness/specs/SPEC-0001/spec.md --approve
 python3 -m attestflow autopilot --resume --max-steps 8
 python3 -m attestflow autopilot --status --json
 python3 -m attestflow inspect --run RUN

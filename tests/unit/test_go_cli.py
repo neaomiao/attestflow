@@ -83,7 +83,7 @@ class GoCliTests(unittest.TestCase):
                 cli.run_autopilot = original_run_autopilot
 
             self.assertEqual(exit_code, 0)
-            self.assertIn(f"spec approved: {spec}", stdout.getvalue())
+            self.assertIn(f"spec approved: {spec.resolve()}", stdout.getvalue())
             self.assertIn("autopilot run:", stdout.getvalue())
             self.assertEqual(len(calls), 1)
             self.assertEqual(calls[0]["args"], (root, cli.load_config(root)))
@@ -94,6 +94,7 @@ class GoCliTests(unittest.TestCase):
                     "max_steps": 5,
                     "actor_role": "orchestrator",
                     "goal": goal,
+                    "approved_spec_path": spec.resolve(),
                 },
             )
 
@@ -353,6 +354,44 @@ class GoCliTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "spec approval is missing"):
                 prepare_go_run(Path(tmp), CONFIG, None, from_spec=spec, approve=True)
 
+    def test_cli_go_interactive_approve_pending_spec_before_autopilot(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            spec = _write_pending_spec(root, "SPEC-0001", _approved_spec_content("SPEC-0001"))
+            original_run_autopilot = cli.run_autopilot
+            calls: list[dict[str, object]] = []
+
+            def fake_run_autopilot(*args: object, **kwargs: object) -> cli.AutopilotRunResult:
+                calls.append({"args": args, "kwargs": kwargs})
+                return _autopilot_result(root, status="finished")
+
+            cli.run_autopilot = fake_run_autopilot
+
+            stdout = io.StringIO()
+            try:
+                exit_code = self._run_cli(root, ["go", "--from-spec", str(spec), "--approve"], stdout=stdout)
+            finally:
+                cli.run_autopilot = original_run_autopilot
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0]["kwargs"]["approved_spec_path"], spec.resolve())
+
+    def test_cli_go_non_interactive_rejects_pending_spec(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            spec = _write_pending_spec(root, "SPEC-0001", _approved_spec_content("SPEC-0001"))
+
+            stderr = io.StringIO()
+            exit_code = self._run_cli(
+                root,
+                ["go", "--from-spec", str(spec), "--approve", "--non-interactive"],
+                stderr=stderr,
+            )
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("spec is not approved", stderr.getvalue())
+
     def test_approved_spec_returns_goal_text(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -375,7 +414,7 @@ class GoCliTests(unittest.TestCase):
 
             self.assertEqual(result.status, "approved")
             self.assertEqual(result.spec_id, "SPEC-0042")
-            self.assertEqual(result.spec_path, spec)
+            self.assertEqual(result.spec_path, spec.resolve())
             self.assertEqual(result.goal, goal)
 
     def _run_cli(
@@ -408,6 +447,23 @@ def _write_approved_spec(root: Path, spec_id: str, content: str) -> Path:
             "status": "approved",
             "approved_by": "alice",
             "approved_at": "2026-06-10T00:00:00+00:00",
+        },
+        spec.parent / "approval.json",
+    )
+    return spec
+
+
+def _write_pending_spec(root: Path, spec_id: str, content: str) -> Path:
+    spec = root / "harness/specs" / spec_id / "spec.md"
+    spec.parent.mkdir(parents=True)
+    spec.write_text(content, encoding="utf-8")
+    dump_data(
+        {
+            "schema_version": 1,
+            "spec_id": spec_id,
+            "status": "pending",
+            "approved_by": None,
+            "approved_at": None,
         },
         spec.parent / "approval.json",
     )

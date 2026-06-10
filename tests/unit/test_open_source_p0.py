@@ -60,16 +60,18 @@ class OpenSourceP0Tests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(doctor.returncode, 0, doctor.stderr + doctor.stdout)
+            spec = _write_approved_spec(example_root, "Add greeting support")
 
             run = subprocess.run(
                 [
                     sys.executable,
                     "-m",
                     "attestflow",
-                    "autopilot",
-                    "--run",
-                    "--goal",
-                    "Add greeting support",
+                    "go",
+                    "--from-spec",
+                    str(spec),
+                    "--approve",
+                    "--non-interactive",
                     "--loop",
                     "--max-cycles",
                     "12",
@@ -98,16 +100,18 @@ class OpenSourceP0Tests(unittest.TestCase):
             example_root = tmp_root / "examples" / "node-basic"
             env = dict(os.environ)
             env["PYTHONPATH"] = str(ROOT)
+            spec = _write_approved_spec(example_root, "Add greeting support")
 
             run = subprocess.run(
                 [
                     sys.executable,
                     "-m",
                     "attestflow",
-                    "autopilot",
-                    "--run",
-                    "--goal",
-                    "Add greeting support",
+                    "go",
+                    "--from-spec",
+                    str(spec),
+                    "--approve",
+                    "--non-interactive",
                     "--loop",
                     "--max-cycles",
                     "12",
@@ -152,16 +156,18 @@ class OpenSourceP0Tests(unittest.TestCase):
             )
             env = dict(os.environ)
             env["PYTHONPATH"] = str(repo_root)
+            spec = _write_approved_spec(repo_root, "Dogfood Attestflow by adding the deterministic dogfood marker.")
 
             run = subprocess.run(
                 [
                     sys.executable,
                     "-m",
                     "attestflow",
-                    "autopilot",
-                    "--run",
-                    "--goal",
-                    "Dogfood Attestflow by adding the deterministic dogfood marker.",
+                    "go",
+                    "--from-spec",
+                    str(spec),
+                    "--approve",
+                    "--non-interactive",
                     "--until",
                     "terminal",
                     "--max-cycles",
@@ -226,3 +232,27 @@ def _run_provider(provider: Path, payload: dict) -> dict:
     if not isinstance(output, dict):
         raise AssertionError(f"provider output must be an object: {output!r}")
     return output
+
+
+def _write_approved_spec(root: Path, goal: str, spec_id: str = "SPEC-0001") -> Path:
+    spec = root / "harness/specs" / spec_id / "spec.md"
+    spec.parent.mkdir(parents=True, exist_ok=True)
+    spec.write_text(
+        f"# {spec_id}: {goal}\n\n## Goal\n{goal}\n\n## Acceptance Criteria\n- Planned work completes.\n\n## Open Questions\n- None\n",
+        encoding="utf-8",
+    )
+    (spec.parent / "approval.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "spec_id": spec_id,
+                "status": "approved",
+                "approved_by": "test",
+                "approved_at": "2026-06-10T00:00:00+00:00",
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return spec

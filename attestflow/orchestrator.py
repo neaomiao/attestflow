@@ -23,6 +23,7 @@ from .locks import file_lock_path, locks_root, normalize_file_path, release_lock
 from .pr import run_pr_ensure, run_pr_merge, run_pr_status
 from .release import run_release_status
 from .sessions import launch_agent_session
+from .specs import validate_approved_spec_provenance
 from .tasks import (
     TaskRecord,
     block_task,
@@ -234,17 +235,28 @@ def run_autopilot(
     actor_role: str = "orchestrator",
     resume_path: Path | None = None,
     goal: str | None = None,
+    approved_spec_path: Path | None = None,
 ) -> AutopilotRunResult:
     if limit is not None and limit < 1:
         raise ValueError("limit must be at least 1")
     if max_steps < 1:
         raise ValueError("max_steps must be at least 1")
+    if goal is not None and approved_spec_path is None:
+        raise ValueError("autopilot goal requires approved spec provenance; use attestflow go <requirement source>")
+    if approved_spec_path is not None:
+        approved_spec_path = validate_approved_spec_provenance(root, config, approved_spec_path)
 
     if resume_path:
         run_id, run_path, previous_metadata = _load_autopilot_run(root, resume_path)
     else:
         run_id, run_path = _create_autopilot_run(root, config)
         previous_metadata = {}
+    if approved_spec_path is None and isinstance(previous_metadata.get("goal_provenance"), dict):
+        provenance = previous_metadata["goal_provenance"]
+        if provenance.get("kind") == "approved_spec" and provenance.get("spec_path"):
+            approved_spec_path = root / str(provenance["spec_path"])
+    if approved_spec_path is not None:
+        approved_spec_path = validate_approved_spec_provenance(root, config, approved_spec_path)
     dispatched: list[str] = list(previous_metadata.get("dispatched", [])) if isinstance(previous_metadata.get("dispatched"), list) else []
     actions: list[str] = list(previous_metadata.get("actions", [])) if isinstance(previous_metadata.get("actions"), list) else []
     planned: list[str] = list(previous_metadata.get("planned", [])) if isinstance(previous_metadata.get("planned"), list) else []
@@ -254,6 +266,8 @@ def run_autopilot(
     cancelled: list[str] = [str(item) for item in previous_cancelled] if isinstance(previous_cancelled, list) else []
     pause_reason: str | None = None
     run_goal = str(previous_metadata.get("goal") or goal or "").strip() or None
+    if run_goal is not None and approved_spec_path is None:
+        raise ValueError("autopilot goal requires approved spec provenance; use attestflow go <requirement source>")
     planner = str(previous_metadata.get("planner")) if previous_metadata.get("planner") else None
     intake = str(previous_metadata.get("intake")) if previous_metadata.get("intake") else None
     intake_status = str(previous_metadata.get("intake_status")) if previous_metadata.get("intake_status") else None
@@ -298,6 +312,11 @@ def run_autopilot(
             "pause_reason": None,
             "parameters": {"limit": limit, "max_steps": max_steps, "actor_role": actor_role},
             "goal": run_goal,
+            "goal_provenance": (
+                {"kind": "approved_spec", "spec_path": _relative_to_root(root, approved_spec_path)}
+                if approved_spec_path is not None
+                else previous_metadata.get("goal_provenance")
+            ),
             "steps": int(previous_metadata.get("steps", 0)) if isinstance(previous_metadata.get("steps", 0), int) else 0,
             "actions": actions,
             "intake": intake,
@@ -351,7 +370,14 @@ def run_autopilot(
             steps_executed += 1
             actions.append("autopilot:plan")
             _append_autopilot_event(run_path, "planner_started", data={"step": step, "goal": run_goal})
-            status, planner_path, planned_ids = _run_planner_action(root, config, run_path, run_goal, step)
+            status, planner_path, planned_ids = _run_planner_action(
+                root,
+                config,
+                run_path,
+                run_goal,
+                step,
+                approved_spec_path=approved_spec_path,
+            )
             planner = planner_path
             planned.extend(planned_ids)
             if status == "failed":
@@ -581,6 +607,11 @@ def run_autopilot(
             "pause_reason": pause_reason,
             "parameters": {"limit": limit, "max_steps": max_steps, "actor_role": actor_role},
             "goal": run_goal,
+            "goal_provenance": (
+                {"kind": "approved_spec", "spec_path": _relative_to_root(root, approved_spec_path)}
+                if approved_spec_path is not None
+                else previous_metadata.get("goal_provenance")
+            ),
             "steps": (int(previous_metadata.get("steps", 0)) if isinstance(previous_metadata.get("steps", 0), int) else 0)
             + steps_executed,
             "actions": actions,
@@ -1793,9 +1824,11 @@ def _run_planner_action(
     run_path: Path,
     goal: str,
     step: int,
+    *,
+    approved_spec_path: Path | None = None,
 ) -> tuple[str, str | None, list[str]]:
     try:
-        result = run_planner_capability(root, config, goal)
+        result = run_planner_capability(root, config, goal, approved_spec_path=approved_spec_path)
     except Exception as exc:
         _append_autopilot_event(
             run_path,
@@ -1936,7 +1969,13 @@ def _run_release_repair_planner_action(
         },
     )
     try:
-        result = run_planner_capability(root, config, goal)
+        result = run_planner_capability(
+            root,
+            config,
+            goal,
+            allow_unapproved=True,
+            provenance_label="internal_release_repair",
+        )
     except Exception as exc:
         _append_autopilot_event(
             run_path,
@@ -2335,6 +2374,16 @@ def _append_autopilot_event(
 
 def _write_autopilot_metadata(run_path: Path, metadata: dict[str, Any]) -> None:
     dump_data(metadata, run_path / "metadata.json")
+
+
+def _relative_to_root(root: Path, path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(root.resolve()))
+    except ValueError:
+        try:
+            return str(path.relative_to(root))
+        except ValueError:
+            return str(path)
 
 
 def _skipped_json(task: SkippedTask) -> dict[str, Any]:

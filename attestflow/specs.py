@@ -91,6 +91,29 @@ def require_approved_spec(spec_path: Path) -> None:
         raise ValueError("spec still has open questions")
 
 
+def validate_spec_path(root: Path, config: dict[str, Any], spec_path: Path) -> Path:
+    project_root = root.resolve()
+    specs_root = (root / str(config.get("paths", {}).get("specs", "harness/specs"))).resolve()
+    try:
+        specs_root.relative_to(project_root)
+    except ValueError as exc:
+        raise ValueError("configured specs directory must be under project root") from exc
+    resolved = spec_path.resolve()
+    try:
+        relative = resolved.relative_to(specs_root)
+    except ValueError as exc:
+        raise ValueError("spec path must be under configured specs directory") from exc
+    if len(relative.parts) != 2 or not SPEC_ID_PATTERN.match(relative.parts[0]) or relative.parts[1] != "spec.md":
+        raise ValueError("spec path must be SPEC-####/spec.md")
+    return resolved
+
+
+def validate_approved_spec_provenance(root: Path, config: dict[str, Any], spec_path: Path) -> Path:
+    resolved = validate_spec_path(root, config, spec_path)
+    require_approved_spec(resolved)
+    return resolved
+
+
 def _specs_root(root: Path, config: dict[str, Any]) -> Path:
     return root / str(config.get("paths", {}).get("specs", "harness/specs"))
 

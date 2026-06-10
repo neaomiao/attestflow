@@ -59,12 +59,12 @@ releaser     ship    release engineer
 
 ## Planner 执行
 
-`attestflow plan "目标"` 是第一个可执行 capability。
+Planner capability 只消费 approved spec 内容，或内部受控修复上下文。Raw goal、PRD 或 source evidence 不能直接调用 planner。
 
 流程：
 
 ```text
-goal -> planner capability input -> programming agent provider -> planner JSON -> task import -> runtime task JSON
+approved spec -> planner capability input -> programming agent provider -> planner JSON -> task import -> runtime task JSON
 ```
 
 Programming Agent Provider 要求：
@@ -98,10 +98,11 @@ python -m attestflow provider contract --provider codex
 
 该命令用固定夹具验证 provider 能返回 `planner`、task/`implementer`、`reviewer`、`verifier` 和 release/`releaser` 五类合同 JSON。
 
-命令行覆盖：
+用户入口：
 
 ```bash
-python -m attestflow plan "实现登录功能" --command "codex exec --json"
+python -m attestflow go "实现登录功能"
+python -m attestflow go --from-spec harness/specs/SPEC-0001/spec.md --approve
 ```
 
 ## Task-scoped Capability 执行
