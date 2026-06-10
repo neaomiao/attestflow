@@ -13,6 +13,7 @@ SPEC_ID_PATTERN = re.compile(r"^SPEC-(\d{4})$")
 OPEN_QUESTIONS_HEADING = "## Open Questions"
 OPEN_QUESTIONS_START = "<!-- attestflow:open-questions:start -->"
 OPEN_QUESTIONS_END = "<!-- attestflow:open-questions:end -->"
+REQUIRED_APPROVED_SPEC_HEADINGS = ("## Goal", "## Acceptance Criteria", "## Open Questions")
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,8 @@ def require_approved_spec(spec_path: Path) -> None:
         raise ValueError("spec is not approved")
     if not _approval_is_valid(approval, spec_path.parent.name):
         raise ValueError("spec approval is invalid")
+    if not _approved_spec_content_is_valid(spec_path):
+        raise ValueError("spec content is invalid")
     if spec_has_unresolved_questions(spec_path):
         raise ValueError("spec still has open questions")
 
@@ -190,6 +193,13 @@ def _normalize_empty_marker(value: str) -> str:
     lines = [line.strip() for line in value.splitlines() if line.strip()]
     normalized = "\n".join(_strip_list_marker(line) for line in lines)
     return normalized.strip().lower()
+
+
+def _approved_spec_content_is_valid(spec_path: Path) -> bool:
+    content = spec_path.read_text(encoding="utf-8")
+    if not content.strip():
+        return False
+    return all(_section_body(content, heading) is not None for heading in REQUIRED_APPROVED_SPEC_HEADINGS)
 
 
 def _strip_list_marker(line: str) -> str:

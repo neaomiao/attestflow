@@ -2482,7 +2482,9 @@ def cmd_go(args: argparse.Namespace) -> int:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 1
         _print_autopilot_run_result(result_run)
-        return 1 if result_run.failed or result_run.blocked or result_run.cancelled else 0
+        if result_run.status != "finished" or result_run.failed or result_run.blocked or result_run.cancelled:
+            return 1
+        return 0
     print(f"ERROR: unsupported go status: {result.status}", file=sys.stderr)
     return 1
 

@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any
 
 from .requirements import ingest_requirement_source
 from .specs import create_draft_spec, require_approved_spec
+
+
+SPEC_PATH_ID_PATTERN = re.compile(r"^SPEC-\d{4}$")
 
 
 @dataclass(frozen=True)
@@ -28,6 +32,7 @@ def prepare_go_run(
     if from_spec is not None:
         if not approve:
             raise ValueError("--from-spec requires --approve before execution")
+        _validate_from_spec_path(root, config, from_spec)
         require_approved_spec(from_spec)
         return GoRunResult(
             status="approved",
@@ -56,3 +61,14 @@ def _title_from_source(source: str, source_path: Path | None) -> str:
         title = source_path.stem.replace("-", " ").replace("_", " ").strip()
         return title or "Requirement Source"
     return source.strip().splitlines()[0][:80] or "Requirement Source"
+
+
+def _validate_from_spec_path(root: Path, config: dict[str, Any], from_spec: Path) -> None:
+    specs_root = (root / str(config.get("paths", {}).get("specs", "harness/specs"))).resolve()
+    spec_path = from_spec.resolve()
+    try:
+        spec_path.relative_to(specs_root)
+    except ValueError as exc:
+        raise ValueError("spec path must be under configured specs directory") from exc
+    if spec_path.name != "spec.md" or not SPEC_PATH_ID_PATTERN.match(spec_path.parent.name):
+        raise ValueError("spec path must be SPEC-####/spec.md")

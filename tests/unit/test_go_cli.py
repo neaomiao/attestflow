@@ -61,7 +61,7 @@ class GoCliTests(unittest.TestCase):
     def test_cli_go_approved_spec_runs_autopilot_with_spec_goal_and_limits(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
-            goal = "# SPEC-0001: Login\n\n## Open Questions\n\n- None\n"
+            goal = _approved_spec_content("SPEC-0001")
             spec = _write_approved_spec(root, "SPEC-0001", goal)
             original_run_autopilot = cli.run_autopilot
             calls: list[dict[str, object]] = []
@@ -100,7 +100,7 @@ class GoCliTests(unittest.TestCase):
     def test_cli_go_approved_spec_returns_nonzero_when_autopilot_blocks(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
-            spec = _write_approved_spec(root, "SPEC-0001", "# SPEC-0001: Login\n")
+            spec = _write_approved_spec(root, "SPEC-0001", _approved_spec_content("SPEC-0001"))
             original_run_autopilot = cli.run_autopilot
 
             def fake_run_autopilot(*args: object, **kwargs: object) -> cli.AutopilotRunResult:
@@ -120,6 +120,94 @@ class GoCliTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 1)
             self.assertIn("blocked 1 task(s): TASK-0001", stdout.getvalue())
+
+    def test_cli_go_approved_spec_returns_nonzero_when_autopilot_pauses(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            spec = _write_approved_spec(root, "SPEC-0001", _approved_spec_content("SPEC-0001"))
+            original_run_autopilot = cli.run_autopilot
+
+            def fake_run_autopilot(*args: object, **kwargs: object) -> cli.AutopilotRunResult:
+                return _autopilot_result(root, status="paused")
+
+            cli.run_autopilot = fake_run_autopilot
+
+            try:
+                exit_code = self._run_cli(root, ["go", "--from-spec", str(spec), "--approve"])
+            finally:
+                cli.run_autopilot = original_run_autopilot
+
+            self.assertEqual(exit_code, 1)
+
+    def test_cli_go_rejects_approved_spec_outside_configured_specs_without_autopilot(self) -> None:
+        with TemporaryDirectory() as tmp, TemporaryDirectory() as outside_tmp:
+            root = Path(tmp)
+            spec = Path(outside_tmp) / "SPEC-0001/spec.md"
+            spec.parent.mkdir(parents=True)
+            spec.write_text(_approved_spec_content("SPEC-0001"), encoding="utf-8")
+            dump_data(
+                {
+                    "schema_version": 1,
+                    "spec_id": "SPEC-0001",
+                    "status": "approved",
+                    "approved_by": "alice",
+                    "approved_at": "2026-06-10T00:00:00+00:00",
+                },
+                spec.parent / "approval.json",
+            )
+            original_run_autopilot = cli.run_autopilot
+            calls: list[dict[str, object]] = []
+
+            def fake_run_autopilot(*args: object, **kwargs: object) -> cli.AutopilotRunResult:
+                calls.append({"args": args, "kwargs": kwargs})
+                return _autopilot_result(root)
+
+            cli.run_autopilot = fake_run_autopilot
+
+            stderr = io.StringIO()
+            try:
+                exit_code = self._run_cli(root, ["go", "--from-spec", str(spec), "--approve"], stderr=stderr)
+            finally:
+                cli.run_autopilot = original_run_autopilot
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("spec path must be under configured specs directory", stderr.getvalue())
+            self.assertEqual(calls, [])
+
+    def test_cli_go_rejects_approved_spec_with_invalid_spec_directory_without_autopilot(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            spec = root / "harness/specs/not-a-spec/spec.md"
+            spec.parent.mkdir(parents=True)
+            spec.write_text(_approved_spec_content("SPEC-0001"), encoding="utf-8")
+            dump_data(
+                {
+                    "schema_version": 1,
+                    "spec_id": "not-a-spec",
+                    "status": "approved",
+                    "approved_by": "alice",
+                    "approved_at": "2026-06-10T00:00:00+00:00",
+                },
+                spec.parent / "approval.json",
+            )
+            original_run_autopilot = cli.run_autopilot
+            calls: list[dict[str, object]] = []
+
+            def fake_run_autopilot(*args: object, **kwargs: object) -> cli.AutopilotRunResult:
+                calls.append({"args": args, "kwargs": kwargs})
+                return _autopilot_result(root)
+
+            cli.run_autopilot = fake_run_autopilot
+
+            stderr = io.StringIO()
+            try:
+                exit_code = self._run_cli(root, ["go", "--from-spec", str(spec), "--approve"], stderr=stderr)
+            finally:
+                cli.run_autopilot = original_run_autopilot
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("spec path must be SPEC-####/spec.md", stderr.getvalue())
+            self.assertEqual(calls, [])
 
     def test_prepare_go_run_creates_spec_for_inline_text(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -198,7 +286,7 @@ class GoCliTests(unittest.TestCase):
             root = Path(tmp)
             spec = root / "harness/specs/SPEC-0042/spec.md"
             spec.parent.mkdir(parents=True)
-            goal = "# SPEC-0042: Login\n\n## Open Questions\n\n- None\n"
+            goal = _approved_spec_content("SPEC-0042")
             spec.write_text(goal, encoding="utf-8")
             dump_data(
                 {
@@ -252,6 +340,21 @@ def _write_approved_spec(root: Path, spec_id: str, content: str) -> Path:
         spec.parent / "approval.json",
     )
     return spec
+
+
+def _approved_spec_content(spec_id: str) -> str:
+    return (
+        f"# {spec_id}: Login\n"
+        "\n"
+        "## Goal\n"
+        "Ship login.\n"
+        "\n"
+        "## Acceptance Criteria\n"
+        "- Login works.\n"
+        "\n"
+        "## Open Questions\n"
+        "- None\n"
+    )
 
 
 def _autopilot_result(

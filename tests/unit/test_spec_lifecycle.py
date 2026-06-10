@@ -347,6 +347,49 @@ class SpecLifecycleTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "spec approval is invalid"):
                 require_approved_spec(spec.path)
 
+    def test_require_approved_spec_rejects_empty_approved_spec_content(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            spec_path = root / "harness/specs/SPEC-0001/spec.md"
+            spec_path.parent.mkdir(parents=True)
+            spec_path.write_text("", encoding="utf-8")
+            dump_data(
+                {
+                    "schema_version": 1,
+                    "spec_id": "SPEC-0001",
+                    "status": "approved",
+                    "approved_by": "alice",
+                    "approved_at": "2026-06-10T00:00:00+00:00",
+                },
+                spec_path.parent / "approval.json",
+            )
+
+            with self.assertRaisesRegex(ValueError, "spec content is invalid"):
+                require_approved_spec(spec_path)
+
+    def test_require_approved_spec_rejects_missing_minimum_headings(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            spec_path = root / "harness/specs/SPEC-0001/spec.md"
+            spec_path.parent.mkdir(parents=True)
+            spec_path.write_text(
+                "# SPEC-0001: Login\n\n## Goal\nShip login.\n\n## Open Questions\n- None\n",
+                encoding="utf-8",
+            )
+            dump_data(
+                {
+                    "schema_version": 1,
+                    "spec_id": "SPEC-0001",
+                    "status": "approved",
+                    "approved_by": "alice",
+                    "approved_at": "2026-06-10T00:00:00+00:00",
+                },
+                spec_path.parent / "approval.json",
+            )
+
+            with self.assertRaisesRegex(ValueError, "spec content is invalid"):
+                require_approved_spec(spec_path)
+
     def test_require_approved_spec_accepts_approved_spec(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
