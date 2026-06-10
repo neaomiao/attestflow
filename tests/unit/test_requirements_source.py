@@ -59,6 +59,48 @@ class RequirementSourceTests(unittest.TestCase):
             self.assertTrue(source["received_at"])
             self.assertEqual((result.evidence_path.parent / "source.txt").read_text(encoding="utf-8"), result.text)
 
+    def test_ingests_markdown_extension_file(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prd = root / "PRD.markdown"
+            prd.write_text("# Login\n\nUsers sign in with email.\n", encoding="utf-8")
+
+            result = ingest_requirement_source(root, {"paths": {"specs": "harness/specs"}}, str(prd))
+
+            self._assert_file_source(result, prd, "markdown", "# Login\n\nUsers sign in with email.\n")
+
+    def test_ingests_text_file(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prd = root / "requirements.txt"
+            prd.write_text("Users sign in with email.\n", encoding="utf-8")
+
+            result = ingest_requirement_source(root, {"paths": {"specs": "harness/specs"}}, str(prd))
+
+            self._assert_file_source(result, prd, "txt", "Users sign in with email.\n")
+
+    def test_dispatches_docx_file_extraction(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prd = root / "requirements.docx"
+            prd.write_bytes(b"not a real docx")
+
+            with patch("attestflow.requirements._extract_docx_text", return_value="Users sign in with email."):
+                result = ingest_requirement_source(root, {"paths": {"specs": "harness/specs"}}, str(prd))
+
+            self._assert_file_source(result, prd, "docx", "Users sign in with email.")
+
+    def test_dispatches_pdf_file_extraction(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prd = root / "requirements.pdf"
+            prd.write_bytes(b"%PDF-1.4\n")
+
+            with patch("attestflow.requirements._extract_pdf_text", return_value="Users sign in with email."):
+                result = ingest_requirement_source(root, {"paths": {"specs": "harness/specs"}}, str(prd))
+
+            self._assert_file_source(result, prd, "pdf", "Users sign in with email.")
+
     def test_rejects_empty_requirement_source(self) -> None:
         with TemporaryDirectory() as tmp:
             with self.assertRaisesRegex(ValueError, "requirement source cannot be empty"):
@@ -102,6 +144,20 @@ class RequirementSourceTests(unittest.TestCase):
             with patch.dict(sys.modules, {"pypdf": None}):
                 with self.assertRaisesRegex(ValueError, r"PDF support requires installing attestflow\[documents\]"):
                     ingest_requirement_source(root, {"paths": {"specs": "harness/specs"}}, str(pdf))
+
+    def _assert_file_source(self, result, path: Path, source_format: str, text: str) -> None:
+        self.assertEqual(result.kind, "file")
+        self.assertEqual(result.source_path, path)
+        self.assertEqual(result.format, source_format)
+        self.assertEqual(result.text, text)
+        source = load_data(result.evidence_path)
+        self.assertEqual(source["schema_version"], 1)
+        self.assertEqual(source["kind"], "file")
+        self.assertEqual(source["path"], str(path))
+        self.assertEqual(source["format"], source_format)
+        self.assertTrue(source["content_hash"])
+        self.assertTrue(source["received_at"])
+        self.assertEqual((result.evidence_path.parent / "source.txt").read_text(encoding="utf-8"), text)
 
 
 if __name__ == "__main__":
