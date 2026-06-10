@@ -75,6 +75,18 @@ python3 -m attestflow doctor
 
 任务不应该靠人手写 YAML。最直接的主路径是让编程 Agent 输出 planner JSON，然后由 Attestflow 校验并落盘：
 
+更高层的需求入口是 `attestflow go`。它可以接收一段直接粘贴的需求、PRD 文档，或已经批准的 spec：
+
+```bash
+attestflow go "实现登录功能"
+attestflow go PRD.md
+attestflow go --from-spec harness/specs/SPEC-0001/spec.md --approve --non-interactive
+```
+
+raw text/document 只会生成 `harness/specs/SPEC-*/spec.md` 草稿，并返回 `spec approval required`；它不会直接执行 planner 或 autopilot。只有 approved spec 才能越过执行边界，进入 planner/autopilot 闭环。
+
+v1 支持 Markdown、TXT、DOCX 和可复制文本层 PDF。DOCX/PDF 解析需要安装 `attestflow[documents]`；扫描 PDF/OCR 暂不支持。
+
 ```bash
 python3 -m attestflow task import --from-json plan.json
 ```
@@ -124,6 +136,9 @@ python3 -m attestflow doctor
 python3 -m attestflow capability list
 python3 -m attestflow capability show planner
 python3 -m attestflow plan "实现登录功能"
+python3 -m attestflow go "实现登录功能"
+python3 -m attestflow go PRD.md
+python3 -m attestflow go --from-spec harness/specs/SPEC-0001/spec.md --approve --non-interactive
 python3 -m attestflow capability run reviewer TASK-0001
 python3 -m attestflow task import --from-json plan.json
 python3 -m attestflow source import --kind github-issue --from-json issue.json

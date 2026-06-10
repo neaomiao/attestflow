@@ -61,6 +61,20 @@ PYTHONPATH=../.. python3 -m attestflow tasks
 
 After it finishes, one task reaches `done` and the project contains generated BDD/unit tests, implementation files, run ledger entries, capability evidence, and close evidence.
 
+## Requirement-To-Spec Entry
+
+Use `attestflow go` when you want to start from raw requirement text or a requirement document:
+
+```bash
+attestflow go "Implement login"
+attestflow go PRD.md
+attestflow go --from-spec harness/specs/SPEC-0001/spec.md --approve --non-interactive
+```
+
+Inline text and documents only create a draft spec under `harness/specs/SPEC-*/spec.md` and stop with `spec approval required`; they do not execute planner or autopilot directly. Only an approved spec crosses the execution boundary and enters the planner/autopilot loop.
+
+Markdown, TXT, DOCX, and copyable text-layer PDF inputs are supported. DOCX and PDF extraction require installing `attestflow[documents]`. Scanned PDFs and OCR are not supported in v1.
+
 ## Core Commands
 
 ```bash
@@ -68,6 +82,9 @@ python3 -m attestflow validate-config
 python3 -m attestflow doctor
 python3 -m attestflow install-smoke --offline
 python3 -m attestflow plan "Implement login"
+python3 -m attestflow go "Implement login"
+python3 -m attestflow go PRD.md
+python3 -m attestflow go --from-spec harness/specs/SPEC-0001/spec.md --approve --non-interactive
 python3 -m attestflow task import --from-json plan.json
 python3 -m attestflow autopilot --run --goal "Implement login" --loop --max-cycles 20 --max-steps 1
 python3 -m attestflow autopilot --resume --max-steps 8
