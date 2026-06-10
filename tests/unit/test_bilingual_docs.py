@@ -32,6 +32,10 @@ EXPECTED_DOC_PAIRS = [
     ("examples/python-basic/README.md", "examples/python-basic/README.zh-CN.md"),
 ]
 
+PUBLIC_MARKDOWN_INVENTORY_EXCLUDED_PREFIXES = (
+    "docs/superpowers/plans/",
+)
+
 ADAPTERS = [
     "bazel",
     "dart",
@@ -112,6 +116,8 @@ class BilingualDocsTests(unittest.TestCase):
             files = [root] if root.is_file() else sorted(root.rglob("*.md"))
             for path in files:
                 relative = path.relative_to(ROOT).as_posix()
+                if relative.startswith(PUBLIC_MARKDOWN_INVENTORY_EXCLUDED_PREFIXES):
+                    continue
                 if relative.endswith(".en.md") or relative.endswith(".zh-CN.md"):
                     continue
                 counterpart = _expected_counterpart(path)
