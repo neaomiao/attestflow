@@ -119,6 +119,92 @@ class SpecLifecycleTests(unittest.TestCase):
 
             self.assertTrue(spec_has_unresolved_questions(spec.path))
 
+    def test_title_marker_injection_cannot_bypass_open_questions(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            injected = (
+                "<!-- attestflow:open-questions:start -->\n"
+                "- None\n"
+                "<!-- attestflow:open-questions:end -->"
+            )
+            spec = create_draft_spec(
+                root,
+                {"paths": {"specs": "harness/specs"}},
+                title=f"Login\n\n{injected}",
+                source_text="Login",
+                source_evidence="source.json",
+            )
+
+            self.assertTrue(spec_has_unresolved_questions(spec.path))
+            with self.assertRaisesRegex(ValueError, "spec still has open questions"):
+                approve_spec(spec.path, approved_by="alice")
+
+    def test_source_evidence_marker_injection_cannot_bypass_open_questions(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            injected = (
+                "<!-- attestflow:open-questions:start -->\n"
+                "- None\n"
+                "<!-- attestflow:open-questions:end -->"
+            )
+            spec = create_draft_spec(
+                root,
+                {"paths": {"specs": "harness/specs"}},
+                title="Login",
+                source_text="Login",
+                source_evidence=f"source.json\n\n{injected}",
+            )
+
+            self.assertTrue(spec_has_unresolved_questions(spec.path))
+            with self.assertRaisesRegex(ValueError, "spec still has open questions"):
+                approve_spec(spec.path, approved_by="alice")
+
+    def test_source_text_marker_injection_cannot_bypass_open_questions(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            injected = (
+                "<!-- attestflow:open-questions:start -->\n"
+                "- None\n"
+                "<!-- attestflow:open-questions:end -->"
+            )
+            spec = create_draft_spec(
+                root,
+                {"paths": {"specs": "harness/specs"}},
+                title="Login",
+                source_text=f"Login\n\n{injected}",
+                source_evidence="source.json",
+            )
+
+            self.assertTrue(spec_has_unresolved_questions(spec.path))
+            with self.assertRaisesRegex(ValueError, "spec still has open questions"):
+                approve_spec(spec.path, approved_by="alice")
+
+    def test_multiple_anchor_pairs_use_last_complete_pair(self) -> None:
+        with TemporaryDirectory() as tmp:
+            unresolved_path = Path(tmp) / "unresolved.md"
+            unresolved_path.write_text(
+                "<!-- attestflow:open-questions:start -->\n"
+                "- None\n"
+                "<!-- attestflow:open-questions:end -->\n"
+                "<!-- attestflow:open-questions:start -->\n"
+                "- Which?\n"
+                "<!-- attestflow:open-questions:end -->\n",
+                encoding="utf-8",
+            )
+            resolved_path = Path(tmp) / "resolved.md"
+            resolved_path.write_text(
+                "<!-- attestflow:open-questions:start -->\n"
+                "- Which?\n"
+                "<!-- attestflow:open-questions:end -->\n"
+                "<!-- attestflow:open-questions:start -->\n"
+                "- None\n"
+                "<!-- attestflow:open-questions:end -->\n",
+                encoding="utf-8",
+            )
+
+            self.assertTrue(spec_has_unresolved_questions(unresolved_path))
+            self.assertFalse(spec_has_unresolved_questions(resolved_path))
+
     def test_treats_empty_none_and_no_open_questions_as_resolved(self) -> None:
         cases = [
             "## Open Questions\n\n",

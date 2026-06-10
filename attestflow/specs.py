@@ -105,15 +105,17 @@ def _next_spec_id(specs_root: Path) -> str:
 
 
 def _render_spec(*, spec_id: str, title: str, source_text: str, source_evidence: str | Path) -> str:
-    summary = source_text.strip() or "None"
+    safe_title = _escape_control_markers(title.strip() or spec_id)
+    safe_source_evidence = _escape_control_markers(str(source_evidence))
+    summary = _escape_control_markers(source_text.strip() or "None")
     return (
-        f"# {spec_id}: {title.strip() or spec_id}\n"
+        f"# {spec_id}: {safe_title}\n"
         "\n"
         "## Goal\n"
-        f"{title.strip() or 'None'}\n"
+        f"{safe_title}\n"
         "\n"
         "## Source Evidence\n"
-        f"- {source_evidence}\n"
+        f"- {safe_source_evidence}\n"
         "\n"
         "## Confirmed Requirements\n"
         "- Confirm requirements from source.\n"
@@ -138,14 +140,33 @@ def _render_spec(*, spec_id: str, title: str, source_text: str, source_evidence:
 
 
 def _anchored_section_body(content: str, start_marker: str, end_marker: str) -> str | None:
-    start = content.find(start_marker)
-    if start < 0:
+    sections: list[str] = []
+    search_from = 0
+    while True:
+        start = content.find(start_marker, search_from)
+        if start < 0:
+            break
+        body_start = start + len(start_marker)
+        end = content.find(end_marker, body_start)
+        if end < 0:
+            search_from = body_start
+            continue
+        sections.append(content[body_start:end])
+        search_from = end + len(end_marker)
+    if not sections:
         return None
-    body_start = start + len(start_marker)
-    end = content.find(end_marker, body_start)
-    if end < 0:
-        return None
-    return content[body_start:end]
+    return sections[-1]
+
+
+def _escape_control_markers(value: str) -> str:
+    return value.replace(OPEN_QUESTIONS_START, _html_escape_marker(OPEN_QUESTIONS_START)).replace(
+        OPEN_QUESTIONS_END,
+        _html_escape_marker(OPEN_QUESTIONS_END),
+    )
+
+
+def _html_escape_marker(value: str) -> str:
+    return value.replace("<", "&lt;").replace(">", "&gt;")
 
 
 def _section_body(content: str, heading: str) -> str | None:
