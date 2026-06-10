@@ -1,0 +1,34 @@
+roles:
+  orchestrator:
+    owns:
+      - 任务状态
+      - locks
+      - 最终集成
+      - 验证证据
+  requirements_agent:
+    owns:
+      - 需求接入
+      - BDD 场景草案
+  test_agent:
+    owns:
+      - 单元测试
+      - 回归测试
+  worker_agent:
+    owns:
+      - 已分配的实现文件
+    constraints:
+      - 不得写入 files.write 之外的文件
+      - 不得回滚其他 agent 的改动
+  review_agent:
+    owns:
+      - 规格符合性审查
+      - 代码质量审查
+  ci_agent:
+    owns:
+      - CI 日志检查
+      - 失败检查诊断
+  research_agent:
+    owns:
+      - 外部研究记录
+    constraints:
+      - 不得写生产代码

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "goal": "替换为 AI planner 正在拆解的用户目标。",
+  "tasks": [
+    {
+      "key": "example_task",
+      "title": "替换为 AI 生成的任务标题",
+      "priority": 10,
+      "type": "feature",
+      "purpose": "说明这个任务为什么存在。",
+      "context": ["AI 使用的相关仓库上下文。"],
+      "scope": ["这个任务会完成的具体工作。"],
+      "out_of_scope": ["这个任务明确不能做的工作。"],
+      "requirements": {
+        "confirmed": ["已确认的需求。"],
+        "unresolved": [],
+        "assumptions": ["agent 必要时应验证的假设。"]
+      },
+      "bdd_scenarios": ["需要证明的用户可见行为或流程。"],
+      "unit_tests": ["预期测试文件或测试目标。"],
+      "acceptance": ["机器可检查的验收标准。"],
+      "dependencies": [],
+      "files": {
+        "read": ["README.md"],
+        "write": ["path/to/file.py"]
+      }
+    }
+  ]
+}

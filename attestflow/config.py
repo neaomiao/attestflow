@@ -7,9 +7,12 @@ from typing import Any
 from .io import load_data
 
 
+SUPPORTED_PROJECT_LANGUAGES = ("en", "zh-CN")
+
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "schema_version": 1,
-    "project": {"name": "harness", "default_branch": "main"},
+    "project": {"name": "harness", "default_branch": "main", "language": "en"},
     "paths": {
         "tasks": "harness/tasks",
         "runs": "harness/runs",
@@ -98,6 +101,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_file_bytes": 4000,
         "documents": [
             "README.md",
+            "README.zh-CN.md",
             "AGENTS.md",
             "harness.yml",
             "pyproject.toml",
@@ -176,6 +180,14 @@ def validate_config(config: dict[str, Any]) -> list[str]:
             errors.append(f"missing required config section: {key}")
     if config.get("schema_version") != 1:
         errors.append("schema_version must be 1")
+    project = config.get("project", {})
+    if project is not None and not isinstance(project, dict):
+        errors.append("project must be a mapping")
+        project = {}
+    if isinstance(project, dict):
+        language = project.get("language")
+        if language is not None and language not in SUPPORTED_PROJECT_LANGUAGES:
+            errors.append(f"project.language must be one of: {', '.join(SUPPORTED_PROJECT_LANGUAGES)}")
     for key in ("tasks", "runs"):
         if not isinstance(config.get("paths", {}).get(key), str):
             errors.append(f"paths.{key} must be a string")

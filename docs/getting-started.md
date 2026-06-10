@@ -43,12 +43,20 @@ PYTHONPATH=../.. python -m attestflow autopilot --run --goal "Add greeting suppo
 ```bash
 python -m pip install --user .
 python -m attestflow install-smoke --offline
-python -m attestflow init --path /path/to/project --adapter python --agent-provider command
+python -m attestflow init --path /path/to/project --adapter python --language zh-CN --agent-provider command
 cd /path/to/project
 python -m attestflow doctor
 ```
 
 `install-smoke` 是安装层检查，不依赖模型账号。它会确认 Python 版本、CLI 是否在 `PATH`、包内模板、初始化流程和 `doctor` 都可用；源码仓库中可以运行 `python -m attestflow install-smoke --offline --check-template-mirror`，额外校验源码模板与打包模板一致。
+
+如果想让接入流程一次性完成并在交互式终端里选择语言、adapter 和 agent provider，使用：
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/neaomiao/attestflow/main/scripts/bootstrap.sh)"
+```
+
+语言选择会写入 `harness.yml` 的 `project.language`，当前支持 `en` 和 `zh-CN`。
 
 常用 adapter：
 

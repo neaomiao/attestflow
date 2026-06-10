@@ -16,7 +16,7 @@ from typing import Any
 from .autonomy import autonomy_doctor
 from .capabilities import get_capability, list_capabilities, run_planner_capability, run_task_capability
 from .ci import BUILTIN_CI_PROVIDERS, list_ci_providers, run_ci_action, run_ci_status
-from .config import load_config, validate_config
+from .config import SUPPORTED_PROJECT_LANGUAGES, load_config, validate_config
 from .context import resolve_dynamic_context_request
 from .contracts import CONTRACT_TYPES, validate_contract_file
 from .dashboard import export_dashboard
@@ -101,12 +101,16 @@ def cmd_init(args: argparse.Namespace) -> int:
     source = templates_root / "base"
     adapter = getattr(args, "adapter", "generic") or "generic"
     adapter_source = templates_root / "adapters" / str(adapter)
+    language = getattr(args, "language", "en") or "en"
     target = Path(args.path).resolve()
     if not source.exists():
         print("ERROR: templates/base does not exist", file=sys.stderr)
         return 1
     if not adapter_source.exists():
         print(f"ERROR: unknown adapter: {adapter}", file=sys.stderr)
+        return 1
+    if language not in SUPPORTED_PROJECT_LANGUAGES:
+        print(f"ERROR: project language must be one of: {', '.join(SUPPORTED_PROJECT_LANGUAGES)}", file=sys.stderr)
         return 1
     agent_provider = getattr(args, "agent_provider", "command") or "command"
     agent_command = getattr(args, "agent_command", None)
@@ -116,7 +120,10 @@ def cmd_init(args: argparse.Namespace) -> int:
         return 1
     shutil.copytree(source, target, dirs_exist_ok=True)
     shutil.copytree(adapter_source, target / "harness" / "adapters" / str(adapter), dirs_exist_ok=True)
+    _select_initialized_language_files(target, source, str(language))
+    _select_initialized_language_files(target / "harness" / "adapters" / str(adapter), adapter_source, str(language))
     _configure_initialized_adapter(target, str(adapter))
+    _configure_initialized_language(target, str(language))
     _configure_initialized_agent_provider(target, agent_provider, agent_command)
     for state in TASK_STATES:
         (target / "harness" / "tasks" / state).mkdir(parents=True, exist_ok=True)
@@ -449,6 +456,37 @@ def _configure_initialized_adapter(target: Path, adapter: str) -> None:
         _configure_php_adapter_defaults(target, config, project)
     config["project"] = project
     dump_data(config, config_path)
+
+
+def _configure_initialized_language(target: Path, language: str) -> None:
+    config_path = target / "harness.yml"
+    config = load_data(config_path)
+    project = config.get("project", {})
+    project = project if isinstance(project, dict) else {}
+    project["language"] = language
+    config["project"] = project
+    dump_data(config, config_path)
+
+
+def _select_initialized_language_files(target_root: Path, template_root: Path, language: str) -> None:
+    for template_variant in sorted(template_root.rglob("*")):
+        if not template_variant.is_file():
+            continue
+        base_relative = _language_variant_base_path(template_variant.relative_to(template_root))
+        if base_relative is None:
+            continue
+        variant = target_root / template_variant.relative_to(template_root)
+        base_path = target_root / base_relative
+        if language == "zh-CN":
+            base_path.write_bytes(variant.read_bytes())
+        variant.unlink()
+
+
+def _language_variant_base_path(path: Path) -> Path | None:
+    marker = ".zh-CN."
+    if marker not in path.name:
+        return None
+    return path.with_name(path.name.replace(marker, ".", 1))
 
 
 def _configure_python_adapter_defaults(target: Path, config: dict, project: dict) -> None:
@@ -2417,6 +2455,7 @@ def build_parser() -> argparse.ArgumentParser:
     init = subparsers.add_parser("init")
     init.add_argument("--path", default=".")
     init.add_argument("--adapter", choices=BUILTIN_PROJECT_ADAPTERS, default="generic")
+    init.add_argument("--language", choices=SUPPORTED_PROJECT_LANGUAGES, default="en")
     init.add_argument("--agent-provider", choices=["command", *sorted(_builtin_session_provider_commands())], default="command")
     init.add_argument("--agent-command")
     init.set_defaults(func=cmd_init)

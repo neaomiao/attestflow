@@ -1,0 +1,20 @@
+name: Harness 验证
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 安装 Attestflow
+        run: python -m pip install git+https://github.com/neaomiao/attestflow.git
+      - name: 验证 harness
+        run: python -m attestflow verify

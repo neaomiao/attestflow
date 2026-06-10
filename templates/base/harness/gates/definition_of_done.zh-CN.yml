@@ -1,0 +1,11 @@
+required:
+  - bdd_passed
+  - unit_passed
+  - project_verify_passed_or_not_applicable
+  - secret_scan_passed
+  - evidence_packet
+  - locks_released
+rules:
+  - 没有最新证据时不得声明完成
+  - 没有 evidence.packet 的任务不得进入 done
+  - 失败的 gates 不能支撑 done

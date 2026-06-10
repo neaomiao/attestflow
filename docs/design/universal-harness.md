@@ -99,6 +99,7 @@ schema_version: 1
 project:
   name: example-project
   default_branch: main
+  language: zh-CN
 
 paths:
   tasks: harness/tasks
@@ -168,6 +169,7 @@ context:
   max_file_bytes: 4000
   documents:
     - README.md
+    - README.zh-CN.md
     - AGENTS.md
     - harness.yml
     - pyproject.toml
