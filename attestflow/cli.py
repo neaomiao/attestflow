@@ -25,6 +25,7 @@ from .governance import SCHEMA_TYPES, governance_policy, json_schema_for, migrat
 from .io import dump_data, load_data
 from .evidence_export import export_autopilot_bundle, export_release_bundle, export_task_evidence, verify_evidence_bundle
 from .git import list_git_providers, run_git_publish
+from .go import prepare_go_run
 from .observability import inspect_run, inspect_run_diff
 from .orchestrator import (
     AutopilotRunResult,
@@ -2448,6 +2449,30 @@ def cmd_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_go(args: argparse.Namespace) -> int:
+    try:
+        result = prepare_go_run(
+            ROOT,
+            load_config(ROOT),
+            args.source,
+            from_spec=Path(args.from_spec) if args.from_spec else None,
+            approve=args.approve,
+            non_interactive=args.non_interactive,
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    if result.status == "needs_approval":
+        print(f"spec approval required: {result.spec_path}")
+        print("Review the spec, resolve open questions, then rerun with --from-spec and --approve.")
+        return 2
+    if result.status == "approved":
+        print(f"spec approved: {result.spec_path}")
+        return 0
+    print(f"ERROR: unsupported go status: {result.status}", file=sys.stderr)
+    return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m attestflow")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2787,6 +2812,13 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("goal", nargs="+")
     plan.add_argument("--command")
     plan.set_defaults(func=cmd_plan)
+
+    go = subparsers.add_parser("go")
+    go.add_argument("source", nargs="?")
+    go.add_argument("--from-spec")
+    go.add_argument("--approve", action="store_true")
+    go.add_argument("--non-interactive", action="store_true")
+    go.set_defaults(func=cmd_go)
     return parser
 
 

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 
+from attestflow import cli
 from attestflow.go import prepare_go_run
 from attestflow.io import dump_data
 
@@ -12,6 +15,67 @@ CONFIG = {"paths": {"specs": "harness/specs"}}
 
 
 class GoCliTests(unittest.TestCase):
+    def test_cli_go_inline_text_requires_spec_approval(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            stdout = io.StringIO()
+            exit_code = self._run_cli(root, ["go", "实现登录功能"], stdout=stdout)
+
+            self.assertEqual(exit_code, 2)
+            self.assertIn("spec approval required", stdout.getvalue())
+            self.assertTrue((root / "harness/specs/SPEC-0001/spec.md").exists())
+
+    def test_cli_go_non_interactive_requires_approved_spec(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            stderr = io.StringIO()
+            exit_code = self._run_cli(root, ["go", "实现登录功能", "--non-interactive"], stderr=stderr)
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("--non-interactive requires --from-spec and --approve", stderr.getvalue())
+
+    def test_cli_go_missing_requirement_path_returns_error(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            stderr = io.StringIO()
+            exit_code = self._run_cli(root, ["go", "docs/missing.md"], stderr=stderr)
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("requirement source path does not exist", stderr.getvalue())
+
+    def test_cli_go_approved_spec_returns_success_without_autopilot(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            spec = root / "harness/specs/SPEC-0001/spec.md"
+            spec.parent.mkdir(parents=True)
+            spec.write_text(
+                "# SPEC-0001: Login\n\n## Open Questions\n\n- None\n",
+                encoding="utf-8",
+            )
+            dump_data(
+                {
+                    "schema_version": 1,
+                    "spec_id": "SPEC-0001",
+                    "status": "approved",
+                    "approved_by": "alice",
+                    "approved_at": "2026-06-10T00:00:00+00:00",
+                },
+                spec.parent / "approval.json",
+            )
+
+            stdout = io.StringIO()
+            exit_code = self._run_cli(
+                root,
+                ["go", "--from-spec", str(spec), "--approve", "--non-interactive"],
+                stdout=stdout,
+            )
+
+            self.assertEqual(exit_code, 0)
+            self.assertIn("spec approved", stdout.getvalue())
+
     def test_prepare_go_run_creates_spec_for_inline_text(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -108,6 +172,24 @@ class GoCliTests(unittest.TestCase):
             self.assertEqual(result.spec_id, "SPEC-0042")
             self.assertEqual(result.spec_path, spec)
             self.assertEqual(result.goal, goal)
+
+    def _run_cli(
+        self,
+        root: Path,
+        argv: list[str],
+        *,
+        stdout: io.StringIO | None = None,
+        stderr: io.StringIO | None = None,
+    ) -> int:
+        original_root = cli.ROOT
+        cli.ROOT = root
+        stdout = stdout or io.StringIO()
+        stderr = stderr or io.StringIO()
+        try:
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                return cli.main(argv)
+        finally:
+            cli.ROOT = original_root
 
 
 if __name__ == "__main__":
