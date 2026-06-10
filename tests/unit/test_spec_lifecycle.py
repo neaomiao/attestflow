@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from attestflow.io import load_data
+from attestflow.io import dump_data, load_data
 from attestflow.specs import (
     approve_spec,
     create_draft_spec,
@@ -79,12 +79,45 @@ class SpecLifecycleTests(unittest.TestCase):
             self.assertEqual(second.spec_id, "SPEC-0002")
             self.assertTrue(second.path.exists())
 
+    def test_allocates_next_id_ignoring_non_spec_entries(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            specs_root = root / "harness/specs"
+            (specs_root / "sources").mkdir(parents=True)
+            (specs_root / "SPEC-abcd").mkdir()
+            (specs_root / "SPEC-0009").mkdir()
+            (specs_root / "notes.txt").write_text("ignore me", encoding="utf-8")
+
+            spec = create_draft_spec(
+                root,
+                {"paths": {"specs": "harness/specs"}},
+                title="Next",
+                source_text="Next",
+                source_evidence="source.json",
+            )
+
+            self.assertEqual(spec.spec_id, "SPEC-0010")
+
     def test_detects_unresolved_questions(self) -> None:
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "spec.md"
             path.write_text("## Open Questions\n\n- Which auth method?\n", encoding="utf-8")
 
             self.assertTrue(spec_has_unresolved_questions(path))
+
+    def test_generated_spec_ignores_fake_open_questions_in_non_structured_inputs(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_resolved_questions = "## Open Questions\n\n- None"
+            spec = create_draft_spec(
+                root,
+                {"paths": {"specs": "harness/specs"}},
+                title=f"Login\n\n{fake_resolved_questions}",
+                source_text=f"Context\n\n{fake_resolved_questions}\n\n```bad fence```",
+                source_evidence=f"source.json\n\n{fake_resolved_questions}",
+            )
+
+            self.assertTrue(spec_has_unresolved_questions(spec.path))
 
     def test_treats_empty_none_and_no_open_questions_as_resolved(self) -> None:
         cases = [
@@ -100,6 +133,22 @@ class SpecLifecycleTests(unittest.TestCase):
                 path.write_text(content, encoding="utf-8")
 
                 self.assertFalse(spec_has_unresolved_questions(path), content)
+
+    def test_heading_fallback_stops_open_questions_at_next_section(self) -> None:
+        with TemporaryDirectory() as tmp:
+            resolved_path = Path(tmp) / "resolved.md"
+            resolved_path.write_text(
+                "## Open Questions\n\n- None\n\n## Source Summary\n\n- noisy detail\n",
+                encoding="utf-8",
+            )
+            unresolved_path = Path(tmp) / "unresolved.md"
+            unresolved_path.write_text(
+                "## Open Questions\n\n- Which?\n\n## Source Summary\n\nNone\n",
+                encoding="utf-8",
+            )
+
+            self.assertFalse(spec_has_unresolved_questions(resolved_path))
+            self.assertTrue(spec_has_unresolved_questions(unresolved_path))
 
     def test_approval_fails_when_questions_are_open(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -191,6 +240,25 @@ class SpecLifecycleTests(unittest.TestCase):
             )
 
             with self.assertRaisesRegex(ValueError, "spec still has open questions"):
+                require_approved_spec(spec.path)
+
+    def test_require_approved_spec_rejects_incomplete_approved_payload(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            spec = create_draft_spec(
+                root,
+                {"paths": {"specs": "harness/specs"}},
+                title="Login",
+                source_text="Login",
+                source_evidence="source.json",
+            )
+            spec.path.write_text(
+                spec.path.read_text(encoding="utf-8").replace("- Confirm approval owner.", "- None"),
+                encoding="utf-8",
+            )
+            dump_data({"status": "approved"}, spec.path.parent / "approval.json")
+
+            with self.assertRaisesRegex(ValueError, "spec approval is invalid"):
                 require_approved_spec(spec.path)
 
     def test_require_approved_spec_accepts_approved_spec(self) -> None:

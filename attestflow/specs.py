@@ -11,6 +11,8 @@ from .io import dump_data, load_data
 
 SPEC_ID_PATTERN = re.compile(r"^SPEC-(\d{4})$")
 OPEN_QUESTIONS_HEADING = "## Open Questions"
+OPEN_QUESTIONS_START = "<!-- attestflow:open-questions:start -->"
+OPEN_QUESTIONS_END = "<!-- attestflow:open-questions:end -->"
 
 
 @dataclass(frozen=True)
@@ -47,7 +49,9 @@ def create_draft_spec(
 
 def spec_has_unresolved_questions(spec_path: Path) -> bool:
     content = spec_path.read_text(encoding="utf-8")
-    section = _section_body(content, OPEN_QUESTIONS_HEADING)
+    section = _anchored_section_body(content, OPEN_QUESTIONS_START, OPEN_QUESTIONS_END)
+    if section is None:
+        section = _section_body(content, OPEN_QUESTIONS_HEADING)
     if section is None:
         return False
     normalized = section.strip()
@@ -78,6 +82,8 @@ def require_approved_spec(spec_path: Path) -> None:
     approval = load_data(approval_path)
     if approval.get("status") != "approved":
         raise ValueError("spec is not approved")
+    if not _approval_is_valid(approval, spec_path.parent.name):
+        raise ValueError("spec approval is invalid")
     if spec_has_unresolved_questions(spec_path):
         raise ValueError("spec still has open questions")
 
@@ -122,11 +128,24 @@ def _render_spec(*, spec_id: str, title: str, source_text: str, source_evidence:
         "- Confirm acceptance criteria.\n"
         "\n"
         "## Open Questions\n"
+        f"{OPEN_QUESTIONS_START}\n"
         "- Confirm approval owner.\n"
+        f"{OPEN_QUESTIONS_END}\n"
         "\n"
         "## Source Summary\n"
-        f"{summary}\n"
+        f"{_fenced_block(summary)}\n"
     )
+
+
+def _anchored_section_body(content: str, start_marker: str, end_marker: str) -> str | None:
+    start = content.find(start_marker)
+    if start < 0:
+        return None
+    body_start = start + len(start_marker)
+    end = content.find(end_marker, body_start)
+    if end < 0:
+        return None
+    return content[body_start:end]
 
 
 def _section_body(content: str, heading: str) -> str | None:
@@ -172,6 +191,31 @@ def _approval_payload(
         "approved_by": approved_by,
         "approved_at": approved_at,
     }
+
+
+def _approval_is_valid(approval: dict[str, Any], expected_spec_id: str) -> bool:
+    return (
+        approval.get("schema_version") == 1
+        and approval.get("spec_id") == expected_spec_id
+        and approval.get("status") == "approved"
+        and _is_non_empty_string(approval.get("approved_by"))
+        and _is_non_empty_string(approval.get("approved_at"))
+    )
+
+
+def _is_non_empty_string(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _fenced_block(value: str) -> str:
+    fence = "`" * (max(_backtick_run_lengths(value), default=2) + 1)
+    if len(fence) < 3:
+        fence = "```"
+    return f"{fence}\n{value}\n{fence}"
+
+
+def _backtick_run_lengths(value: str) -> list[int]:
+    return [len(match.group(0)) for match in re.finditer(r"`+", value)]
 
 
 def _now() -> str:
