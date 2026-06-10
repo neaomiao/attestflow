@@ -73,6 +73,8 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/neaomiao/attestflow/main
 
 ## 3. 最小闭环
 
+`attestflow go` 可以接收内联文本、Markdown、TXT、DOCX 和可复制文本层 PDF。DOCX/PDF 解析需要安装 `attestflow[documents]`；扫描版 PDF/OCR 在 v1 不支持，请先转换成 Markdown、TXT、DOCX 或带可复制文本层的 PDF。
+
 如果入口来自外部系统，先保存来源快照，再让 intake/planner 决定真正的任务边界：
 
 ```bash

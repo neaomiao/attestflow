@@ -44,6 +44,8 @@ The selected language is stored in `harness.yml` as `project.language`. Supporte
 
 ## 3. Minimal Loop
 
+`attestflow go` accepts inline text, Markdown, TXT, DOCX, and copyable text-layer PDF input. DOCX/PDF parsing requires installing `attestflow[documents]`; scanned PDFs/OCR are not supported in v1, so convert them to Markdown, TXT, DOCX, or a PDF with copyable text first.
+
 If work enters from an external system, preserve the source snapshot before planning:
 
 ```bash

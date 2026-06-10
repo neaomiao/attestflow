@@ -27,6 +27,12 @@ Issues = "https://github.com/neaomiao/attestflow/issues"
 [project.scripts]
 attestflow = "attestflow.cli:main"
 
+[project.optional-dependencies]
+documents = [
+  "python-docx>=1.1.0",
+  "pypdf>=4.0.0",
+]
+
 [tool.setuptools.packages.find]
 include = ["attestflow*"]
 
