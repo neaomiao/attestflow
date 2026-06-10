@@ -209,6 +209,78 @@ class GoCliTests(unittest.TestCase):
             self.assertIn("spec path must be SPEC-####/spec.md", stderr.getvalue())
             self.assertEqual(calls, [])
 
+    def test_cli_go_rejects_nested_approved_spec_under_specs_without_autopilot(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            spec = root / "harness/specs/archive/SPEC-0001/spec.md"
+            spec.parent.mkdir(parents=True)
+            spec.write_text(_approved_spec_content("SPEC-0001"), encoding="utf-8")
+            dump_data(
+                {
+                    "schema_version": 1,
+                    "spec_id": "SPEC-0001",
+                    "status": "approved",
+                    "approved_by": "alice",
+                    "approved_at": "2026-06-10T00:00:00+00:00",
+                },
+                spec.parent / "approval.json",
+            )
+            original_run_autopilot = cli.run_autopilot
+            calls: list[dict[str, object]] = []
+
+            def fake_run_autopilot(*args: object, **kwargs: object) -> cli.AutopilotRunResult:
+                calls.append({"args": args, "kwargs": kwargs})
+                return _autopilot_result(root)
+
+            cli.run_autopilot = fake_run_autopilot
+
+            stderr = io.StringIO()
+            try:
+                exit_code = self._run_cli(root, ["go", "--from-spec", str(spec), "--approve"], stderr=stderr)
+            finally:
+                cli.run_autopilot = original_run_autopilot
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("spec path must be SPEC-####/spec.md", stderr.getvalue())
+            self.assertEqual(calls, [])
+
+    def test_cli_go_rejects_repo_external_configured_specs_without_autopilot(self) -> None:
+        with TemporaryDirectory() as tmp, TemporaryDirectory() as outside_tmp:
+            root = Path(tmp)
+            specs_root = Path(outside_tmp) / "specs"
+            dump_data({"schema_version": 1, "paths": {"specs": str(specs_root)}}, root / "harness.yml")
+            spec = specs_root / "SPEC-0001/spec.md"
+            spec.parent.mkdir(parents=True)
+            spec.write_text(_approved_spec_content("SPEC-0001"), encoding="utf-8")
+            dump_data(
+                {
+                    "schema_version": 1,
+                    "spec_id": "SPEC-0001",
+                    "status": "approved",
+                    "approved_by": "alice",
+                    "approved_at": "2026-06-10T00:00:00+00:00",
+                },
+                spec.parent / "approval.json",
+            )
+            original_run_autopilot = cli.run_autopilot
+            calls: list[dict[str, object]] = []
+
+            def fake_run_autopilot(*args: object, **kwargs: object) -> cli.AutopilotRunResult:
+                calls.append({"args": args, "kwargs": kwargs})
+                return _autopilot_result(root)
+
+            cli.run_autopilot = fake_run_autopilot
+
+            stderr = io.StringIO()
+            try:
+                exit_code = self._run_cli(root, ["go", "--from-spec", str(spec), "--approve"], stderr=stderr)
+            finally:
+                cli.run_autopilot = original_run_autopilot
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("configured specs directory must be under project root", stderr.getvalue())
+            self.assertEqual(calls, [])
+
     def test_prepare_go_run_creates_spec_for_inline_text(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

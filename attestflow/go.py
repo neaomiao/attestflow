@@ -64,11 +64,16 @@ def _title_from_source(source: str, source_path: Path | None) -> str:
 
 
 def _validate_from_spec_path(root: Path, config: dict[str, Any], from_spec: Path) -> None:
+    project_root = root.resolve()
     specs_root = (root / str(config.get("paths", {}).get("specs", "harness/specs"))).resolve()
+    try:
+        specs_root.relative_to(project_root)
+    except ValueError as exc:
+        raise ValueError("configured specs directory must be under project root") from exc
     spec_path = from_spec.resolve()
     try:
-        spec_path.relative_to(specs_root)
+        relative = spec_path.relative_to(specs_root)
     except ValueError as exc:
         raise ValueError("spec path must be under configured specs directory") from exc
-    if spec_path.name != "spec.md" or not SPEC_PATH_ID_PATTERN.match(spec_path.parent.name):
+    if len(relative.parts) != 2 or not SPEC_PATH_ID_PATTERN.match(relative.parts[0]) or relative.parts[1] != "spec.md":
         raise ValueError("spec path must be SPEC-####/spec.md")
