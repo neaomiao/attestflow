@@ -22,14 +22,15 @@ class RequirementSource:
 
 
 def ingest_requirement_source(root: Path, config: dict[str, Any], value: str) -> RequirementSource:
-    raw = str(value).strip()
-    if not raw:
+    original = str(value)
+    trimmed = original.strip()
+    if not trimmed:
         raise ValueError("requirement source cannot be empty")
 
-    source_path = _resolve_existing_path(root, raw)
+    source_path = _resolve_existing_path(root, trimmed)
     if source_path is not None:
         return _ingest_file(root, config, source_path)
-    return _ingest_inline_text(root, config, raw)
+    return _ingest_inline_text(root, config, original)
 
 
 def _ingest_inline_text(root: Path, config: dict[str, Any], text: str) -> RequirementSource:

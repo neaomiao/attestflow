@@ -28,6 +28,16 @@ class RequirementSourceTests(unittest.TestCase):
             self.assertTrue(source["content_hash"])
             self.assertTrue(source["received_at"])
 
+    def test_preserves_inline_text_whitespace_after_empty_check(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original = "  实现登录功能  "
+            result = ingest_requirement_source(root, {"paths": {"specs": "harness/specs"}}, original)
+
+            self.assertEqual(result.text, original)
+            source = load_data(result.evidence_path)
+            self.assertEqual(source["original"], original)
+
     def test_ingests_markdown_file_and_preserves_source_text(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
