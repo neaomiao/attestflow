@@ -61,6 +61,12 @@ policies:
 
             self.assertNotEqual(second["commands"]["unit"], "mutated")
 
+    def test_default_config_includes_specs_path(self) -> None:
+        config = load_config(Path("/tmp/attestflow-missing"))
+
+        self.assertEqual(config["paths"]["specs"], "harness/specs")
+        self.assertEqual(validate_config(config), [])
+
     def test_init_template_does_not_advertise_external_skills(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
