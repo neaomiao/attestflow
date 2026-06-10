@@ -6,7 +6,7 @@ from pathlib import Path
 import hashlib
 from typing import Any
 
-from .io import dump_data
+from .io import dump_data, load_data
 
 
 SUPPORTED_TEXT_FORMATS = {"md", "markdown", "txt"}
@@ -35,16 +35,17 @@ def ingest_requirement_source(root: Path, config: dict[str, Any], value: str) ->
 
 def _ingest_inline_text(root: Path, config: dict[str, Any], text: str) -> RequirementSource:
     content_hash = _content_hash(text)
-    evidence_path = _source_evidence_path(root, config, content_hash, "inline")
-    dump_data(
+    evidence_path = _write_source_evidence(
+        root,
+        config,
+        content_hash,
+        "inline",
         {
             "schema_version": 1,
             "kind": "inline_text",
             "original": text,
             "content_hash": content_hash,
-            "received_at": _now(),
         },
-        evidence_path,
     )
     return RequirementSource(kind="inline_text", text=text, evidence_path=evidence_path)
 
@@ -66,19 +67,20 @@ def _ingest_file(root: Path, config: dict[str, Any], path: Path) -> RequirementS
         raise ValueError(f"requirement source has no readable text: {path}")
 
     content_hash = _content_hash(text)
-    evidence_path = _source_evidence_path(root, config, content_hash, suffix)
-    dump_data(
+    evidence_path = _write_source_evidence(
+        root,
+        config,
+        content_hash,
+        suffix,
         {
             "schema_version": 1,
             "kind": "file",
             "path": str(path),
             "format": suffix,
             "content_hash": content_hash,
-            "received_at": _now(),
         },
-        evidence_path,
+        source_text=text,
     )
-    (evidence_path.parent / "source.txt").write_text(text, encoding="utf-8")
     return RequirementSource(kind="file", text=text, evidence_path=evidence_path, source_path=path, format=suffix)
 
 
@@ -108,7 +110,7 @@ def _extract_pdf_text(path: Path) -> str:
         reader = PdfReader(str(path))
         pages = [(page.extract_text() or "").strip() for page in reader.pages]
     except Exception as exc:
-        raise ValueError("PDF text layer could not be extracted; scanned PDFs are not supported in v1") from exc
+        raise ValueError(f"PDF could not be parsed: {exc}") from exc
     text = "\n\n".join(page for page in pages if page)
     if not text.strip():
         raise ValueError("PDF text layer could not be extracted; scanned PDFs are not supported in v1")
@@ -117,19 +119,45 @@ def _extract_pdf_text(path: Path) -> str:
 
 def _resolve_existing_path(root: Path, raw: str) -> Path | None:
     path = Path(raw)
-    if path.exists():
+    if path.is_absolute() and path.exists():
         return path
+    if path.is_absolute():
+        return None
     rooted = root / path
     if rooted.exists():
         return rooted
     return None
 
 
-def _source_evidence_path(root: Path, config: dict[str, Any], content_hash: str, suffix: str) -> Path:
+def _write_source_evidence(
+    root: Path,
+    config: dict[str, Any],
+    content_hash: str,
+    suffix: str,
+    payload: dict[str, Any],
+    *,
+    source_text: str | None = None,
+) -> Path:
     specs_root = root / str(config.get("paths", {}).get("specs", "harness/specs"))
-    path = specs_root / "sources" / f"{content_hash[:12]}-{suffix}" / "source.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return path
+    sources_root = specs_root / "sources"
+    stem = f"{content_hash[:12]}-{suffix}"
+    index = 1
+    while True:
+        directory_name = stem if index == 1 else f"{stem}-{index}"
+        evidence_path = sources_root / directory_name / "source.json"
+        if not evidence_path.exists():
+            evidence_path.parent.mkdir(parents=True, exist_ok=True)
+            dump_data({**payload, "received_at": _now()}, evidence_path)
+            if source_text is not None:
+                (evidence_path.parent / "source.txt").write_text(source_text, encoding="utf-8")
+            return evidence_path
+        if _same_source_payload(load_data(evidence_path), payload):
+            return evidence_path
+        index += 1
+
+
+def _same_source_payload(existing: dict[str, Any], expected: dict[str, Any]) -> bool:
+    return {key: value for key, value in existing.items() if key != "received_at"} == expected
 
 
 def _content_hash(text: str) -> str:

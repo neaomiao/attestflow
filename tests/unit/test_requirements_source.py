@@ -1,5 +1,7 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+import os
 import sys
 import unittest
 from unittest.mock import patch
@@ -58,6 +60,52 @@ class RequirementSourceTests(unittest.TestCase):
             self.assertTrue(source["content_hash"])
             self.assertTrue(source["received_at"])
             self.assertEqual((result.evidence_path.parent / "source.txt").read_text(encoding="utf-8"), result.text)
+
+    def test_resolves_relative_file_paths_from_root_not_process_cwd(self) -> None:
+        with TemporaryDirectory() as tmp, TemporaryDirectory() as cwd_tmp:
+            root = Path(tmp)
+            cwd = Path(cwd_tmp)
+            root_prd = root / "PRD.md"
+            cwd_prd = cwd / "PRD.md"
+            root_prd.write_text("root requirement\n", encoding="utf-8")
+            cwd_prd.write_text("cwd requirement\n", encoding="utf-8")
+
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(cwd)
+                result = ingest_requirement_source(root, {"paths": {"specs": "harness/specs"}}, "PRD.md")
+            finally:
+                os.chdir(previous_cwd)
+
+            self._assert_file_source(result, root_prd, "md", "root requirement\n")
+
+    def test_same_content_from_different_paths_uses_distinct_evidence_paths(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "first.md"
+            second = root / "second.md"
+            first.write_text("same requirement\n", encoding="utf-8")
+            second.write_text("same requirement\n", encoding="utf-8")
+
+            first_result = ingest_requirement_source(root, {"paths": {"specs": "harness/specs"}}, str(first))
+            second_result = ingest_requirement_source(root, {"paths": {"specs": "harness/specs"}}, str(second))
+
+            self.assertNotEqual(first_result.evidence_path, second_result.evidence_path)
+            self.assertEqual(load_data(first_result.evidence_path)["path"], str(first))
+            self.assertEqual(load_data(second_result.evidence_path)["path"], str(second))
+
+    def test_same_source_reingestion_is_idempotent(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prd = root / "PRD.md"
+            prd.write_text("same requirement\n", encoding="utf-8")
+
+            first = ingest_requirement_source(root, {"paths": {"specs": "harness/specs"}}, str(prd))
+            first_received_at = load_data(first.evidence_path)["received_at"]
+            second = ingest_requirement_source(root, {"paths": {"specs": "harness/specs"}}, str(prd))
+
+            self.assertEqual(first.evidence_path, second.evidence_path)
+            self.assertEqual(load_data(second.evidence_path)["received_at"], first_received_at)
 
     def test_ingests_markdown_extension_file(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -143,6 +191,19 @@ class RequirementSourceTests(unittest.TestCase):
 
             with patch.dict(sys.modules, {"pypdf": None}):
                 with self.assertRaisesRegex(ValueError, r"PDF support requires installing attestflow\[documents\]"):
+                    ingest_requirement_source(root, {"paths": {"specs": "harness/specs"}}, str(pdf))
+
+    def test_pdf_parser_errors_are_reported_as_parse_failures(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pdf = root / "requirements.pdf"
+            pdf.write_bytes(b"%PDF-1.4\n")
+
+            def fail_reader(path: str) -> object:
+                raise RuntimeError(f"cannot parse {path}")
+
+            with patch.dict(sys.modules, {"pypdf": SimpleNamespace(PdfReader=fail_reader)}):
+                with self.assertRaisesRegex(ValueError, "PDF could not be parsed"):
                     ingest_requirement_source(root, {"paths": {"specs": "harness/specs"}}, str(pdf))
 
     def _assert_file_source(self, result, path: Path, source_format: str, text: str) -> None:
