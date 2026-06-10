@@ -15,16 +15,28 @@ CONFIG = {"paths": {"specs": "harness/specs"}}
 
 
 class GoCliTests(unittest.TestCase):
-    def test_cli_go_inline_text_requires_spec_approval(self) -> None:
+    def test_cli_go_inline_text_requires_spec_approval_without_autopilot(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
+            original_run_autopilot = cli.run_autopilot
+            calls: list[dict[str, object]] = []
+
+            def fake_run_autopilot(*args: object, **kwargs: object) -> cli.AutopilotRunResult:
+                calls.append({"args": args, "kwargs": kwargs})
+                return _autopilot_result(root)
+
+            cli.run_autopilot = fake_run_autopilot
 
             stdout = io.StringIO()
-            exit_code = self._run_cli(root, ["go", "实现登录功能"], stdout=stdout)
+            try:
+                exit_code = self._run_cli(root, ["go", "实现登录功能"], stdout=stdout)
+            finally:
+                cli.run_autopilot = original_run_autopilot
 
             self.assertEqual(exit_code, 2)
             self.assertIn("spec approval required", stdout.getvalue())
             self.assertTrue((root / "harness/specs/SPEC-0001/spec.md").exists())
+            self.assertEqual(calls, [])
 
     def test_cli_go_non_interactive_requires_approved_spec(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -46,35 +58,68 @@ class GoCliTests(unittest.TestCase):
             self.assertEqual(exit_code, 1)
             self.assertIn("requirement source path does not exist", stderr.getvalue())
 
-    def test_cli_go_approved_spec_returns_success_without_autopilot(self) -> None:
+    def test_cli_go_approved_spec_runs_autopilot_with_spec_goal_and_limits(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
-            spec = root / "harness/specs/SPEC-0001/spec.md"
-            spec.parent.mkdir(parents=True)
-            spec.write_text(
-                "# SPEC-0001: Login\n\n## Open Questions\n\n- None\n",
-                encoding="utf-8",
-            )
-            dump_data(
-                {
-                    "schema_version": 1,
-                    "spec_id": "SPEC-0001",
-                    "status": "approved",
-                    "approved_by": "alice",
-                    "approved_at": "2026-06-10T00:00:00+00:00",
-                },
-                spec.parent / "approval.json",
-            )
+            goal = "# SPEC-0001: Login\n\n## Open Questions\n\n- None\n"
+            spec = _write_approved_spec(root, "SPEC-0001", goal)
+            original_run_autopilot = cli.run_autopilot
+            calls: list[dict[str, object]] = []
+
+            def fake_run_autopilot(*args: object, **kwargs: object) -> cli.AutopilotRunResult:
+                calls.append({"args": args, "kwargs": kwargs})
+                return _autopilot_result(root, status="finished")
+
+            cli.run_autopilot = fake_run_autopilot
 
             stdout = io.StringIO()
-            exit_code = self._run_cli(
-                root,
-                ["go", "--from-spec", str(spec), "--approve", "--non-interactive"],
-                stdout=stdout,
-            )
+            try:
+                exit_code = self._run_cli(
+                    root,
+                    ["go", "--from-spec", str(spec), "--approve", "--non-interactive", "--limit", "3", "--max-steps", "5"],
+                    stdout=stdout,
+                )
+            finally:
+                cli.run_autopilot = original_run_autopilot
 
             self.assertEqual(exit_code, 0)
-            self.assertIn("spec approved", stdout.getvalue())
+            self.assertIn(f"spec approved: {spec}", stdout.getvalue())
+            self.assertIn("autopilot run:", stdout.getvalue())
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0]["args"], (root, cli.load_config(root)))
+            self.assertEqual(
+                calls[0]["kwargs"],
+                {
+                    "limit": 3,
+                    "max_steps": 5,
+                    "actor_role": "orchestrator",
+                    "goal": goal,
+                },
+            )
+
+    def test_cli_go_approved_spec_returns_nonzero_when_autopilot_blocks(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            spec = _write_approved_spec(root, "SPEC-0001", "# SPEC-0001: Login\n")
+            original_run_autopilot = cli.run_autopilot
+
+            def fake_run_autopilot(*args: object, **kwargs: object) -> cli.AutopilotRunResult:
+                return _autopilot_result(root, status="blocked", blocked=["TASK-0001"])
+
+            cli.run_autopilot = fake_run_autopilot
+
+            stdout = io.StringIO()
+            try:
+                exit_code = self._run_cli(
+                    root,
+                    ["go", "--from-spec", str(spec), "--approve", "--non-interactive"],
+                    stdout=stdout,
+                )
+            finally:
+                cli.run_autopilot = original_run_autopilot
+
+            self.assertEqual(exit_code, 1)
+            self.assertIn("blocked 1 task(s): TASK-0001", stdout.getvalue())
 
     def test_prepare_go_run_creates_spec_for_inline_text(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -190,6 +235,46 @@ class GoCliTests(unittest.TestCase):
                 return cli.main(argv)
         finally:
             cli.ROOT = original_root
+
+
+def _write_approved_spec(root: Path, spec_id: str, content: str) -> Path:
+    spec = root / "harness/specs" / spec_id / "spec.md"
+    spec.parent.mkdir(parents=True)
+    spec.write_text(content, encoding="utf-8")
+    dump_data(
+        {
+            "schema_version": 1,
+            "spec_id": spec_id,
+            "status": "approved",
+            "approved_by": "alice",
+            "approved_at": "2026-06-10T00:00:00+00:00",
+        },
+        spec.parent / "approval.json",
+    )
+    return spec
+
+
+def _autopilot_result(
+    root: Path,
+    *,
+    status: str = "finished",
+    blocked: list[str] | None = None,
+) -> cli.AutopilotRunResult:
+    return cli.AutopilotRunResult(
+        run_id="run-1",
+        path=root / "harness/autopilot-runs/run-1",
+        status=status,
+        pause_reason=None,
+        dispatched=[],
+        actions=[],
+        failed=[],
+        blocked=blocked or [],
+        cancelled=[],
+        planned=[],
+        skipped=[],
+        steps=1,
+        limit=1,
+    )
 
 
 if __name__ == "__main__":

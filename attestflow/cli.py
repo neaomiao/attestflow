@@ -2451,9 +2451,10 @@ def cmd_plan(args: argparse.Namespace) -> int:
 
 def cmd_go(args: argparse.Namespace) -> int:
     try:
+        config = load_config(ROOT)
         result = prepare_go_run(
             ROOT,
-            load_config(ROOT),
+            config,
             args.source,
             from_spec=Path(args.from_spec) if args.from_spec else None,
             approve=args.approve,
@@ -2468,7 +2469,20 @@ def cmd_go(args: argparse.Namespace) -> int:
         return 2
     if result.status == "approved":
         print(f"spec approved: {result.spec_path}")
-        return 0
+        try:
+            result_run = run_autopilot(
+                ROOT,
+                config,
+                limit=_autopilot_limit(config, args.limit),
+                max_steps=_autopilot_max_steps(config, args.max_steps),
+                actor_role="orchestrator",
+                goal=result.goal,
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
+        _print_autopilot_run_result(result_run)
+        return 1 if result_run.failed or result_run.blocked or result_run.cancelled else 0
     print(f"ERROR: unsupported go status: {result.status}", file=sys.stderr)
     return 1
 
@@ -2818,6 +2832,8 @@ def build_parser() -> argparse.ArgumentParser:
     go.add_argument("--from-spec")
     go.add_argument("--approve", action="store_true")
     go.add_argument("--non-interactive", action="store_true")
+    go.add_argument("--limit", type=int)
+    go.add_argument("--max-steps", type=int)
     go.set_defaults(func=cmd_go)
     return parser
 
