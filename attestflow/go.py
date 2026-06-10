@@ -1,0 +1,58 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from .requirements import ingest_requirement_source
+from .specs import create_draft_spec, require_approved_spec
+
+
+@dataclass(frozen=True)
+class GoRunResult:
+    status: str
+    spec_id: str | None
+    spec_path: Path
+    goal: str | None = None
+
+
+def prepare_go_run(
+    root: Path,
+    config: dict[str, Any],
+    source: str | None,
+    *,
+    from_spec: Path | None = None,
+    approve: bool = False,
+    non_interactive: bool = False,
+) -> GoRunResult:
+    if from_spec is not None:
+        if not approve:
+            raise ValueError("--from-spec requires --approve before execution")
+        require_approved_spec(from_spec)
+        return GoRunResult(
+            status="approved",
+            spec_id=from_spec.parent.name,
+            spec_path=from_spec,
+            goal=from_spec.read_text(encoding="utf-8"),
+        )
+    if non_interactive:
+        raise ValueError("--non-interactive requires --from-spec and --approve")
+    if not source:
+        raise ValueError("attestflow go requires inline text, a document path, or --from-spec")
+
+    requirement = ingest_requirement_source(root, config, source)
+    draft = create_draft_spec(
+        root,
+        config,
+        title=_title_from_source(source, requirement.source_path),
+        source_text=requirement.text,
+        source_evidence=str(requirement.evidence_path.relative_to(root)),
+    )
+    return GoRunResult(status="needs_approval", spec_id=draft.spec_id, spec_path=draft.path)
+
+
+def _title_from_source(source: str, source_path: Path | None) -> str:
+    if source_path is not None:
+        title = source_path.stem.replace("-", " ").replace("_", " ").strip()
+        return title or "Requirement Source"
+    return source.strip().splitlines()[0][:80] or "Requirement Source"
