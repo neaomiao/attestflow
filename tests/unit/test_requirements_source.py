@@ -154,6 +154,24 @@ class RequirementSourceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "requirement source cannot be empty"):
                 ingest_requirement_source(Path(tmp), {"paths": {"specs": "harness/specs"}}, "   ")
 
+    def test_rejects_missing_relative_requirement_document_path(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "requirement source path does not exist: docs/missing-requirements.md",
+            ):
+                ingest_requirement_source(root, {"paths": {"specs": "harness/specs"}}, "docs/missing-requirements.md")
+
+    def test_rejects_missing_absolute_requirement_document_path(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "missing.pdf"
+
+            with self.assertRaisesRegex(ValueError, f"requirement source path does not exist: {source}"):
+                ingest_requirement_source(root, {"paths": {"specs": "harness/specs"}}, str(source))
+
     def test_rejects_unsupported_file_suffix(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

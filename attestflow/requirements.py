@@ -10,6 +10,7 @@ from .io import dump_data, load_data
 
 
 SUPPORTED_TEXT_FORMATS = {"md", "markdown", "txt"}
+SUPPORTED_DOCUMENT_FORMATS = SUPPORTED_TEXT_FORMATS | {"docx", "pdf"}
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,8 @@ def ingest_requirement_source(root: Path, config: dict[str, Any], value: str) ->
     source_path = _resolve_existing_path(root, trimmed)
     if source_path is not None:
         return _ingest_file(root, config, source_path)
+    if _looks_like_supported_document_path(trimmed):
+        raise ValueError(f"requirement source path does not exist: {trimmed}")
     return _ingest_inline_text(root, config, original)
 
 
@@ -127,6 +130,10 @@ def _resolve_existing_path(root: Path, raw: str) -> Path | None:
     if rooted.exists():
         return rooted
     return None
+
+
+def _looks_like_supported_document_path(raw: str) -> bool:
+    return Path(raw).suffix.lower().lstrip(".") in SUPPORTED_DOCUMENT_FORMATS
 
 
 def _write_source_evidence(

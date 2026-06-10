@@ -39,6 +39,28 @@ class GoCliTests(unittest.TestCase):
             self.assertIn("# SPEC-0001: login requirements v1", content)
             self.assertIn("Users sign in with email.", content)
 
+    def test_prepare_go_run_rejects_missing_relative_document_path(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "requirement source path does not exist: docs/missing-requirements.md",
+            ):
+                prepare_go_run(root, CONFIG, "docs/missing-requirements.md")
+
+            self.assertFalse((root / "harness/specs/SPEC-0001/spec.md").exists())
+
+    def test_prepare_go_run_rejects_missing_absolute_document_path(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "missing.pdf"
+
+            with self.assertRaisesRegex(ValueError, f"requirement source path does not exist: {source}"):
+                prepare_go_run(root, CONFIG, str(source))
+
+            self.assertFalse((root / "harness/specs/SPEC-0001/spec.md").exists())
+
     def test_non_interactive_raw_text_is_rejected(self) -> None:
         with TemporaryDirectory() as tmp:
             with self.assertRaisesRegex(ValueError, "--non-interactive requires --from-spec and --approve"):
