@@ -27,6 +27,7 @@ EXPECTED_DOC_PAIRS = [
     ("docs/contracts/pr-provider-schema.en.md", "docs/contracts/pr-provider-schema.md"),
     ("docs/contracts/release-provider-schema.en.md", "docs/contracts/release-provider-schema.md"),
     ("docs/contracts/session-adapter-schema.en.md", "docs/contracts/session-adapter-schema.md"),
+    ("docs/contracts/spec-schema.en.md", "docs/contracts/spec-schema.md"),
     ("docs/contracts/task-schema.en.md", "docs/contracts/task-schema.md"),
     ("examples/node-basic/README.md", "examples/node-basic/README.zh-CN.md"),
     ("examples/python-basic/README.md", "examples/python-basic/README.zh-CN.md"),

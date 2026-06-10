@@ -11,6 +11,8 @@ Planner output 是编程 Agent provider 和 Attestflow 之间的边界。编程 
 
 ## 输入格式
 
+`attestflow go` 调用 planner 时，输入必须是 approved spec 的内容和上下文，不是 raw user text、raw PRD 或 source evidence。Planner provider 只负责把已经批准的 spec 拆成可导入的 task JSON；它不应从原始来源推断 approval，也不能把原始来源当成已澄清的执行边界。
+
 Planner 必须输出 JSON object：
 
 ```json

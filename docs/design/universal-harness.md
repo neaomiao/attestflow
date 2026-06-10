@@ -11,9 +11,12 @@
 Harness 不是测试框架。它是开发流程控制系统，把下面这条链路变成明确、可重复、可恢复、可审计的工作流：
 
 ```text
+requirement source -> draft spec -> clarification -> approved spec -> planner JSON -> task import -> autopilot
 intent -> AI planning -> task import -> requirement boundary -> BDD scenario -> unit test -> implementation
 -> verification -> evidence -> task state transition -> next executable task
 ```
+
+`attestflow go` 采用第一条前缀链路：raw source 只能生成 draft spec，不能直接生成 ready task。只有 approved spec 才能进入 planner；planner JSON 仍然必须经过 `task import` 的确定性校验后，才可能进入 autopilot。
 
 来源项目的 harness 验证了正确方向：任务状态机、Definition of Ready、Definition of Done、BDD/TDD 顺序、验证证据包和 Agent 文件所有权。但它的问题是把具体语言栈、项目专用文档、私有发布流程、基础设施和业务红线混进了核心。
 
