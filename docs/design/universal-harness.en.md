@@ -11,12 +11,12 @@ Attestflow is a reusable development harness. It lets projects adopt one control
 The harness is not a test framework. It is a development control system that makes this chain explicit, repeatable, resumable, and auditable:
 
 ```text
-requirement source -> draft spec -> clarification -> approved spec -> planner JSON -> task import -> autopilot
-intent -> AI planning -> task import -> requirement boundary -> BDD scenario -> unit test -> implementation
+requirement source -> draft spec -> clarification -> approved spec -> AI planning -> task import
+-> requirement boundary -> BDD scenario -> unit test -> implementation
 -> verification -> evidence -> task state transition -> next executable task
 ```
 
-`attestflow go` uses the first workflow prefix: raw sources can only create draft specs, not ready tasks. Only an approved spec can enter the planner; planner JSON still has to pass deterministic `task import` validation before autopilot can run it.
+Raw sources can only create draft specs, not ready tasks. Only an approved spec can enter AI planning; planner JSON still has to pass deterministic `task import` validation before autopilot or dispatch can run it.
 
 The core principle is AI-first generation with deterministic orchestration. Programming agents own goal decomposition, task drafts, BDD, and acceptance criteria. Attestflow owns validation, ID allocation, state, locks, verification, and evidence.
 

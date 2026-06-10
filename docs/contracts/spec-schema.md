@@ -30,17 +30,23 @@ Source evidence 写在 `harness/specs/sources/...` 下。`source.json` 保存来
 
 ## Spec Content
 
-`spec.md` 至少要能支撑 planner 生成 executable tasks：
+v1 deterministic minimum required headings 只包含当前 `require_approved_spec` 会硬校验的结构：
 
 - `Goal`：批准后的目标。
-- `Source Evidence`：指向 `harness/specs/sources/.../source.json`。
-- `Confirmed Requirements`：已经确认的需求。
-- `Scope`：本轮执行范围。
-- `Out Of Scope`：明确不做的范围。
 - `Acceptance Criteria`：批准后的验收标准。
 - `Open Questions`：未解决问题。
 
 `Open Questions` 是执行门禁字段。它必须为 `None`、`无` 或空，才能进入 planner。
+
+生成的 draft spec template 还会包含推荐 review sections，用来帮助人和 Agent 审阅来源并收敛边界：
+
+- `Source Evidence`：指向 `harness/specs/sources/.../source.json`。
+- `Confirmed Requirements`：已经确认的需求。
+- `Scope`：本轮执行范围。
+- `Out Of Scope`：明确不做的范围。
+- `Source Summary`：来源文本摘要或原文片段。
+
+这些推荐 section 是 draft template 和 review workflow 的一部分，不是 v1 `require_approved_spec` 的 deterministic hard gate。项目可以在批准前保留、扩展或重写它们；真正的硬门禁仍是上面的 three-heading minimum、有效 `approval.json` 和已解决的 `Open Questions`。
 
 ## Approval Rules
 

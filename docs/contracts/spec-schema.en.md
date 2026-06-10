@@ -30,17 +30,23 @@ Source evidence is written under `harness/specs/sources/...`. `source.json` stor
 
 ## Spec Content
 
-`spec.md` must contain enough approved structure for the planner to create executable tasks:
+The v1 deterministic minimum required headings are only the structures currently hard-checked by `require_approved_spec`:
 
 - `Goal`: the approved goal.
-- `Source Evidence`: a pointer to `harness/specs/sources/.../source.json`.
-- `Confirmed Requirements`: requirements that are already confirmed.
-- `Scope`: work included in this run.
-- `Out Of Scope`: work explicitly excluded.
 - `Acceptance Criteria`: approved acceptance criteria.
 - `Open Questions`: unresolved questions.
 
 `Open Questions` is an execution gate. It must be `None`, `无`, or empty before the spec can enter the planner.
+
+Generated draft spec templates also include recommended review sections that help humans and agents inspect the source and converge the boundary:
+
+- `Source Evidence`: a pointer to `harness/specs/sources/.../source.json`.
+- `Confirmed Requirements`: requirements that are already confirmed.
+- `Scope`: work included in this run.
+- `Out Of Scope`: work explicitly excluded.
+- `Source Summary`: a summary or excerpt of the source text.
+
+These recommended sections belong to the draft template and review workflow; they are not v1 deterministic hard gates in `require_approved_spec`. Projects may keep, extend, or rewrite them before approval. The hard gate remains the three-heading minimum above, valid `approval.json`, and resolved `Open Questions`.
 
 ## Approval Rules
 
