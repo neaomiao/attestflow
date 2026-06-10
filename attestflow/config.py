@@ -210,6 +210,9 @@ def validate_config(config: dict[str, Any]) -> list[str]:
     plugin_runs = config.get("paths", {}).get("plugin_runs")
     if plugin_runs is not None and not isinstance(plugin_runs, str):
         errors.append("paths.plugin_runs must be a string")
+    specs = config.get("paths", {}).get("specs")
+    if specs is not None and not isinstance(specs, str):
+        errors.append("paths.specs must be a string")
     sessions = config.get("sessions", {})
     if sessions is not None and not isinstance(sessions, dict):
         errors.append("sessions must be a mapping")
