@@ -11,9 +11,12 @@ Attestflow is a reusable development harness. It lets projects adopt one control
 The harness is not a test framework. It is a development control system that makes this chain explicit, repeatable, resumable, and auditable:
 
 ```text
-intent -> AI planning -> task import -> requirement boundary -> BDD scenario -> unit test -> implementation
+requirement source -> draft spec -> clarification -> approved spec -> AI planning -> task import
+-> requirement boundary -> BDD scenario -> unit test -> implementation
 -> verification -> evidence -> task state transition -> next executable task
 ```
+
+Raw sources can only create draft specs, not ready tasks. Only an approved spec can enter AI planning; planner JSON still has to pass deterministic `task import` validation before autopilot or dispatch can run it.
 
 The core principle is AI-first generation with deterministic orchestration. Programming agents own goal decomposition, task drafts, BDD, and acceptance criteria. Attestflow owns validation, ID allocation, state, locks, verification, and evidence.
 
@@ -80,7 +83,7 @@ verifier     verification lead
 releaser     release engineer
 ```
 
-`capability list/show` displays contracts. `plan` runs a goal-level planner capability. `capability run <name> <task>` runs a task-level capability. Codex, Claude Code, OpenCode, external skills, and custom agent CLIs connect through provider adapters rather than becoming core dependencies.
+`capability list/show` displays contracts. The planner capability only runs from the approved-spec path or an internal controlled repair path. `capability run <name> <task>` runs a task-level capability. Codex, Claude Code, OpenCode, external skills, and custom agent CLIs connect through provider adapters rather than becoming core dependencies.
 
 ## Repository Context
 
@@ -168,11 +171,12 @@ Adapter-generated files can be edited by the project; `harness.yml` remains the 
 1. Run the one-command bootstrap or `python -m attestflow init --adapter <adapter> --language en|zh-CN --agent-provider <provider>`.
 2. Run `python -m attestflow doctor`.
 3. Have the programming agent review generated config and project commands.
-4. Generate planner JSON from the goal and repository context.
-5. Run `python -m attestflow task import --from-json plan.json`.
-6. Audit execution with `autopilot --dry-run`.
-7. Run `autopilot --run` or `dispatch`.
-8. Let capabilities advance BDD, unit tests, implementation, review, verification, PR/CI gates, close, and release evidence.
+4. Run `python -m attestflow go <requirement-source>` so raw text or documents become source evidence and a draft spec.
+5. Review the draft spec, complete clarification, and ensure `Open Questions` is `None`, `无`, or empty.
+6. After approval, run `python -m attestflow go --from-spec harness/specs/SPEC-0001/spec.md --approve --non-interactive` so the approved spec becomes planner JSON and imported tasks. Advanced flows may pass planner JSON derived from an approved spec to `python -m attestflow task import --from-json plan.json --from-spec harness/specs/SPEC-0001/spec.md --approve`.
+7. Audit execution with `autopilot --dry-run`.
+8. Run `autopilot --run` or `dispatch`.
+9. Let capabilities advance BDD, unit tests, implementation, review, verification, PR/CI gates, close, and release evidence.
 
 ## Acceptance Criteria
 

@@ -42,10 +42,11 @@ Attestflow 的自治边界是确定性的：系统自动推进可证明的工程
 一次完整自治运行必须能形成这条证据链：
 
 ```text
-goal -> plan -> task -> BDD -> tests -> implementation -> review -> verify -> PR/CI -> release -> done
+requirement source -> draft spec -> approved spec -> planner -> task
+-> BDD -> tests -> implementation -> review -> verify -> PR/CI -> release -> done
 ```
 
-每个阶段都必须保存输入、输出、日志或 metadata 引用；`metadata.json` 是状态索引，`ledger.jsonl` 是 append-only 审计日志。`autopilot --run --goal ... --until terminal` 是安全入口：它会在同一个 run 上自动 resume，直到 `finished`、`blocked` 或 `failed`。
+每个阶段都必须保存输入、输出、日志或 metadata 引用；`metadata.json` 是状态索引，`ledger.jsonl` 是 append-only 审计日志。Raw goal/PRD 只能通过 `attestflow go <requirement source>` 生成 draft spec；approved spec 才能进入 planner/autopilot。`go --from-spec SPEC --approve --until terminal` 会在同一个 run 上自动 resume，直到 `finished`、`blocked` 或 `failed`。
 
 ## Doctor
 

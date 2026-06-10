@@ -5,6 +5,8 @@ Status: base import implemented
 
 Planner output is the stable bridge between a programming agent and Attestflow runtime tasks. Humans should not hand-write runtime task JSON as the normal path.
 
+When `attestflow go` calls the planner, the input must be approved spec content and context, not raw user text, raw PRD content, or source evidence. The planner provider turns an approved spec into importable task JSON; it must not infer approval from a raw source or treat a raw source as a clarified execution boundary.
+
 ## Output Shape
 
 A planner provider returns:
@@ -44,7 +46,7 @@ Each task must have purpose, scope, out-of-scope, BDD scenarios, unit tests, acc
 
 ## Source Intake
 
-External tickets, issues, review comments, and CI failures should first enter through `source import`. Planner output then turns that source evidence into executable task boundaries.
+External tickets, issues, review comments, and CI failures should first enter through source intake and then converge into an approved spec. Planner output turns the approved spec, not raw source evidence, into executable task JSON.
 
 ## Retry
 

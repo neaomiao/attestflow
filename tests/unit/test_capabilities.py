@@ -63,62 +63,20 @@ class CapabilityTests(unittest.TestCase):
         self.assertEqual(planner["name"], "planner")
         self.assertEqual(planner["external_dependency"], False)
 
-    def test_cli_plan_runs_command_provider_and_imports_runtime_tasks(self) -> None:
+    def test_cli_plan_rejects_raw_goal(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
-            provider = root / "planner_provider.py"
-            provider.write_text(
-                """
-import json
-import sys
-
-json.load(sys.stdin)
-json.dump(
-    {
-        "schema_version": 1,
-        "tasks": [
-            {
-                "title": "Plan capability task",
-                "priority": 10,
-                "type": "feature",
-                "purpose": "Prove plan command imports programming agent output.",
-                "scope": ["plan command"],
-                "out_of_scope": ["native agent SDK"],
-                "requirements": {
-                    "confirmed": ["command provider returns planner JSON"],
-                    "unresolved": [],
-                    "assumptions": [],
-                },
-                "bdd_scenarios": ["plan imports generated tasks"],
-                "unit_tests": ["tests/unit/test_capabilities.py"],
-                "acceptance": ["runtime task JSON exists"],
-                "files": {"read": ["README.md"], "write": ["attestflow/capabilities.py"]},
-            }
-        ],
-    },
-    sys.stdout,
-)
-""".lstrip(),
-                encoding="utf-8",
-            )
-            command = f"python3 {provider}"
             original_root = cli.ROOT
             cli.ROOT = root
             try:
-                output = io.StringIO()
-                with redirect_stdout(output):
-                    exit_code = cli.main(["plan", "Add internal planner capability", "--command", command])
+                error = io.StringIO()
+                with redirect_stderr(error):
+                    exit_code = cli.main(["plan", "Add internal planner capability"])
             finally:
                 cli.ROOT = original_root
 
-            self.assertEqual(exit_code, 0)
-            self.assertIn("planned and imported 1 task(s): TASK-0001", output.getvalue())
-            task = load_data(root / "harness" / "tasks" / "ready" / "TASK-0001.json")
-            self.assertEqual(task["title"], "Plan capability task")
-            runs = list((root / "harness" / "capability-runs").glob("planner-*"))
-            self.assertEqual(len(runs), 1)
-            self.assertTrue((runs[0] / "input.json").exists())
-            self.assertTrue((runs[0] / "output.json").exists())
+            self.assertEqual(exit_code, 1)
+            self.assertIn("plan is disabled for raw goals", error.getvalue())
 
     def test_plan_uses_builtin_agent_provider_without_manual_command(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -163,7 +121,12 @@ json.dump(
                 "capabilities": {"planner": {"agent_provider": "codex", "command": None}},
             }
 
-            result = run_planner_capability(root, config, "Add provider-wired planning")
+            result = run_planner_capability(
+                root,
+                config,
+                "Add provider-wired planning",
+                approved_spec_path=_write_approved_spec(root),
+            )
 
             self.assertEqual([record.task["id"] for record in result.records], ["TASK-0001"])
             self.assertTrue((root / "harness" / "tasks" / "ready" / "TASK-0001.json").exists())
@@ -196,11 +159,31 @@ print(json.dumps({"schema_version": 1, "tasks": []}))
             }
 
             with self.assertRaisesRegex(ValueError, "timed out"):
-                run_planner_capability(root, config, "Add login")
+                run_planner_capability(root, config, "Add login", approved_spec_path=_write_approved_spec(root))
 
             run_dirs = sorted((root / "harness" / "capability-runs").glob("planner-*"))
             self.assertEqual(len(run_dirs), 1)
             self.assertIn("timed out", (run_dirs[0] / "stderr.log").read_text(encoding="utf-8"))
+
+    def test_planner_capability_validates_approved_spec_before_running_provider(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            provider = root / "planner_provider.py"
+            marker = root / "planner-ran.txt"
+            provider.write_text(
+                f"from pathlib import Path\nPath({str(marker)!r}).write_text('bad', encoding='utf-8')\n",
+                encoding="utf-8",
+            )
+            config = {
+                "paths": {"tasks": "harness/tasks", "capability_runs": "harness/capability-runs"},
+                "capabilities": {"planner": {"agent_provider": "command", "command": f"python3 {provider}"}},
+            }
+
+            with self.assertRaisesRegex(ValueError, "spec is not approved"):
+                run_planner_capability(root, config, "Add login", approved_spec_path=_write_pending_spec(root))
+
+            self.assertFalse(marker.exists())
+            self.assertFalse((root / "harness" / "capability-runs").exists())
 
     def test_planner_capability_retries_invalid_output_before_importing_tasks(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -249,7 +232,12 @@ else:
                 "capabilities": {"planner": {"agent_provider": "command", "command": f"python3 {provider}"}},
             }
 
-            result = run_planner_capability(root, config, "Add planner retry")
+            result = run_planner_capability(
+                root,
+                config,
+                "Add planner retry",
+                approved_spec_path=_write_approved_spec(root),
+            )
 
             self.assertEqual([record.task["id"] for record in result.records], ["TASK-0001"])
             self.assertEqual((root / "planner-attempts.txt").read_text(encoding="utf-8"), "2")
@@ -273,7 +261,7 @@ else:
                 cli.ROOT = original_root
 
             self.assertEqual(exit_code, 1)
-            self.assertIn("capabilities.planner.command", error.getvalue())
+            self.assertIn("plan is disabled for raw goals", error.getvalue())
 
     def test_planner_input_includes_repository_context(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -809,7 +797,7 @@ json.dump(
             exit_code = cli.main(["capability", "run", "planner", "TASK-0001", "--command", "printf '{}'"])
 
         self.assertEqual(exit_code, 1)
-        self.assertIn("use attestflow plan", error.getvalue())
+        self.assertIn("use attestflow go", error.getvalue())
 
     def test_cli_capability_run_rejects_releaser(self) -> None:
         error = io.StringIO()
@@ -861,6 +849,46 @@ def _init_git_repo(root: Path) -> None:
     (root / "README.md").write_text("# fixture\n", encoding="utf-8")
     subprocess.run(["git", "add", "README.md"], cwd=root, check=True)
     subprocess.run(["git", "commit", "-m", "initial"], cwd=root, check=True, stdout=subprocess.DEVNULL)
+
+
+def _write_approved_spec(root: Path, spec_id: str = "SPEC-0001") -> Path:
+    spec = root / "harness/specs" / spec_id / "spec.md"
+    spec.parent.mkdir(parents=True, exist_ok=True)
+    spec.write_text(
+        f"# {spec_id}: Login\n\n## Goal\nShip login.\n\n## Acceptance Criteria\n- Login works.\n\n## Open Questions\n- None\n",
+        encoding="utf-8",
+    )
+    dump_data(
+        {
+            "schema_version": 1,
+            "spec_id": spec_id,
+            "status": "approved",
+            "approved_by": "alice",
+            "approved_at": "2026-06-10T00:00:00+00:00",
+        },
+        spec.parent / "approval.json",
+    )
+    return spec
+
+
+def _write_pending_spec(root: Path, spec_id: str = "SPEC-0001") -> Path:
+    spec = root / "harness/specs" / spec_id / "spec.md"
+    spec.parent.mkdir(parents=True, exist_ok=True)
+    spec.write_text(
+        f"# {spec_id}: Login\n\n## Goal\nShip login.\n\n## Acceptance Criteria\n- Login works.\n\n## Open Questions\n- None\n",
+        encoding="utf-8",
+    )
+    dump_data(
+        {
+            "schema_version": 1,
+            "spec_id": spec_id,
+            "status": "pending",
+            "approved_by": None,
+            "approved_at": None,
+        },
+        spec.parent / "approval.json",
+    )
+    return spec
 
 
 if __name__ == "__main__":

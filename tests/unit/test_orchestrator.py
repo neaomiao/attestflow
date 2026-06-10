@@ -320,71 +320,56 @@ class OrchestratorTests(unittest.TestCase):
                 cli.ROOT = original_root
 
             self.assertEqual(exit_code, 1)
-            self.assertIn("--goal can only be used with --run", stderr.getvalue())
+            self.assertIn("--goal is not a user entrypoint", stderr.getvalue())
 
-    def test_cli_autopilot_run_with_goal_plans_then_dispatches_task(self) -> None:
+    def test_cli_autopilot_run_with_goal_is_rejected(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
-            planner_script = root / "planner_stub.py"
-            planner_script.write_text(
-                "\n".join(
-                    [
-                        "import json, sys",
-                        "payload = json.load(sys.stdin)",
-                        "assert payload['goal'] == 'ship login'",
-                        "print(json.dumps({",
-                        "    'schema_version': 1,",
-                        "    'tasks': [{",
-                        "        'key': 'login',",
-                        "        'title': 'Implement login',",
-                        "        'priority': 1,",
-                        "        'type': 'feature',",
-                        "        'purpose': 'Exercise autonomous planning.',",
-                        "        'context': [],",
-                        "        'scope': ['Add login flow'],",
-                        "        'out_of_scope': ['Billing'],",
-                        "        'requirements': {'confirmed': ['login works'], 'unresolved': [], 'assumptions': []},",
-                        "        'bdd_scenarios': ['User can log in.'],",
-                        "        'unit_tests': ['tests/unit/test_login.py'],",
-                        "        'acceptance': ['login task imported'],",
-                        "        'dependencies': [],",
-                        "        'files': {'read': [], 'write': ['src/login.py']},",
-                        "        'external_inputs': {'credentials': [], 'services': [], 'user_decisions': []}",
-                        "    }]",
-                        "}))",
-                    ]
-                ),
-                encoding="utf-8",
-            )
-            config = deepcopy(DEFAULT_CONFIG)
-            config["capabilities"]["planner"]["command"] = f"{shlex.quote(sys.executable)} {shlex.quote(str(planner_script))}"
-            dump_data(
-                {
-                    "schema_version": 1,
-                    "capabilities": config["capabilities"],
-                    "sessions": config["sessions"],
-                },
-                root / "harness.yml",
-            )
             original_root = cli.ROOT
             cli.ROOT = root
             try:
-                output = io.StringIO()
-                with redirect_stdout(output):
+                stderr = io.StringIO()
+                with redirect_stderr(stderr):
                     exit_code = cli.main(["autopilot", "--run", "--goal", "ship login", "--limit", "1", "--max-steps", "2", "--json"])
             finally:
                 cli.ROOT = original_root
 
-            self.assertEqual(exit_code, 0)
-            payload = json.loads(output.getvalue())
-            self.assertEqual(payload["planned"], ["TASK-0001"])
-            self.assertTrue((root / payload["planner"]).exists())
-            self.assertEqual(payload["dispatched"], ["TASK-0001"])
-            self.assertTrue((root / "harness" / "tasks" / "in_progress" / "TASK-0001.json").exists())
-            metadata = json.loads((Path(payload["path"]) / "metadata.json").read_text(encoding="utf-8"))
-            self.assertEqual(metadata["goal"], "ship login")
-            self.assertEqual(metadata["planned"], ["TASK-0001"])
-            self.assertIn("autopilot:plan", metadata["actions"])
+            self.assertEqual(exit_code, 1)
+            self.assertIn("--goal is not a user entrypoint", stderr.getvalue())
+
+    def test_run_autopilot_goal_requires_approved_spec_provenance(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            with self.assertRaisesRegex(ValueError, "autopilot goal requires approved spec provenance"):
+                run_autopilot(root, deepcopy(DEFAULT_CONFIG), limit=1, max_steps=1, goal="ship login")
+
+    def test_run_autopilot_goal_rejects_approved_spec_outside_specs_dir_before_planner(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            planner_script = root / "planner_stub.py"
+            marker = root / "planner-ran.txt"
+            planner_script.write_text(
+                f"from pathlib import Path\nPath({str(marker)!r}).write_text('bad', encoding='utf-8')\n",
+                encoding="utf-8",
+            )
+            config = deepcopy(DEFAULT_CONFIG)
+            config["capabilities"]["planner"]["command"] = f"{shlex.quote(sys.executable)} {shlex.quote(str(planner_script))}"
+            spec_path = _write_external_approved_spec(root)
+
+            with self.assertRaisesRegex(ValueError, "spec path must be under configured specs directory"):
+                run_autopilot(
+                    root,
+                    config,
+                    limit=1,
+                    max_steps=1,
+                    actor_role="orchestrator",
+                    goal="ship login",
+                    approved_spec_path=spec_path,
+                )
+
+            self.assertFalse(marker.exists())
+            self.assertFalse((root / "harness" / "autopilot-runs").exists())
 
     def test_autopilot_runs_intake_before_planner_when_configured(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -445,7 +430,16 @@ class OrchestratorTests(unittest.TestCase):
             config["capabilities"]["intake"]["command"] = f"{shlex.quote(sys.executable)} {shlex.quote(str(intake_script))}"
             config["capabilities"]["planner"]["command"] = f"{shlex.quote(sys.executable)} {shlex.quote(str(planner_script))}"
 
-            result = run_autopilot(root, config, limit=1, max_steps=2, actor_role="orchestrator", goal="ship login")
+            spec_path = _write_approved_spec(root)
+            result = run_autopilot(
+                root,
+                config,
+                limit=1,
+                max_steps=2,
+                actor_role="orchestrator",
+                goal="ship login",
+                approved_spec_path=spec_path,
+            )
 
             self.assertEqual(result.planned, ["TASK-0001"])
             self.assertEqual(result.actions[:2], ["autopilot:intake", "autopilot:plan"])
@@ -497,7 +491,16 @@ class OrchestratorTests(unittest.TestCase):
             config["capabilities"]["intake"]["command"] = f"{shlex.quote(sys.executable)} {shlex.quote(str(intake_script))}"
             config["capabilities"]["planner"]["command"] = f"{shlex.quote(sys.executable)} {shlex.quote(str(planner_script))}"
 
-            first = run_autopilot(root, config, limit=1, max_steps=1, actor_role="orchestrator", goal="ship login")
+            spec_path = _write_approved_spec(root)
+            first = run_autopilot(
+                root,
+                config,
+                limit=1,
+                max_steps=1,
+                actor_role="orchestrator",
+                goal="ship login",
+                approved_spec_path=spec_path,
+            )
             second = run_autopilot(root, config, limit=1, max_steps=1, actor_role="orchestrator", resume_path=first.path)
 
             self.assertEqual(first.status, "paused")
@@ -536,7 +539,16 @@ class OrchestratorTests(unittest.TestCase):
             config["capabilities"]["intake"]["command"] = f"{shlex.quote(sys.executable)} {shlex.quote(str(intake_script))}"
             config["capabilities"]["planner"]["command"] = f"{shlex.quote(sys.executable)} {shlex.quote(str(planner_script))}"
 
-            result = run_autopilot(root, config, limit=1, max_steps=3, actor_role="orchestrator", goal="make it better")
+            spec_path = _write_approved_spec(root)
+            result = run_autopilot(
+                root,
+                config,
+                limit=1,
+                max_steps=3,
+                actor_role="orchestrator",
+                goal="make it better",
+                approved_spec_path=spec_path,
+            )
 
             self.assertEqual(result.status, "blocked")
             self.assertEqual(result.blocked, ["intake"])
@@ -2620,6 +2632,45 @@ class OrchestratorTests(unittest.TestCase):
             self.assertIsInstance(payload["release"], str)
             self.assertEqual(payload["release_status"], "released")
             self.assertTrue((root / payload["release"]).exists())
+
+def _write_approved_spec(root: Path, spec_id: str = "SPEC-0001") -> Path:
+    spec = root / "harness/specs" / spec_id / "spec.md"
+    spec.parent.mkdir(parents=True, exist_ok=True)
+    spec.write_text(
+        f"# {spec_id}: Login\n\n## Goal\nShip login.\n\n## Acceptance Criteria\n- Login works.\n\n## Open Questions\n- None\n",
+        encoding="utf-8",
+    )
+    dump_data(
+        {
+            "schema_version": 1,
+            "spec_id": spec_id,
+            "status": "approved",
+            "approved_by": "alice",
+            "approved_at": "2026-06-10T00:00:00+00:00",
+        },
+        spec.parent / "approval.json",
+    )
+    return spec
+
+
+def _write_external_approved_spec(root: Path, spec_id: str = "SPEC-0001") -> Path:
+    spec = root / "external-specs" / spec_id / "spec.md"
+    spec.parent.mkdir(parents=True, exist_ok=True)
+    spec.write_text(
+        f"# {spec_id}: Login\n\n## Goal\nShip login.\n\n## Acceptance Criteria\n- Login works.\n\n## Open Questions\n- None\n",
+        encoding="utf-8",
+    )
+    dump_data(
+        {
+            "schema_version": 1,
+            "spec_id": spec_id,
+            "status": "approved",
+            "approved_by": "alice",
+            "approved_at": "2026-06-10T00:00:00+00:00",
+        },
+        spec.parent / "approval.json",
+    )
+    return spec
 
 
 if __name__ == "__main__":

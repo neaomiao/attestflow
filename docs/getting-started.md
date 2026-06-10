@@ -11,7 +11,9 @@
 ```bash
 cd examples/python-basic
 PYTHONPATH=../.. python -m attestflow doctor
-PYTHONPATH=../.. python -m attestflow autopilot --run --goal "Add greeting support" --loop --max-cycles 12 --max-steps 1
+PYTHONPATH=../.. python -m attestflow go "Add greeting support"
+# 审阅 harness/specs/SPEC-0001/spec.md，解决 Open Questions 后批准并运行：
+PYTHONPATH=../.. python -m attestflow go --from-spec harness/specs/SPEC-0001/spec.md --approve --loop --max-cycles 12 --max-steps 1
 PYTHONPATH=../.. python -m attestflow tasks
 PYTHONPATH=../.. python -m attestflow evidence TASK-0001
 PYTHONPATH=../.. python -m attestflow evidence export TASK-0001 --out attestflow-artifacts/TASK-0001
@@ -33,7 +35,9 @@ Node 示例在 `examples/node-basic`，需要本机安装 Node.js：
 ```bash
 cd examples/node-basic
 PYTHONPATH=../.. python -m attestflow doctor
-PYTHONPATH=../.. python -m attestflow autopilot --run --goal "Add greeting support" --loop --max-cycles 12 --max-steps 1
+PYTHONPATH=../.. python -m attestflow go "Add greeting support"
+# 审阅 harness/specs/SPEC-0001/spec.md，解决 Open Questions 后批准并运行：
+PYTHONPATH=../.. python -m attestflow go --from-spec harness/specs/SPEC-0001/spec.md --approve --loop --max-cycles 12 --max-steps 1
 ```
 
 ## 2. 接入自己的仓库
@@ -73,6 +77,8 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/neaomiao/attestflow/main
 
 ## 3. 最小闭环
 
+`attestflow go` 可以接收内联文本、Markdown、TXT、DOCX 和可复制文本层 PDF。DOCX/PDF 解析需要安装 `attestflow[documents]`；扫描版 PDF/OCR 在 v1 不支持，请先转换成 Markdown、TXT、DOCX 或带可复制文本层的 PDF。
+
 如果入口来自外部系统，先保存来源快照，再让 intake/planner 决定真正的任务边界：
 
 ```bash
@@ -81,20 +87,23 @@ python -m attestflow source import --kind pr-review-comment --from-json review-c
 python -m attestflow source import --kind ci-failure --from-json ci-failure.json
 ```
 
-导入后会生成 `harness/sources/.../source.json` 和 `harness/tasks/proposed/TASK-*.json`。`proposed` task 不是可执行开发任务；它保留外部来源、优先级和证据，后续仍走 `goal -> intake -> planner` 或配置好的 autopilot 流程。
+导入后会生成 `harness/sources/.../source.json` 和 `harness/tasks/proposed/TASK-*.json`。`proposed` task 不是可执行开发任务；它保留外部来源、优先级和证据，后续必须先收敛成 approved spec，再进入 planner/autopilot。
 
 配置 `capabilities.planner.command`、`capabilities.bdd.command`、`capabilities.tdd.command`、`capabilities.implementer.command` 和 `capabilities.reviewer.command` 后，运行：
 
 ```bash
-python -m attestflow autopilot --run --goal "Implement the next small feature" --until terminal --max-steps 1
+python -m attestflow go "Implement the next small feature"
+# 审阅 harness/specs/SPEC-0001/spec.md，解决 Open Questions 后批准并运行：
+python -m attestflow go --from-spec harness/specs/SPEC-0001/spec.md --approve --until terminal --max-steps 1
 ```
 
 Attestflow 会：
 
-1. 调用 planner provider，导入 runtime task JSON。
-2. 分发 ready task，创建 run、prompt packet、session record 和 locks。
-3. 按 `bdd -> tdd -> implementer -> reviewer -> verify -> close` 推进。
-4. 保存 capability、verification、ledger 和 close evidence。
+1. 从 raw requirement 生成 draft spec，并在 approval 前停止。
+2. spec 批准后调用 planner provider，导入 runtime task JSON。
+3. 分发 ready task，创建 run、prompt packet、session record 和 locks。
+4. 按 `bdd -> tdd -> implementer -> reviewer -> verify -> close` 推进。
+5. 保存 capability、verification、ledger 和 close evidence。
 
 ## 4. 出问题时看哪里
 

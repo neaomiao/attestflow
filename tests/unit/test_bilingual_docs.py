@@ -27,10 +27,15 @@ EXPECTED_DOC_PAIRS = [
     ("docs/contracts/pr-provider-schema.en.md", "docs/contracts/pr-provider-schema.md"),
     ("docs/contracts/release-provider-schema.en.md", "docs/contracts/release-provider-schema.md"),
     ("docs/contracts/session-adapter-schema.en.md", "docs/contracts/session-adapter-schema.md"),
+    ("docs/contracts/spec-schema.en.md", "docs/contracts/spec-schema.md"),
     ("docs/contracts/task-schema.en.md", "docs/contracts/task-schema.md"),
     ("examples/node-basic/README.md", "examples/node-basic/README.zh-CN.md"),
     ("examples/python-basic/README.md", "examples/python-basic/README.zh-CN.md"),
 ]
+
+PUBLIC_MARKDOWN_INVENTORY_EXCLUDED_PREFIXES = (
+    "docs/superpowers/plans/",
+)
 
 ADAPTERS = [
     "bazel",
@@ -112,6 +117,8 @@ class BilingualDocsTests(unittest.TestCase):
             files = [root] if root.is_file() else sorted(root.rglob("*.md"))
             for path in files:
                 relative = path.relative_to(ROOT).as_posix()
+                if relative.startswith(PUBLIC_MARKDOWN_INVENTORY_EXCLUDED_PREFIXES):
+                    continue
                 if relative.endswith(".en.md") or relative.endswith(".zh-CN.md"):
                     continue
                 counterpart = _expected_counterpart(path)

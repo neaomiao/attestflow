@@ -61,6 +61,20 @@ policies:
 
             self.assertNotEqual(second["commands"]["unit"], "mutated")
 
+    def test_default_config_includes_specs_path(self) -> None:
+        with TemporaryDirectory() as tmp:
+            config = load_config(Path(tmp) / "missing")
+
+            self.assertEqual(config["paths"]["specs"], "harness/specs")
+            self.assertEqual(validate_config(config), [])
+
+    def test_validate_config_rejects_invalid_specs_path(self) -> None:
+        with TemporaryDirectory() as tmp:
+            config = load_config(Path(tmp) / "missing")
+            config["paths"]["specs"] = ["harness/specs"]
+
+        self.assertIn("paths.specs must be a string", validate_config(config))
+
     def test_init_template_does_not_advertise_external_skills(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

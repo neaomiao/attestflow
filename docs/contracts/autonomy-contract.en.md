@@ -15,12 +15,13 @@ Attestflow's autonomy boundary is deterministic. The system automatically advanc
 The intended autonomous path is:
 
 ```text
-goal -> planner capability -> task import -> ready task selection -> dispatch/session
+requirement source -> draft spec -> approved spec -> planner capability
+-> task import -> ready task selection -> dispatch/session
 -> bdd -> tdd -> implementer -> reviewer -> verifier -> verify -> accepted
 -> publish/pr/ci/release evidence where configured -> close
 ```
 
-Every step appends ledger evidence. Steps that require external status may pause and resume; they do not silently skip evidence.
+Raw goals and PRDs can only create draft specs through `attestflow go <requirement source>`. Only an approved spec can enter planner/autopilot. Every step appends ledger evidence. Steps that require external status may pause and resume; they do not silently skip evidence.
 
 ## Blockers
 

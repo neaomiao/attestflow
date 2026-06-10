@@ -9,7 +9,9 @@ The Python example uses the deterministic local provider and does not require mo
 ```bash
 cd examples/python-basic
 PYTHONPATH=../.. python3 -m attestflow doctor
-PYTHONPATH=../.. python3 -m attestflow autopilot --run --goal "Add greeting support" --loop --max-cycles 12 --max-steps 1
+PYTHONPATH=../.. python3 -m attestflow go "Add greeting support"
+# Review harness/specs/SPEC-0001/spec.md, resolve Open Questions, then approve/run:
+PYTHONPATH=../.. python3 -m attestflow go --from-spec harness/specs/SPEC-0001/spec.md --approve --loop --max-cycles 12 --max-steps 1
 PYTHONPATH=../.. python3 -m attestflow tasks
 PYTHONPATH=../.. python3 -m attestflow evidence TASK-0001
 ```
@@ -44,6 +46,8 @@ The selected language is stored in `harness.yml` as `project.language`. Supporte
 
 ## 3. Minimal Loop
 
+`attestflow go` accepts inline text, Markdown, TXT, DOCX, and copyable text-layer PDF input. DOCX/PDF parsing requires installing `attestflow[documents]`; scanned PDFs/OCR are not supported in v1, so convert them to Markdown, TXT, DOCX, or a PDF with copyable text first.
+
 If work enters from an external system, preserve the source snapshot before planning:
 
 ```bash
@@ -55,10 +59,12 @@ python3 -m attestflow source import --kind ci-failure --from-json ci-failure.jso
 After configuring `capabilities.planner.command`, `capabilities.bdd.command`, `capabilities.tdd.command`, `capabilities.implementer.command`, and `capabilities.reviewer.command`, run:
 
 ```bash
-python3 -m attestflow autopilot --run --goal "Implement the next small feature" --loop --max-cycles 20 --max-steps 1
+python3 -m attestflow go "Implement the next small feature"
+# Review harness/specs/SPEC-0001/spec.md, resolve Open Questions, then approve/run:
+python3 -m attestflow go --from-spec harness/specs/SPEC-0001/spec.md --approve --loop --max-cycles 20 --max-steps 1
 ```
 
-Attestflow imports planner JSON, dispatches ready tasks, creates run/session/lock evidence, advances BDD/TDD/implementation/review/verify gates, and closes only with fresh evidence.
+Raw text or documents stop at draft spec creation. Only an approved spec enters the planner/autopilot loop, where Attestflow imports planner JSON, dispatches ready tasks, creates run/session/lock evidence, advances BDD/TDD/implementation/review/verify gates, and closes only with fresh evidence.
 
 ## 4. Troubleshooting
 

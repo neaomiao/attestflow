@@ -11,6 +11,8 @@ Planner output 是编程 Agent provider 和 Attestflow 之间的边界。编程 
 
 ## 输入格式
 
+`attestflow go` 调用 planner 时，输入必须是 approved spec 的内容和上下文，不是 raw user text、raw PRD 或 source evidence。Planner provider 只负责把已经批准的 spec 拆成可导入的 task JSON；它不应从原始来源推断 approval，也不能把原始来源当成已澄清的执行边界。
+
 Planner 必须输出 JSON object：
 
 ```json
@@ -70,7 +72,7 @@ Planner 必须输出 JSON object：
 
 ## 导入规则
 
-`attestflow task import --from-json PLAN` 和 `attestflow plan "目标"` 必须最终走同一套导入规则：
+`attestflow task import --from-json PLAN --from-spec SPEC --approve` 和 planner capability 输出必须最终走同一套导入规则。二者只能消费 approved spec 派生出的上下文，或已经由外部流程批准边界的 planner JSON；raw 文本、raw PRD 或未批准 source evidence 必须先走 `attestflow go <requirement source>` 生成并批准 spec。
 
 - 分配递增的 `TASK-*` ID
 - 忽略或覆盖编程 Agent 提供的 task id
@@ -80,7 +82,7 @@ Planner 必须输出 JSON object：
 - 任一任务不合法时拒绝整个导入
 - 全部任务通过校验后才写入任务文件
 
-`attestflow plan` 额外负责：
+Planner capability 额外负责：
 
 - 构造 planner capability input
 - 调用 `capabilities.planner.command` 或 `--command`

@@ -17,6 +17,7 @@ from .planner import import_planner_tasks
 from .provider_commands import provider_timeout_seconds, run_provider_json_command
 from .release import release_task_summaries
 from .sessions import BUILTIN_SESSION_PROVIDERS
+from .specs import validate_approved_spec_provenance
 from .tasks import TaskRecord, block_task, iter_tasks
 from .token_economy import (
     build_incremental_context,
@@ -215,7 +216,14 @@ def run_planner_capability(
     goal: str,
     *,
     command: str | None = None,
+    approved_spec_path: Path | None = None,
+    allow_unapproved: bool = False,
+    provenance_label: str | None = None,
 ) -> CapabilityRunResult:
+    if approved_spec_path is not None:
+        approved_spec_path = validate_approved_spec_provenance(root, config, approved_spec_path)
+    elif not allow_unapproved:
+        raise ValueError("planner requires approved spec provenance; use attestflow go <requirement source>")
     planner_command = command or _configured_command(config, "planner")
     if not planner_command:
         raise ValueError("capabilities.planner.command must be configured or passed with --command")
@@ -230,6 +238,8 @@ def run_planner_capability(
             config,
             goal,
             attempt={"index": attempt_index, "max": max_attempts, "previous_error": previous_error},
+            approved_spec_path=approved_spec_path,
+            provenance_label=provenance_label,
         )
         try:
             planner_output = _run_json_command(root, config, "planner", planner_command, capability_input, run_path, control_root=root)
@@ -239,7 +249,14 @@ def run_planner_capability(
                 validate_planner_output(planner_output, label="planner output"),
                 run_path / "output.json",
             )
-            records = import_planner_tasks(root, config, planner_output)
+            records = import_planner_tasks(
+                root,
+                config,
+                planner_output,
+                approved_spec_path=approved_spec_path,
+                allow_unapproved=allow_unapproved,
+                provenance_label=provenance_label,
+            )
         except ValueError as exc:
             previous_error = str(exc)
             retryable = _planner_failure_is_retryable(previous_error)
@@ -310,7 +327,7 @@ def run_task_capability(
     command: str | None = None,
 ) -> TaskCapabilityRunResult:
     if capability_name == "planner":
-        raise ValueError("planner is goal-scoped; use attestflow plan")
+        raise ValueError("planner is spec-scoped; use attestflow go <requirement source>")
     if capability_name == "releaser":
         raise ValueError("releaser is release-scoped; use autopilot release gate")
     capability = get_capability(capability_name)
@@ -367,6 +384,8 @@ def build_planner_input(
     goal: str,
     *,
     attempt: dict[str, Any] | None = None,
+    approved_spec_path: Path | None = None,
+    provenance_label: str | None = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -376,6 +395,10 @@ def build_planner_input(
         "security": config.get("security", {}),
         "root": str(root),
         "goal": goal,
+        "provenance": {
+            "kind": "approved_spec" if approved_spec_path is not None else str(provenance_label or "internal"),
+            "spec_path": _relative_to_root(root, approved_spec_path) if approved_spec_path is not None else None,
+        },
         "attempt": attempt or {"index": 1, "max": _planner_retry_attempts(config), "previous_error": None},
         "project": config.get("project", {}),
         "commands": config.get("commands", {}),
@@ -904,6 +927,16 @@ def _record_task_capability_evidence(
     evidence["capabilities"] = capabilities
     updated["evidence"] = evidence
     dump_data(updated, record.path)
+
+
+def _relative_to_root(root: Path, path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(root.resolve()))
+    except ValueError:
+        try:
+            return str(path.relative_to(root))
+        except ValueError:
+            return str(path)
 
 
 def _new_capability_run_path(root: Path, config: dict[str, Any], capability_name: str) -> Path:
