@@ -144,6 +144,8 @@ python3 -m attestflow go --from-spec harness/specs/SPEC-0001/spec.md --approve -
 python3 -m attestflow capability run reviewer TASK-0001
 python3 -m attestflow task import --from-json plan.json --from-spec harness/specs/SPEC-0001/spec.md --approve
 python3 -m attestflow source import --kind github-issue --from-json issue.json
+python3 -m attestflow blackboard post --from-role reviewer --to-role implementer --type finding --body "Missing retry boundary." --requires-response
+python3 -m attestflow blackboard list --status open --json
 python3 -m attestflow schema migrate --kind harness-config --from-json harness.yml --write
 python3 -m attestflow schema export --type task --json
 python3 -m attestflow schema openapi --json
@@ -231,6 +233,7 @@ python3 -m attestflow secret-scan
 - 内置 capability provider adapter：Codex、Claude Code、OpenCode preset 可驱动 approved spec planner 和 `capability run`
 - planner programming agent provider：只消费 approved spec 或内部受控修复上下文，保存 capability 输入/输出证据并导入 runtime task JSON；raw `plan` CLI 已拒绝
 - `capability run` task programming agent provider：对单个任务执行 `bdd`、`tdd`、`implementer`、`reviewer` 或 `verifier`，校验 capability output schema，保存 evidence 并写回任务证据索引；`releaser` 由 top-level release gate 调用
+- Agent blackboard / `agent_messages` contract：`harness/blackboard/messages.jsonl` 作为 append-only 多 Agent 消息日志，支持 `post/list/show/resolve`，消息可绑定 task、thread、run 和 evidence refs
 - 自动仓库上下文：收集文件树、核心文档和任务 focus files，写入 capability provider input；超过 token budget 时自动把全文替换为摘要和 cache key，并允许 provider 后续按需请求局部 context；自动解析结果保存在 `dynamic-context.json`
 - AI planner JSON 导入为 runtime task JSON
 - 外部来源导入：GitHub issue、Linear/Jira ticket、PR review comment 和 CI failure 会保存 source evidence，并进入 `proposed` task 队列；后续必须先收敛为 approved spec，再进入 planner

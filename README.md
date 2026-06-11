@@ -87,6 +87,8 @@ python3 -m attestflow go "Implement login"
 python3 -m attestflow go PRD.md
 python3 -m attestflow go --from-spec harness/specs/SPEC-0001/spec.md --approve --non-interactive
 python3 -m attestflow task import --from-json plan.json --from-spec harness/specs/SPEC-0001/spec.md --approve
+python3 -m attestflow blackboard post --from-role reviewer --to-role implementer --type finding --body "Missing retry boundary." --requires-response
+python3 -m attestflow blackboard list --status open --json
 python3 -m attestflow autopilot --resume --max-steps 8
 python3 -m attestflow autopilot --status --json
 python3 -m attestflow inspect --run RUN
@@ -109,7 +111,7 @@ python3 -m attestflow secret-scan
 - `harness.yml` validation and recoverable runtime layout
 - task schema, state machine, DoR/DoD gates, BDD/TDD ordering, write-scope locks, and local evidence
 - built-in project adapters for common language stacks
-- provider contracts for planner, capability, session, Git, CI, PR, and release adapters
+- provider contracts for planner, capability, session, blackboard, Git, CI, PR, and release adapters
 - Codex, Claude Code, OpenCode, and command-provider presets
 - AI-first planner import from JSON or stdin
 - source intake for GitHub issues, Linear/Jira tickets, PR comments, and CI failures
@@ -125,6 +127,7 @@ python3 -m attestflow secret-scan
 - [Provider Cookbook](docs/providers.en.md)
 - [GitHub Actions](docs/github-actions.md)
 - [Universal Harness Design](docs/design/universal-harness.en.md)
+- [Agent Blackboard Contract](docs/contracts/blackboard-schema.en.md)
 - [Governance](docs/governance.en.md)
 
 The English README is the default GitHub entrypoint. The Chinese README is maintained at [README.zh-CN.md](README.zh-CN.md).

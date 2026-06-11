@@ -604,6 +604,7 @@ python -m attestflow secret-scan
 - `task import --from-json`：导入已经批准边界的 planner JSON，校验后写入 runtime task JSON；它不是 raw PRD 或 raw goal 的入口。
 - `source import --kind github-issue|linear-ticket|jira-ticket|pr-review-comment|ci-failure --from-json FILE`：保存外部来源快照到 `harness/sources`，并创建带 `source` 元数据的 `proposed` task；source evidence 后续必须先收敛成 approved spec，再由 planner 生成可执行 ready task。
 - `schema migrate/export/openapi`：迁移旧 harness 配置、导出 JSON Schema，并输出 OpenAPI 3.1 component schema，供 provider 作者和 CI 使用。
+- `blackboard post/list/show/resolve`：把多 Agent 问题、发现、交接和决策写入 `harness/blackboard` 的 append-only 消息日志。
 - `plugin list`：从 `plugins.directories` 扫描 `plugin.json`，只做注册发现和 manifest 校验，不执行插件代码。
 - `governance policy`：输出支持的 schema version、provider contract version、稳定发布流程和 `1.0` 前破坏性变更规则。
 - `tasks`：按状态和优先级列出任务。
@@ -744,6 +745,7 @@ research_agent      owns external research notes, not production code
 - 写入范围不重叠
 - 共享文件由 orchestrator 锁定
 - 每个 Agent 写自己的 evidence
+- 跨 Agent 问题、发现、交接和决策通过 `docs/contracts/blackboard-schema.md` 约定的 blackboard 消息日志传递
 - orchestrator 做最终集成和验证
 
 不满足这些条件时，任务必须串行。
