@@ -35,6 +35,7 @@ EXPECTED_DOC_PAIRS = [
 
 PUBLIC_MARKDOWN_INVENTORY_EXCLUDED_PREFIXES = (
     "docs/superpowers/plans/",
+    "docs/superpowers/specs/",
 )
 
 ADAPTERS = [
