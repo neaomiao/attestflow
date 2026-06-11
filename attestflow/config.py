@@ -27,6 +27,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "plugin_runs": "harness/plugin-runs",
         "sources": "harness/sources",
         "specs": "harness/specs",
+        "blackboard": "harness/blackboard",
         "docs": "docs",
     },
     "commands": {
