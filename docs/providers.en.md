@@ -59,6 +59,24 @@ python -m attestflow context resolve --from-json request.json --json
 
 Providers should not recursively scan the repository on their own.
 
+## Requirements Clarifier Provider
+
+`attestflow go <text-or-document>` can call a dedicated clarifier before writing the draft spec:
+
+```yaml
+requirements:
+  clarifier_command: python3 tools/clarify_requirements.py
+  max_open_questions: 7
+```
+
+The command reads JSON from stdin and returns:
+
+```json
+{"schema_version": 1, "questions": ["Who can log in?", "Which auth methods are in scope?"]}
+```
+
+Attestflow stores the clarifier input/output under `harness/requirement-runs/clarifier-*`. If no command is configured, Attestflow uses the deterministic Q1-Q5 fallback.
+
 ## Execution and Safety
 
 Attestflow runs provider commands in argv mode, not through shell expansion. stdout/stderr are captured as evidence and common tokens, secrets, passwords, API keys, and bearer tokens are redacted. Failures write `failure.json` with a classified `type`, `automatic_action`, and `recovery_strategy`.

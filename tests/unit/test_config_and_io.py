@@ -66,7 +66,10 @@ policies:
             config = load_config(Path(tmp) / "missing")
 
             self.assertEqual(config["paths"]["specs"], "harness/specs")
+            self.assertEqual(config["paths"]["requirement_runs"], "harness/requirement-runs")
             self.assertEqual(config["paths"]["blackboard"], "harness/blackboard")
+            self.assertEqual(config["requirements"]["clarifier_command"], None)
+            self.assertEqual(config["requirements"]["max_open_questions"], 5)
             self.assertEqual(validate_config(config), [])
 
     def test_validate_config_rejects_invalid_specs_path(self) -> None:
@@ -75,6 +78,24 @@ policies:
             config["paths"]["specs"] = ["harness/specs"]
 
         self.assertIn("paths.specs must be a string", validate_config(config))
+
+    def test_validate_config_rejects_invalid_requirements_clarifier_fields(self) -> None:
+        config = load_config(Path("/tmp/attestflow-missing"))
+        config["paths"]["requirement_runs"] = ["harness/requirement-runs"]
+        config["requirements"] = {
+            "clarifier_command": ["python3", "clarify.py"],
+            "max_open_questions": 0,
+            "provider_options": [],
+            "timeout_seconds": "30",
+        }
+
+        errors = validate_config(config)
+
+        self.assertIn("paths.requirement_runs must be a string", errors)
+        self.assertIn("requirements.clarifier_command must be a string or null", errors)
+        self.assertIn("requirements.max_open_questions must be a positive integer", errors)
+        self.assertIn("requirements.provider_options must be a mapping", errors)
+        self.assertIn("requirements.timeout_seconds must be a positive number", errors)
 
     def test_init_template_does_not_advertise_external_skills(self) -> None:
         with TemporaryDirectory() as tmp:

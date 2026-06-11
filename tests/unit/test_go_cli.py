@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
+import sys
 from tempfile import TemporaryDirectory
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -327,6 +328,43 @@ class GoCliTests(unittest.TestCase):
             self.assertTrue(result.open_questions)
             self.assertIn("[Q1]", result.open_questions[0])
             self.assertIn("实现登录功能", result.spec_path.read_text(encoding="utf-8"))
+
+    def test_prepare_go_run_uses_configured_clarifier_command_for_open_questions(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            clarifier = root / "clarifier.py"
+            clarifier.write_text(
+                "import json, sys\n"
+                "payload = json.loads(sys.stdin.read())\n"
+                "assert payload['source']['text'] == '实现登录功能'\n"
+                "print(json.dumps({\n"
+                "  'schema_version': 1,\n"
+                "  'questions': [\n"
+                "    'Who can log in and from which client?',\n"
+                "    'Which auth methods are in scope?'\n"
+                "  ]\n"
+                "}))\n",
+                encoding="utf-8",
+            )
+            config = {
+                "paths": {
+                    "specs": "harness/specs",
+                    "requirement_runs": "harness/requirement-runs",
+                },
+                "requirements": {
+                    "clarifier_command": f"{sys.executable} {clarifier}",
+                    "max_open_questions": 5,
+                },
+            }
+
+            result = prepare_go_run(root, config, "实现登录功能")
+
+            self.assertEqual(
+                result.open_questions,
+                ["Who can log in and from which client?", "Which auth methods are in scope?"],
+            )
+            self.assertIn("Who can log in", result.spec_path.read_text(encoding="utf-8"))
+            self.assertTrue(any((root / "harness" / "requirement-runs").glob("clarifier-*/input.json")))
 
     def test_prepare_go_run_creates_spec_for_markdown_file_with_filename_title(self) -> None:
         with TemporaryDirectory() as tmp:

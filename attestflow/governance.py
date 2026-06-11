@@ -103,7 +103,7 @@ def _merge_missing(target: dict[str, Any], defaults: dict[str, Any], prefix: str
             _merge_missing(target[key], default, path, migrations)
 
 
-def json_schema_for(schema_type: str) -> dict[str, Any]:
+def json_schema_for(schema_type: str, *, strict: bool = False) -> dict[str, Any]:
     if schema_type not in SCHEMA_TYPES:
         raise ValueError(f"unknown schema type: {schema_type}")
     schema = {
@@ -111,7 +111,7 @@ def json_schema_for(schema_type: str) -> dict[str, Any]:
         "$id": f"https://attestflow.local/schemas/{schema_type}.schema.json",
         "title": f"Attestflow {schema_type}",
         "type": "object",
-        "additionalProperties": True,
+        "additionalProperties": not strict,
         "required": ["schema_version"],
         "properties": {
             "schema_version": {"const": 1},
@@ -119,7 +119,7 @@ def json_schema_for(schema_type: str) -> dict[str, Any]:
     }
     if schema_type != "task":
         schema["properties"]["contract_version"] = {"const": PROVIDER_CONTRACT_VERSION}
-        schema["properties"]["usage"] = _usage_schema()
+        schema["properties"]["usage"] = _usage_schema(strict=strict)
     status_enum = _schema_status_enum(schema_type)
     if status_enum is not None:
         schema["required"].extend(["status", "summary"])
@@ -187,11 +187,11 @@ def _schema_status_enum(schema_type: str) -> list[str] | None:
     return None
 
 
-def _usage_schema() -> dict[str, Any]:
+def _usage_schema(*, strict: bool = False) -> dict[str, Any]:
     non_negative_integer = {"type": "integer", "minimum": 0}
     return {
         "type": "object",
-        "additionalProperties": True,
+        "additionalProperties": not strict,
         "properties": {
             "provider": {"type": "string", "minLength": 1},
             "model": {"type": "string", "minLength": 1},
@@ -205,7 +205,7 @@ def _usage_schema() -> dict[str, Any]:
     }
 
 
-def openapi_document() -> dict[str, Any]:
+def openapi_document(*, strict: bool = False) -> dict[str, Any]:
     return {
         "openapi": "3.1.0",
         "info": {
@@ -214,6 +214,6 @@ def openapi_document() -> dict[str, Any]:
         },
         "paths": {},
         "components": {
-            "schemas": {schema_type: json_schema_for(schema_type) for schema_type in SCHEMA_TYPES},
+            "schemas": {schema_type: json_schema_for(schema_type, strict=strict) for schema_type in SCHEMA_TYPES},
         },
     }

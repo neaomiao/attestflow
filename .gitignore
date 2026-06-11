@@ -15,7 +15,10 @@ graphify-out/
 **/graphify-out/
 
 # Attestflow runtime artifacts
+harness/autopilot-runs/*
+!harness/autopilot-runs/.gitkeep
 harness/runs/
+harness/requirement-runs/
 harness/capability-runs/
 harness/ci-runs/
 harness/git-runs/*
@@ -23,3 +26,7 @@ harness/git-runs/*
 harness/plugin-runs/*
 !harness/plugin-runs/.gitkeep
 harness/locks/
+harness/tasks/*/*
+!harness/tasks/*/.gitkeep
+harness/context-cache/
+harness/provider-cache/

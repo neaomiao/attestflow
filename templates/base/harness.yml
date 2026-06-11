@@ -17,6 +17,7 @@ paths:
   plugin_runs: harness/plugin-runs
   sources: harness/sources
   specs: harness/specs
+  requirement_runs: harness/requirement-runs
   blackboard: harness/blackboard
   docs: docs
 commands:
@@ -52,6 +53,9 @@ security:
     mode: provider-owned
   filesystem:
     mode: write-scope-validated
+requirements:
+  clarifier_command: null
+  max_open_questions: 5
 sessions:
   agent_provider: command
   role: worker_agent

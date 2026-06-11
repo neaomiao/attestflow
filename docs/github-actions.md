@@ -5,18 +5,20 @@ Attestflow core does not depend on GitHub, but an open-core repository can still
 Use `examples/github-actions/attestflow-pr.yml` as a starting point. The workflow does three deterministic checks:
 
 1. Installs the local package.
-2. Runs `python -m attestflow verify`.
-3. Exports every completed task with `python -m attestflow evidence export TASK-* --out ...`.
+2. Compiles `attestflow`, `examples`, and `tests`.
+3. Runs `python -m attestflow verify`.
+4. Exports every completed task with `python -m attestflow evidence export TASK-* --out ...`.
 
 The workflow exits with `1` when no completed task evidence exists, so a PR cannot pass without an auditable Attestflow evidence bundle. The final bundle is uploaded with `actions/upload-artifact`.
 
 The repository CI also runs an install matrix before release hardening:
 
-- macOS, Linux, and Windows run `python -m attestflow verify` after a normal source install.
+- macOS and Linux run full unit tests, BDD tests, `compileall`, and then `python -m attestflow verify` after a normal source install.
+- Windows runs source install, `compileall`, `python -m attestflow verify`, and install smoke checks; the full unit discovery suite is kept on Unix because several provider-adapter tests use Unix executable fixtures.
 - Linux covers local venv, pipx, uv, and source installs.
 - macOS and Windows cover built wheel install.
 - Tag or manual runs cover `pip install attestflow` from PyPI.
-- Every install path runs `attestflow install-smoke --offline`; the source path also runs `--check-template-mirror` to catch drift between source templates and packaged templates.
+- The main verify job runs `attestflow install-smoke --offline --check-template-mirror`; install matrix paths also run `install-smoke` for each packaging mode.
 
 ## Runtime integration
 

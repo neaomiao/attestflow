@@ -47,6 +47,24 @@ Planner provider 输出见 `docs/contracts/planner-output-schema.md`。Reviewer 
 
 Provider input 可能已经被 token economy 层压缩：当 `token_economy` 预算超限时，`repository_context.documents[]` 和 `files[]` 会从 `content` 变成 `summary`、`content_hash`、`cache_key` 和 `retrieval`。Provider 需要更多局部上下文时，应提交动态 context 请求，然后由 orchestrator 运行 `python -m attestflow context resolve --from-json request.json --json` 取回片段，而不是自行递归扫描仓库。
 
+## 需求澄清 Provider
+
+`attestflow go <文本或文档>` 可以在写入 draft spec 前调用专用 clarifier：
+
+```yaml
+requirements:
+  clarifier_command: python3 tools/clarify_requirements.py
+  max_open_questions: 7
+```
+
+命令从 stdin 读取 JSON，并返回：
+
+```json
+{"schema_version": 1, "questions": ["谁可以登录？", "哪些认证方式在范围内？"]}
+```
+
+Attestflow 会把 clarifier 输入/输出保存到 `harness/requirement-runs/clarifier-*`。未配置命令时，仍使用确定性的 Q1-Q5 fallback。
+
 Attestflow 使用 argv 模式执行 provider command，不通过 shell 展开管道、重定向或 `;`。stdout/stderr 会写入证据日志，并对常见 token、secret、password、API key 和 bearer token 做 redaction。失败会写入 `failure.json`，`type` 取值为 `auth_missing`、`rate_limited`、`context_too_large`、`invalid_output`、`tool_denied`、`approval_required`、`output_too_large`、`timeout`、`network` 或 `failed`，并附带 `automatic_action` 和 `recovery_strategy`。
 
 本地 verification commands，包括 `commands.bdd`、`commands.unit`、`commands.lint`、`commands.typecheck`、`commands.secret_scan` 和 `commands.project_verify`，也遵守同一条 argv 执行边界。它们不会通过 shell 运行，默认 `security.verification_commands.timeout_seconds: 600`，用 `security.verification_commands.max_output_bytes` 限制日志大小，并在写入 run log 前对常见 secret 做 redaction。
