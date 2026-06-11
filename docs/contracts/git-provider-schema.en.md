@@ -32,7 +32,7 @@ Git provider output must include:
 }
 ```
 
-`status` can be `published`, `skipped`, `blocked`, or `failed`.
+`status` can be `published`, `skipped`, `blocked`, `failed`, or `unknown`.
 
 ## Safety
 

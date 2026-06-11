@@ -86,6 +86,16 @@ python -m attestflow blackboard resolve MSG-0001 --from-role implementer --body 
 
 输入非法或 blackboard 状态损坏时，CLI 返回非零并输出 `ERROR:`。
 
+## Contract 校验
+
+JSONL 中每一行都是一个 `blackboard-event` contract。`agent-message` 是同一持久化事件结构的别名：
+
+```bash
+python -m attestflow contract validate blackboard-event event.json
+python -m attestflow schema export blackboard-event --json
+python -m attestflow schema export agent-message --json
+```
+
 ## 控制面边界
 
 Blackboard 不是 task state、locks、run ledger 或 evidence 的替代品。它只是 Agent 之间的协作层。Orchestrator 仍然拥有任务状态流转、锁校验、最终集成和验证。

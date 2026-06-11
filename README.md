@@ -69,11 +69,12 @@ Use `attestflow go` when you want to start from raw requirement text or a requir
 
 ```bash
 attestflow go "Implement login"
+attestflow go "Implement login" --clarify
 attestflow go PRD.md
 attestflow go --from-spec harness/specs/SPEC-0001/spec.md --approve --non-interactive
 ```
 
-Inline text and documents only create a draft spec under `harness/specs/SPEC-*/spec.md` and stop with `spec approval required`; they do not execute planner or autopilot directly. Only an approved spec crosses the execution boundary and enters the planner/autopilot loop.
+Inline text and documents create a draft spec under `harness/specs/SPEC-*/spec.md`, generate structured Open Questions, and stop with `spec approval required`; they do not execute planner or autopilot directly. Use `--clarify` in an interactive terminal to answer the questions in-place, or edit the spec manually until Open Questions are resolved. Only an approved spec crosses the execution boundary and enters the planner/autopilot loop.
 
 Markdown, TXT, DOCX, and copyable text-layer PDF inputs are supported. DOCX and PDF extraction require installing `attestflow[documents]`. Scanned PDFs and OCR are not supported in v1.
 
@@ -89,6 +90,7 @@ python3 -m attestflow go --from-spec harness/specs/SPEC-0001/spec.md --approve -
 python3 -m attestflow task import --from-json plan.json --from-spec harness/specs/SPEC-0001/spec.md --approve
 python3 -m attestflow blackboard post --from-role reviewer --to-role implementer --type finding --body "Missing retry boundary." --requires-response
 python3 -m attestflow blackboard list --status open --json
+python3 -m attestflow graphify-sync --all
 python3 -m attestflow autopilot --resume --max-steps 8
 python3 -m attestflow autopilot --status --json
 python3 -m attestflow inspect --run RUN

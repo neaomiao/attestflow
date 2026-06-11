@@ -12,6 +12,7 @@ build/
 # Local analysis artifacts
 .graphify_detect.json
 graphify-out/
+**/graphify-out/
 
 # Attestflow runtime artifacts
 harness/runs/

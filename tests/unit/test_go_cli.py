@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from unittest.mock import patch
 
 from attestflow import cli
 from attestflow.go import prepare_go_run
@@ -35,8 +36,38 @@ class GoCliTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 2)
             self.assertIn("spec approval required", stdout.getvalue())
+            self.assertIn("open questions:", stdout.getvalue())
             self.assertTrue((root / "harness/specs/SPEC-0001/spec.md").exists())
             self.assertEqual(calls, [])
+
+    def test_cli_go_clarify_captures_answers_but_still_requires_approval(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            stdin = io.StringIO(
+                "\n".join(
+                    [
+                        "Admins signing in through the web app.",
+                        "Email/password only; no OAuth.",
+                        "No password reset in v1.",
+                        "Login succeeds and bad passwords are rejected.",
+                        "No external service; store credentials locally for the demo.",
+                    ]
+                )
+                + "\n"
+            )
+
+            stdout = io.StringIO()
+            exit_code = self._run_cli(root, ["go", "实现登录功能", "--clarify"], stdout=stdout, stdin=stdin)
+            spec = root / "harness/specs/SPEC-0001/spec.md"
+            content = spec.read_text(encoding="utf-8")
+
+            self.assertEqual(exit_code, 2)
+            self.assertIn("clarifications captured", stdout.getvalue())
+            self.assertIn("## Clarifications", content)
+            self.assertIn("Admins signing in through the web app.", content)
+            self.assertIn("No password reset in v1.", content)
+            self.assertIn("## Open Questions", content)
+            self.assertIn("- None", content)
 
     def test_cli_go_non_interactive_requires_approved_spec(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -293,6 +324,8 @@ class GoCliTests(unittest.TestCase):
             self.assertEqual(result.spec_path, root / "harness/specs/SPEC-0001/spec.md")
             self.assertTrue(result.spec_path.exists())
             self.assertIsNone(result.goal)
+            self.assertTrue(result.open_questions)
+            self.assertIn("[Q1]", result.open_questions[0])
             self.assertIn("实现登录功能", result.spec_path.read_text(encoding="utf-8"))
 
     def test_prepare_go_run_creates_spec_for_markdown_file_with_filename_title(self) -> None:
@@ -424,13 +457,15 @@ class GoCliTests(unittest.TestCase):
         *,
         stdout: io.StringIO | None = None,
         stderr: io.StringIO | None = None,
+        stdin: io.StringIO | None = None,
     ) -> int:
         original_root = cli.ROOT
         cli.ROOT = root
         stdout = stdout or io.StringIO()
         stderr = stderr or io.StringIO()
+        stdin = stdin or io.StringIO()
         try:
-            with redirect_stdout(stdout), redirect_stderr(stderr):
+            with redirect_stdout(stdout), redirect_stderr(stderr), patch("sys.stdin", stdin):
                 return cli.main(argv)
         finally:
             cli.ROOT = original_root

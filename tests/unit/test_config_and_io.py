@@ -623,7 +623,8 @@ sys.exit(0)
                     "allowlist": "python3",
                     "max_output_bytes": 0,
                     "require_approval_for_irreversible": "yes",
-                }
+                },
+                "verification_commands": {"timeout_seconds": 0, "max_output_bytes": "large"},
             },
         }
 
@@ -632,6 +633,8 @@ sys.exit(0)
         self.assertIn("security.provider_commands.allowlist must be a list of strings", errors)
         self.assertIn("security.provider_commands.max_output_bytes must be a positive integer", errors)
         self.assertIn("security.provider_commands.require_approval_for_irreversible must be a boolean", errors)
+        self.assertIn("security.verification_commands.timeout_seconds must be a positive number", errors)
+        self.assertIn("security.verification_commands.max_output_bytes must be a positive integer", errors)
 
     def test_validate_config_rejects_invalid_capability_provider_fields(self) -> None:
         config = {
@@ -831,6 +834,54 @@ sys.exit(0)
             self.assertEqual(result.failed, [])
             self.assertEqual([item.name for item in result.results], ["bdd", "unit"])
             self.assertTrue((root / "verify-logs" / "bdd.log").exists())
+
+    def test_run_verification_does_not_execute_shell_metacharacters(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = {
+                "commands": {
+                    "bdd": (
+                        "python3 -c 'print(\"ok\")' ; python3 -c "
+                        "'from pathlib import Path; Path(\"pwned.txt\").write_text(\"bad\", encoding=\"utf-8\")'"
+                    ),
+                    "unit": None,
+                    "lint": None,
+                    "typecheck": None,
+                    "secret_scan": None,
+                    "project_verify": None,
+                }
+            }
+
+            result = run_verification(root, config, root / "verify-logs")
+
+            self.assertEqual(result.failed, [])
+            self.assertFalse((root / "pwned.txt").exists())
+
+    def test_run_verification_times_out_and_redacts_truncated_logs(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = {
+                "security": {"verification_commands": {"timeout_seconds": 0.05, "max_output_bytes": 80}},
+                "commands": {
+                    "bdd": "python3 -u -c 'import time; print(\"API_TOKEN=super-secret-token\"); print(\"x\" * 200); time.sleep(1)'",
+                    "unit": None,
+                    "lint": None,
+                    "typecheck": None,
+                    "secret_scan": None,
+                    "project_verify": None,
+                },
+            }
+
+            result = run_verification(root, config, root / "verify-logs")
+            log = (root / "verify-logs" / "bdd.log").read_text(encoding="utf-8")
+
+            self.assertEqual(result.failed, ["bdd"])
+            self.assertEqual(result.results[0].exit_code, 124)
+            self.assertTrue(result.results[0].timed_out)
+            self.assertIn("API_TOKEN=<redacted>", log)
+            self.assertNotIn("super-secret-token", log)
+            self.assertIn("<truncated>", log)
+            self.assertIn("timed out after 0.05 seconds", log)
 
 
 if __name__ == "__main__":

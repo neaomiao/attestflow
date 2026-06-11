@@ -86,6 +86,16 @@ python -m attestflow blackboard resolve MSG-0001 --from-role implementer --body 
 
 The CLI returns non-zero with `ERROR:` on invalid input or corrupted blackboard state.
 
+## Contract Validation
+
+Each JSONL line is a `blackboard-event` contract. `agent-message` is accepted as an alias for the same persisted event shape:
+
+```bash
+python -m attestflow contract validate blackboard-event event.json
+python -m attestflow schema export blackboard-event --json
+python -m attestflow schema export agent-message --json
+```
+
 ## Control-Plane Boundary
 
 The blackboard is not a replacement for task state, locks, run ledger, or evidence. It is the coordination layer between agents. The orchestrator still owns task transitions, lock enforcement, final integration, and verification.

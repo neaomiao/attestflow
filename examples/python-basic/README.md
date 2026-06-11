@@ -8,7 +8,9 @@ Run from this directory:
 
 ```bash
 PYTHONPATH=../.. python -m attestflow doctor
-PYTHONPATH=../.. python -m attestflow autopilot --run --goal "Add greeting support" --loop --max-cycles 12 --max-steps 1
+PYTHONPATH=../.. python -m attestflow go "Add greeting support"
+# Answer the printed Open Questions, or edit harness/specs/SPEC-0001/spec.md until Open Questions is None.
+PYTHONPATH=../.. python -m attestflow go --from-spec harness/specs/SPEC-0001/spec.md --approve --loop --max-cycles 12 --max-steps 1
 PYTHONPATH=../.. python -m attestflow tasks
 PYTHONPATH=../.. python -m attestflow evidence TASK-0001
 ```

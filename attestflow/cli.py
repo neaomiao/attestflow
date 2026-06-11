@@ -34,6 +34,7 @@ from .io import dump_data, load_data
 from .evidence_export import export_autopilot_bundle, export_release_bundle, export_task_evidence, verify_evidence_bundle
 from .git import list_git_providers, run_git_publish
 from .go import prepare_go_run
+from .graphify_sync import sync_graphify_outputs
 from .observability import inspect_run, inspect_run_diff
 from .orchestrator import (
     AutopilotRunResult,
@@ -44,7 +45,7 @@ from .orchestrator import (
     run_autopilot,
 )
 from .planner import import_planner_tasks
-from .specs import validate_approved_spec_provenance
+from .specs import resolve_spec_open_questions, validate_approved_spec_provenance
 from .plugins import discover_plugins, run_plugin_command
 from .policy_packs import apply_policy_pack, list_policy_packs, validate_policy_pack
 from .pr import list_pr_providers, run_pr_ensure, run_pr_merge, run_pr_status
@@ -74,6 +75,7 @@ from .tasks import (
     validate_task,
     verify_task,
 )
+from .template_inventory import relative_template_files
 from .usage import build_usage_report
 
 
@@ -395,8 +397,8 @@ def _template_mirror_errors() -> list[str]:
     package_root = Path(__file__).resolve().parent / "templates"
     if not source_root.exists():
         return [f"source template mirror is missing: {source_root}"]
-    source_files = _relative_files(source_root)
-    package_files = _relative_files(package_root)
+    source_files = relative_template_files(source_root)
+    package_files = relative_template_files(package_root)
     errors: list[str] = []
     missing = sorted(source_files - package_files)
     extra = sorted(package_files - source_files)
@@ -408,12 +410,6 @@ def _template_mirror_errors() -> list[str]:
         if (source_root / relative).read_bytes() != (package_root / relative).read_bytes():
             errors.append(f"package template mirror differs from source template: {relative}")
     return errors
-
-
-def _relative_files(root: Path) -> set[Path]:
-    if not root.exists():
-        return set()
-    return {path.relative_to(root) for path in root.rglob("*") if path.is_file()}
 
 
 def _offline_config_errors(config: dict) -> list[str]:
@@ -2539,6 +2535,29 @@ def cmd_context_resolve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_graphify_sync(args: argparse.Namespace) -> int:
+    result = sync_graphify_outputs(
+        ROOT,
+        scopes=args.scope,
+        all_scopes=bool(args.all),
+        merge=not bool(args.no_merge),
+    )
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    print(f"graphify sync: {len(result['scopes'])} scope(s) -> {result['output_root']}")
+    for scope in result["scopes"]:
+        graph = scope.get("graph") or {}
+        print(
+            f"  {scope['scope']} -> {scope['destination']} "
+            f"({graph.get('nodes', 0)} nodes, {graph.get('edges', 0)} edges)"
+        )
+    if result.get("merged"):
+        merged = result["merged"]
+        print(f"merged graph: {merged['path']} ({merged['nodes']} nodes, {merged['edges']} edges)")
+    return 0
+
+
 def cmd_plan(args: argparse.Namespace) -> int:
     print("ERROR: plan is disabled for raw goals; use attestflow go <requirement source>", file=sys.stderr)
     return 1
@@ -2563,6 +2582,20 @@ def cmd_go(args: argparse.Namespace) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     if result.status == "needs_approval":
+        questions = result.open_questions or []
+        if questions:
+            print("open questions:")
+            for question in questions:
+                print(f"  - {question}")
+        if questions and (args.clarify or sys.stdin.isatty()):
+            try:
+                answers = _collect_go_clarifications(questions)
+            except ValueError as exc:
+                print(f"ERROR: {exc}", file=sys.stderr)
+                return 1
+            if answers:
+                resolve_spec_open_questions(result.spec_path, answers)
+                print(f"clarifications captured: {result.spec_path}")
         print(f"spec approval required: {result.spec_path}")
         print("Review the spec, resolve open questions, then rerun with --from-spec and --approve.")
         return 2
@@ -2611,6 +2644,21 @@ def cmd_go(args: argparse.Namespace) -> int:
         return 0
     print(f"ERROR: unsupported go status: {result.status}", file=sys.stderr)
     return 1
+
+
+def _collect_go_clarifications(questions: list[str]) -> list[tuple[str, str]]:
+    answers: list[tuple[str, str]] = []
+    for question in questions:
+        while True:
+            try:
+                answer = input(f"{question}\n> ").strip()
+            except EOFError as exc:
+                raise ValueError("clarification input ended before all open questions were answered") from exc
+            if answer:
+                answers.append((question, answer))
+                break
+            print("answer is required; leave --clarify off to edit the spec manually")
+    return answers
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -2992,11 +3040,19 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--command")
     plan.set_defaults(func=cmd_plan)
 
+    graphify_sync = subparsers.add_parser("graphify-sync")
+    graphify_sync.add_argument("--all", action="store_true")
+    graphify_sync.add_argument("--scope", action="append")
+    graphify_sync.add_argument("--no-merge", action="store_true")
+    graphify_sync.add_argument("--json", action="store_true")
+    graphify_sync.set_defaults(func=cmd_graphify_sync)
+
     go = subparsers.add_parser("go")
     go.add_argument("source", nargs="?")
     go.add_argument("--from-spec")
     go.add_argument("--approve", action="store_true")
     go.add_argument("--approved-by", default="local-user")
+    go.add_argument("--clarify", action="store_true")
     go.add_argument("--non-interactive", action="store_true")
     go.add_argument("--limit", type=int)
     go.add_argument("--max-steps", type=int)

@@ -38,6 +38,7 @@ PUBLIC_MARKDOWN_INVENTORY_EXCLUDED_PREFIXES = (
     "docs/superpowers/plans/",
     "docs/superpowers/specs/",
 )
+PUBLIC_MARKDOWN_INVENTORY_EXCLUDED_PARTS = {"graphify-out"}
 
 ADAPTERS = [
     "bazel",
@@ -121,6 +122,8 @@ class BilingualDocsTests(unittest.TestCase):
                 relative = path.relative_to(ROOT).as_posix()
                 if relative.startswith(PUBLIC_MARKDOWN_INVENTORY_EXCLUDED_PREFIXES):
                     continue
+                if any(part in PUBLIC_MARKDOWN_INVENTORY_EXCLUDED_PARTS for part in path.relative_to(ROOT).parts):
+                    continue
                 if relative.endswith(".en.md") or relative.endswith(".zh-CN.md"):
                     continue
                 counterpart = _expected_counterpart(path)
@@ -129,6 +132,15 @@ class BilingualDocsTests(unittest.TestCase):
                     untracked.append(f"{pair[0]} -> {pair[1]}")
 
         self.assertEqual(untracked, [])
+
+    def test_public_examples_do_not_document_raw_autopilot_goal_entrypoint(self) -> None:
+        stale: list[str] = []
+        for path in sorted((ROOT / "examples").rglob("README*.md")):
+            text = path.read_text(encoding="utf-8")
+            if "autopilot --run --goal" in text:
+                stale.append(path.relative_to(ROOT).as_posix())
+
+        self.assertEqual(stale, [])
 
 
 def _expected_counterpart(path: Path) -> Path:

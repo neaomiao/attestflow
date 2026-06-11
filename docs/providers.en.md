@@ -63,6 +63,8 @@ Providers should not recursively scan the repository on their own.
 
 Attestflow runs provider commands in argv mode, not through shell expansion. stdout/stderr are captured as evidence and common tokens, secrets, passwords, API keys, and bearer tokens are redacted. Failures write `failure.json` with a classified `type`, `automatic_action`, and `recovery_strategy`.
 
+Local verification commands under `commands.bdd`, `commands.unit`, `commands.lint`, `commands.typecheck`, `commands.secret_scan`, and `commands.project_verify` follow the same argv execution boundary. They are not run through a shell, default to `security.verification_commands.timeout_seconds: 600`, cap logs with `security.verification_commands.max_output_bytes`, and redact common secrets before writing run logs.
+
 Security boundary example:
 
 ```yaml

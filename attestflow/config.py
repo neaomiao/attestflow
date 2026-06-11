@@ -60,6 +60,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "network": "provider-owned",
             },
         },
+        "verification_commands": {
+            "timeout_seconds": 600,
+            "max_output_bytes": 1048576,
+        },
         "network": {"mode": "provider-owned"},
         "filesystem": {"mode": "write-scope-validated"},
     },
@@ -288,6 +292,18 @@ def validate_config(config: dict[str, Any]) -> list[str]:
                             not isinstance(value, list) or not all(isinstance(item, str) for item in value)
                         ):
                             errors.append(f"security.provider_commands.sandbox.{key} must be a list of strings")
+        verification_commands = security.get("verification_commands", {})
+        if verification_commands is not None and not isinstance(verification_commands, dict):
+            errors.append("security.verification_commands must be a mapping")
+        elif isinstance(verification_commands, dict):
+            _validate_timeout_seconds(
+                errors,
+                "security.verification_commands.timeout_seconds",
+                verification_commands.get("timeout_seconds"),
+            )
+            max_output_bytes = verification_commands.get("max_output_bytes")
+            if max_output_bytes is not None and (type(max_output_bytes) is not int or max_output_bytes <= 0):
+                errors.append("security.verification_commands.max_output_bytes must be a positive integer")
     plugins = config.get("plugins", {})
     if plugins is not None and not isinstance(plugins, dict):
         errors.append("plugins must be a mapping")

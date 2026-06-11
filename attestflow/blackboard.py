@@ -8,6 +8,10 @@ from pathlib import Path
 import re
 from typing import Any, Iterator
 
+from .contract_statuses import BLACKBOARD_EVENT_TYPES as EVENT_TYPES
+from .contract_statuses import BLACKBOARD_MESSAGE_TYPES as MESSAGE_TYPES
+from .tasks import iter_tasks
+
 try:
     import fcntl
 except ImportError:  # pragma: no cover - exercised only on non-POSIX platforms.
@@ -18,21 +22,7 @@ try:
 except ImportError:  # pragma: no cover - exercised only on Windows.
     msvcrt = None  # type: ignore[assignment]
 
-from .tasks import iter_tasks
-
-
-MESSAGE_TYPES = {
-    "question",
-    "answer",
-    "finding",
-    "decision",
-    "handoff",
-    "blocker",
-    "status",
-    "note",
-}
 TERMINAL_STATUSES = {"resolved", "superseded"}
-EVENT_TYPES = {"post", "resolve", "supersede"}
 EVENT_ID_RE = re.compile(r"^EVT-(\d+)$")
 MESSAGE_ID_RE = re.compile(r"^MSG-(\d+)$")
 THREAD_ID_RE = re.compile(r"^THREAD-(\d+)$")

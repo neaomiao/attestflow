@@ -81,11 +81,12 @@ python3 -m attestflow doctor
 
 ```bash
 attestflow go "实现登录功能"
+attestflow go "实现登录功能" --clarify
 attestflow go PRD.md
 attestflow go --from-spec harness/specs/SPEC-0001/spec.md --approve --non-interactive
 ```
 
-raw text/document 只会生成 `harness/specs/SPEC-*/spec.md` 草稿，并返回 `spec approval required`；它不会直接执行 planner 或 autopilot。只有 approved spec 才能越过执行边界，进入 planner/autopilot 闭环。
+raw text/document 会生成 `harness/specs/SPEC-*/spec.md` 草稿和结构化 Open Questions，并返回 `spec approval required`；它不会直接执行 planner 或 autopilot。交互终端里可以加 `--clarify` 逐题回答，也可以手动编辑 spec，直到 Open Questions 收敛。只有 approved spec 才能越过执行边界，进入 planner/autopilot 闭环。
 
 v1 支持 Markdown、TXT、DOCX 和可复制文本层 PDF。DOCX/PDF 解析需要安装 `attestflow[documents]`；扫描 PDF/OCR 暂不支持。
 
@@ -146,6 +147,7 @@ python3 -m attestflow task import --from-json plan.json --from-spec harness/spec
 python3 -m attestflow source import --kind github-issue --from-json issue.json
 python3 -m attestflow blackboard post --from-role reviewer --to-role implementer --type finding --body "Missing retry boundary." --requires-response
 python3 -m attestflow blackboard list --status open --json
+python3 -m attestflow graphify-sync --all
 python3 -m attestflow schema migrate --kind harness-config --from-json harness.yml --write
 python3 -m attestflow schema export --type task --json
 python3 -m attestflow schema openapi --json
