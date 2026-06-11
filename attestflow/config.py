@@ -27,6 +27,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "plugin_runs": "harness/plugin-runs",
         "sources": "harness/sources",
         "specs": "harness/specs",
+        "blackboard": "harness/blackboard",
         "docs": "docs",
     },
     "commands": {
@@ -107,6 +108,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "harness.yml",
             "pyproject.toml",
             "package.json",
+            "docs/contracts/blackboard-schema.md",
             "docs/contracts/capability-schema.md",
             "docs/contracts/ci-provider-schema.md",
             "docs/contracts/git-provider-schema.md",

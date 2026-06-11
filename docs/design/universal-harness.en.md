@@ -132,6 +132,7 @@ Stable commands include:
 - `init`: generate base files and adapter docs, write `project.adapter`, `project.language`, and selected provider presets.
 - `doctor`: check config, commands, runtime layout, task schema, provider CLI, and provider preflight.
 - `validate-config`, `validate-task`, `task import`, `source import`, `schema migrate/export/openapi`, `plugin list`, `governance policy`.
+- `blackboard post/list/show/resolve` for append-only cross-agent messages under `harness/blackboard`.
 - `tasks`, `next`, `autopilot --dry-run`, `autopilot --run`, `autopilot --resume`, `autopilot --loop`, `autopilot --status`.
 - `inspect --run`, `inspect --diff`, `recover`, `dispatch`, `start`, `block`, `unblock`.
 - `evidence`, `evidence export`, `evidence bundle`, `evidence verify`, `contract validate`, `provider contract`.
@@ -153,7 +154,7 @@ Every task execution writes a run directory with metadata, ledger, prompt/sessio
 
 ## Multi-agent Orchestration
 
-Agent roles are protocol roles, not business identities. Parallel execution is allowed only when each agent has a task id, a declared write set, disjoint write scopes, locked shared files, and its own evidence. Otherwise tasks run sequentially.
+Agent roles are protocol roles, not business identities. Parallel execution is allowed only when each agent has a task id, a declared write set, disjoint write scopes, locked shared files, and its own evidence. Cross-agent questions, findings, handoffs, and decisions use the blackboard contract in `docs/contracts/blackboard-schema.en.md`; task state, locks, and final verification still belong to the orchestrator. Otherwise tasks run sequentially.
 
 ## Project Adapters
 

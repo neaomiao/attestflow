@@ -19,6 +19,7 @@ EXPECTED_DOC_PAIRS = [
     ("docs/providers.en.md", "docs/providers.md"),
     ("docs/design/universal-harness.en.md", "docs/design/universal-harness.md"),
     ("docs/contracts/autonomy-contract.en.md", "docs/contracts/autonomy-contract.md"),
+    ("docs/contracts/blackboard-schema.en.md", "docs/contracts/blackboard-schema.md"),
     ("docs/contracts/capability-schema.en.md", "docs/contracts/capability-schema.md"),
     ("docs/contracts/ci-provider-schema.en.md", "docs/contracts/ci-provider-schema.md"),
     ("docs/contracts/evidence-schema.en.md", "docs/contracts/evidence-schema.md"),
@@ -35,6 +36,7 @@ EXPECTED_DOC_PAIRS = [
 
 PUBLIC_MARKDOWN_INVENTORY_EXCLUDED_PREFIXES = (
     "docs/superpowers/plans/",
+    "docs/superpowers/specs/",
 )
 
 ADAPTERS = [

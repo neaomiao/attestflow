@@ -17,6 +17,7 @@ paths:
   plugin_runs: harness/plugin-runs
   sources: harness/sources
   specs: harness/specs
+  blackboard: harness/blackboard
   docs: docs
 commands:
   bdd: python -m unittest discover -s tests/bdd
@@ -101,6 +102,7 @@ context:
     - harness.yml
     - pyproject.toml
     - package.json
+    - docs/contracts/blackboard-schema.md
     - docs/contracts/capability-schema.md
     - docs/contracts/ci-provider-schema.md
     - docs/contracts/git-provider-schema.md

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import json
 import os
 import shlex
@@ -14,6 +15,13 @@ from pathlib import Path
 from typing import Any
 
 from .autonomy import autonomy_doctor
+from .blackboard import (
+    BlackboardMessage,
+    list_blackboard_messages,
+    post_blackboard_message,
+    resolve_blackboard_message,
+    show_blackboard_message,
+)
 from .capabilities import get_capability, list_capabilities, run_planner_capability, run_task_capability
 from .ci import BUILTIN_CI_PROVIDERS, list_ci_providers, run_ci_action, run_ci_status
 from .config import SUPPORTED_PROJECT_LANGUAGES, load_config, validate_config
@@ -1092,6 +1100,84 @@ def cmd_validate_task(args: argparse.Namespace) -> int:
         return 1
     print("task validation passed")
     return 0
+
+
+def cmd_blackboard_post(args: argparse.Namespace) -> int:
+    config = load_config(ROOT)
+    message = post_blackboard_message(
+        ROOT,
+        config,
+        task_id=args.task,
+        run_id=args.run,
+        thread_id=args.thread,
+        from_role=args.from_role,
+        to_role=args.to_role,
+        message_type=args.type,
+        body=args.body,
+        requires_response=bool(args.requires_response),
+        reply_to=args.reply_to,
+        evidence_refs=args.evidence,
+    )
+    _print_blackboard_message(message, json_output=bool(args.json))
+    return 0
+
+
+def cmd_blackboard_list(args: argparse.Namespace) -> int:
+    config = load_config(ROOT)
+    messages = list_blackboard_messages(
+        ROOT,
+        config,
+        task_id=args.task,
+        thread_id=args.thread,
+        status=args.status,
+    )
+    if args.json:
+        print(json.dumps([asdict(message) for message in messages], ensure_ascii=False, indent=2))
+        return 0
+    if not messages:
+        print("no blackboard messages")
+        return 0
+    for message in messages:
+        print(_blackboard_table_row(message))
+    return 0
+
+
+def cmd_blackboard_show(args: argparse.Namespace) -> int:
+    config = load_config(ROOT)
+    message = show_blackboard_message(ROOT, config, args.message, include_events=bool(args.events))
+    _print_blackboard_message(message, json_output=bool(args.json))
+    return 0
+
+
+def cmd_blackboard_resolve(args: argparse.Namespace) -> int:
+    config = load_config(ROOT)
+    message = resolve_blackboard_message(
+        ROOT,
+        config,
+        args.message,
+        from_role=args.from_role,
+        body=args.body,
+        evidence_refs=args.evidence,
+    )
+    _print_blackboard_message(message, json_output=bool(args.json))
+    return 0
+
+
+def _print_blackboard_message(message: BlackboardMessage, *, json_output: bool) -> None:
+    if json_output:
+        print(json.dumps(asdict(message), ensure_ascii=False, indent=2))
+        return
+    print(_blackboard_table_row(message))
+
+
+def _blackboard_table_row(message: BlackboardMessage) -> str:
+    to_role = message.to_role or "-"
+    task_id = message.task_id or "-"
+    body = " ".join(message.body.split())
+    return (
+        f"{message.message_id}\t{message.status}\t{message.thread_id}\t{message.from_role}\t"
+        f"{message.message_type}\t{body}\tto={to_role}\ttask={task_id}"
+    )
 
 
 def _load_task_records_for_cli(config: dict) -> list | None:
@@ -2612,6 +2698,43 @@ def build_parser() -> argparse.ArgumentParser:
     validate_task_parser = subparsers.add_parser("validate-task")
     validate_task_parser.add_argument("path")
     validate_task_parser.set_defaults(func=cmd_validate_task)
+
+    blackboard = subparsers.add_parser("blackboard")
+    blackboard_subparsers = blackboard.add_subparsers(dest="blackboard_command", required=True)
+    blackboard_post = blackboard_subparsers.add_parser("post")
+    blackboard_post.add_argument("--from-role", required=True)
+    blackboard_post.add_argument("--to-role")
+    blackboard_post.add_argument("--type", default="note")
+    blackboard_post.add_argument("--body", required=True)
+    blackboard_post.add_argument("--task")
+    blackboard_post.add_argument("--run")
+    blackboard_post.add_argument("--thread")
+    blackboard_post.add_argument("--reply-to")
+    blackboard_post.add_argument("--evidence", action="append", default=[])
+    blackboard_post.add_argument("--requires-response", action="store_true")
+    blackboard_post.add_argument("--json", action="store_true")
+    blackboard_post.set_defaults(func=cmd_blackboard_post)
+
+    blackboard_list = blackboard_subparsers.add_parser("list")
+    blackboard_list.add_argument("--task")
+    blackboard_list.add_argument("--thread")
+    blackboard_list.add_argument("--status")
+    blackboard_list.add_argument("--json", action="store_true")
+    blackboard_list.set_defaults(func=cmd_blackboard_list)
+
+    blackboard_show = blackboard_subparsers.add_parser("show")
+    blackboard_show.add_argument("message")
+    blackboard_show.add_argument("--events", action="store_true")
+    blackboard_show.add_argument("--json", action="store_true")
+    blackboard_show.set_defaults(func=cmd_blackboard_show)
+
+    blackboard_resolve = blackboard_subparsers.add_parser("resolve")
+    blackboard_resolve.add_argument("message")
+    blackboard_resolve.add_argument("--from-role", required=True)
+    blackboard_resolve.add_argument("--body", required=True)
+    blackboard_resolve.add_argument("--evidence", action="append", default=[])
+    blackboard_resolve.add_argument("--json", action="store_true")
+    blackboard_resolve.set_defaults(func=cmd_blackboard_resolve)
 
     subparsers.add_parser("tasks").set_defaults(func=cmd_tasks)
     subparsers.add_parser("next").set_defaults(func=cmd_next)

@@ -66,6 +66,7 @@ policies:
             config = load_config(Path(tmp) / "missing")
 
             self.assertEqual(config["paths"]["specs"], "harness/specs")
+            self.assertEqual(config["paths"]["blackboard"], "harness/blackboard")
             self.assertEqual(validate_config(config), [])
 
     def test_validate_config_rejects_invalid_specs_path(self) -> None:
