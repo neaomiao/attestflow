@@ -5,18 +5,20 @@ Attestflow core 不依赖 GitHub，但开源核心仓库可以发布可复用的
 以 `examples/github-actions/attestflow-pr.yml` 为起点。该 workflow 做三个确定性检查：
 
 1. 安装本地包。
-2. 运行 `python -m attestflow verify`。
-3. 对每个已完成任务运行 `python -m attestflow evidence export TASK-* --out ...` 导出证据。
+2. 编译 `attestflow`、`examples` 和 `tests`。
+3. 运行 `python -m attestflow verify`。
+4. 对每个已完成任务运行 `python -m attestflow evidence export TASK-* --out ...` 导出证据。
 
 如果没有已完成任务 evidence，workflow 会以 `1` 退出，因此 PR 不能在没有可审计 Attestflow evidence bundle 的情况下通过。最终 bundle 会通过 `actions/upload-artifact` 上传。
 
 仓库 CI 还会在发布加固前跑安装矩阵：
 
-- macOS、Linux 和 Windows 在普通源码安装后运行 `python -m attestflow verify`。
+- macOS 和 Linux 在普通源码安装后运行全量 unit、BDD、`compileall`，再运行 `python -m attestflow verify`。
+- Windows 运行源码安装、`compileall`、`python -m attestflow verify` 和 install smoke；全量 unit discovery 保留在 Unix，因为部分 provider adapter 测试使用 Unix executable fixture。
 - Linux 覆盖本地 venv、pipx、uv 和源码安装。
 - macOS 和 Windows 覆盖 wheel 安装。
 - tag 或手动运行覆盖从 PyPI 安装 `attestflow`。
-- 每条安装路径运行 `attestflow install-smoke --offline`；源码路径额外运行 `--check-template-mirror`，防止源码模板和打包模板漂移。
+- 主 verify job 运行 `attestflow install-smoke --offline --check-template-mirror`；安装矩阵里的每种打包方式也会运行 `install-smoke`。
 
 ## Runtime integration
 

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .provider_commands import provider_timeout_seconds, run_provider_json_command
 from .requirements import ingest_requirement_source
 from .specs import approve_spec, create_draft_spec, require_approved_spec, spec_open_questions, validate_spec_path
 
@@ -53,13 +55,14 @@ def prepare_go_run(
         raise ValueError("attestflow go requires inline text, a document path, or --from-spec")
 
     requirement = ingest_requirement_source(root, config, source)
+    open_questions = _open_questions_for_requirement(root, config, requirement.text, requirement.evidence_path)
     draft = create_draft_spec(
         root,
         config,
         title=_title_from_source(source, requirement.source_path),
         source_text=requirement.text,
         source_evidence=str(requirement.evidence_path.relative_to(root)),
-        open_questions=_default_open_questions(requirement.text),
+        open_questions=open_questions,
     )
     return GoRunResult(
         status="needs_approval",
@@ -85,3 +88,70 @@ def _default_open_questions(source_text: str) -> list[str]:
         "[Q4] What observable acceptance criteria prove the work is complete?",
         "[Q5] What external services, credentials, migrations, compatibility constraints, or rollout risks must be handled?",
     ]
+
+
+def _open_questions_for_requirement(root: Path, config: dict[str, Any], source_text: str, evidence_path: Path) -> list[str]:
+    requirements = config.get("requirements", {})
+    requirements = requirements if isinstance(requirements, dict) else {}
+    command = requirements.get("clarifier_command")
+    if not command:
+        return _default_open_questions(source_text)
+    output = _run_clarifier_command(root, config, str(command), source_text, evidence_path, requirements)
+    questions = output.get("questions")
+    if not isinstance(questions, list) or not all(str(question).strip() for question in questions):
+        raise ValueError("requirements clarifier output questions must be a non-empty list of strings")
+    max_questions = _positive_int(requirements.get("max_open_questions"), 5)
+    return [str(question).strip() for question in questions[:max_questions]]
+
+
+def _run_clarifier_command(
+    root: Path,
+    config: dict[str, Any],
+    command: str,
+    source_text: str,
+    evidence_path: Path,
+    requirements: dict[str, Any],
+) -> dict[str, Any]:
+    run_root = _run_root(root, config)
+    payload = {
+        "schema_version": 1,
+        "capability": {"name": "requirements-clarifier"},
+        "root": str(root),
+        "source": {
+            "text": source_text,
+            "evidence": _relative(root, evidence_path),
+        },
+        "max_questions": _positive_int(requirements.get("max_open_questions"), 5),
+        "security": config.get("security", {}),
+        "provider_options": requirements.get("provider_options", {}),
+    }
+    return run_provider_json_command(
+        root,
+        command,
+        payload,
+        run_root / f"clarifier-{_timestamp()}",
+        "requirements clarifier",
+        timeout_seconds=provider_timeout_seconds(requirements),
+    )
+
+
+def _run_root(root: Path, config: dict[str, Any]) -> Path:
+    paths = config.get("paths", {})
+    configured = paths.get("requirement_runs") if isinstance(paths, dict) else None
+    path = Path(str(configured or "harness/requirement-runs"))
+    return path if path.is_absolute() else root / path
+
+
+def _positive_int(value: Any, default: int) -> int:
+    return int(value) if type(value) is int and value > 0 else default
+
+
+def _timestamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+
+
+def _relative(root: Path, path: Path) -> str:
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return path.as_posix()

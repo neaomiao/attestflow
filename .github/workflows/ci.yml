@@ -29,12 +29,20 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install package
         run: python -m pip install .
+      - name: Run unit test suite
+        if: runner.os != 'Windows'
+        run: python -m unittest discover -s tests/unit
+      - name: Run BDD suite
+        if: runner.os != 'Windows'
+        run: python -m unittest discover -s tests/bdd
+      - name: Compile source tree
+        run: python -m compileall -q attestflow examples tests
       - name: Verify
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: python -m attestflow verify
       - name: Smoke installed CLI
-        run: attestflow install-smoke --offline
+        run: attestflow install-smoke --offline --check-template-mirror
       - name: Upload Attestflow verification evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -78,6 +78,32 @@ class GraphifySyncTests(unittest.TestCase):
             self.assertEqual(payload["status"], "synced")
             self.assertEqual(payload["scopes"][0]["scope"], "docs")
 
+    def test_sync_reports_weak_graph_quality_when_nodes_have_no_relationships(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_graphify_scope(root, "docs", nodes=[{"id": "guide", "label": "Guide"}], edges=[])
+
+            result = sync_graphify_outputs(root, all_scopes=True)
+
+            self.assertEqual(result["quality"]["status"], "weak")
+            self.assertIn("merged graph has nodes but no edges or hyperedges", result["quality"]["warnings"])
+            self.assertEqual(result["merged"]["quality"]["status"], "weak")
+
+    def test_sync_reports_usable_graph_quality_when_relationships_exist(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_graphify_scope(
+                root,
+                "docs",
+                nodes=[{"id": "guide", "label": "Guide"}, {"id": "cli", "label": "CLI"}],
+                edges=[{"source": "guide", "target": "cli", "relation": "mentions"}],
+            )
+
+            result = sync_graphify_outputs(root, all_scopes=True)
+
+            self.assertEqual(result["quality"]["status"], "usable")
+            self.assertEqual(result["quality"]["warnings"], [])
+
 
 def _write_graphify_scope(root: Path, scope: str, *, nodes: list[dict], edges: list[dict]) -> None:
     graphify_out = root / scope / "graphify-out"

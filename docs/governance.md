@@ -32,10 +32,12 @@ Provider 输出仍要求 `schema_version: 1`。`contract_version` 是可选字�
 ```bash
 python -m attestflow schema export --type task --json
 python -m attestflow schema export --type ci-output --json
+python -m attestflow schema export --type capability-output --strict --json
 python -m attestflow schema openapi --json
+python -m attestflow schema openapi --strict --json
 ```
 
-OpenAPI 输出只描述 contract component schema，不声明网络 API。它用于 provider 作者、CI 和发布流程对齐字段要求。
+OpenAPI 输出只描述 contract component schema，不声明网络 API。默认 schema export 仍偏兼容，会允许额外 provider 字段；`--strict` 会关闭顶层和 `usage` 内的 `additionalProperties`，让 CI 或 release gate 在项目准备好后捕获字段拼写错误和 contract 漂移。
 
 ## Plugin Registry
 

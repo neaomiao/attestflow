@@ -90,6 +90,8 @@ raw text/document 会生成 `harness/specs/SPEC-*/spec.md` 草稿和结构化 Op
 
 v1 支持 Markdown、TXT、DOCX 和可复制文本层 PDF。DOCX/PDF 解析需要安装 `attestflow[documents]`；扫描 PDF/OCR 暂不支持。
 
+Open Questions 默认使用确定性的 Q1-Q5 fallback。生产项目可以在 `harness.yml` 里配置 `requirements.clarifier_command`，在写入 draft spec 前调用真实需求澄清 provider 生成问题。
+
 ```bash
 python3 -m attestflow task import --from-json plan.json --from-spec harness/specs/SPEC-0001/spec.md --approve
 ```
@@ -150,6 +152,7 @@ python3 -m attestflow blackboard list --status open --json
 python3 -m attestflow graphify-sync --all
 python3 -m attestflow schema migrate --kind harness-config --from-json harness.yml --write
 python3 -m attestflow schema export --type task --json
+python3 -m attestflow schema export --type capability-output --strict --json
 python3 -m attestflow schema openapi --json
 python3 -m attestflow plugin list --json
 python3 -m attestflow plugin run demo-plugin echo --from-json input.json --json

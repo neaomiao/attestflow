@@ -78,6 +78,8 @@ Inline text and documents create a draft spec under `harness/specs/SPEC-*/spec.m
 
 Markdown, TXT, DOCX, and copyable text-layer PDF inputs are supported. DOCX and PDF extraction require installing `attestflow[documents]`. Scanned PDFs and OCR are not supported in v1.
 
+Open Questions default to a deterministic Q1-Q5 fallback. Production projects can set `requirements.clarifier_command` in `harness.yml` to call a real requirements clarifier provider before the draft spec is written.
+
 ## Core Commands
 
 ```bash
@@ -91,6 +93,7 @@ python3 -m attestflow task import --from-json plan.json --from-spec harness/spec
 python3 -m attestflow blackboard post --from-role reviewer --to-role implementer --type finding --body "Missing retry boundary." --requires-response
 python3 -m attestflow blackboard list --status open --json
 python3 -m attestflow graphify-sync --all
+python3 -m attestflow schema export --type capability-output --strict --json
 python3 -m attestflow autopilot --resume --max-steps 8
 python3 -m attestflow autopilot --status --json
 python3 -m attestflow inspect --run RUN
@@ -121,6 +124,7 @@ python3 -m attestflow secret-scan
 - GitHub Actions status/log/artifact/rerun/dispatch support through the CI provider
 - PR ensure/status/merge automation and optional auto-merge after CI passes
 - release evidence and release trust bundle generation
+- strict JSON Schema/OpenAPI export for provider contract hardening
 - dashboard export, evidence retention/compaction/redaction, usage reporting, policy packs, plugin discovery, and plugin command execution
 
 ## Documentation

@@ -32,10 +32,12 @@ Machine-readable schema can be exported through the CLI:
 ```bash
 python -m attestflow schema export --type task --json
 python -m attestflow schema export --type ci-output --json
+python -m attestflow schema export --type capability-output --strict --json
 python -m attestflow schema openapi --json
+python -m attestflow schema openapi --strict --json
 ```
 
-OpenAPI output describes contract component schemas only. It does not declare a network API. Provider authors, CI, and release processes can use it to align field requirements.
+OpenAPI output describes contract component schemas only. It does not declare a network API. Default schema export stays compatibility-oriented and allows extra provider fields. `--strict` closes `additionalProperties` at the top level and in `usage`, so CI or release gates can catch typo fields and contract drift when a project is ready for that enforcement.
 
 ## Plugin Registry
 

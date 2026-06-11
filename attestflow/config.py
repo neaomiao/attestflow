@@ -27,6 +27,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "plugin_runs": "harness/plugin-runs",
         "sources": "harness/sources",
         "specs": "harness/specs",
+        "requirement_runs": "harness/requirement-runs",
         "blackboard": "harness/blackboard",
         "docs": "docs",
     },
@@ -66,6 +67,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         },
         "network": {"mode": "provider-owned"},
         "filesystem": {"mode": "write-scope-validated"},
+    },
+    "requirements": {
+        "clarifier_command": None,
+        "max_open_questions": 5,
     },
     "sessions": {
         "agent_provider": "command",
@@ -219,6 +224,24 @@ def validate_config(config: dict[str, Any]) -> list[str]:
     specs = config.get("paths", {}).get("specs")
     if specs is not None and not isinstance(specs, str):
         errors.append("paths.specs must be a string")
+    requirement_runs = config.get("paths", {}).get("requirement_runs")
+    if requirement_runs is not None and not isinstance(requirement_runs, str):
+        errors.append("paths.requirement_runs must be a string")
+    requirements = config.get("requirements", {})
+    if requirements is not None and not isinstance(requirements, dict):
+        errors.append("requirements must be a mapping")
+        requirements = {}
+    if isinstance(requirements, dict):
+        clarifier_command = requirements.get("clarifier_command")
+        if clarifier_command is not None and not isinstance(clarifier_command, str):
+            errors.append("requirements.clarifier_command must be a string or null")
+        max_open_questions = requirements.get("max_open_questions")
+        if max_open_questions is not None and (type(max_open_questions) is not int or max_open_questions <= 0):
+            errors.append("requirements.max_open_questions must be a positive integer")
+        provider_options = requirements.get("provider_options")
+        if provider_options is not None and not isinstance(provider_options, dict):
+            errors.append("requirements.provider_options must be a mapping")
+        _validate_timeout_seconds(errors, "requirements.timeout_seconds", requirements.get("timeout_seconds"))
     sessions = config.get("sessions", {})
     if sessions is not None and not isinstance(sessions, dict):
         errors.append("sessions must be a mapping")

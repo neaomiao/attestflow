@@ -142,6 +142,23 @@ class OpenSourceP1Tests(unittest.TestCase):
         self.assertIn("event_type", blackboard_schema["properties"])
         self.assertEqual(blackboard_schema["properties"]["status"]["enum"], ["open", "resolved", "superseded"])
 
+    def test_schema_export_supports_strict_contract_mode(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output):
+            exit_code = cli.main(["schema", "export", "--type", "capability-output", "--strict"])
+        schema = json.loads(output.getvalue())
+
+        openapi_output = io.StringIO()
+        with redirect_stdout(openapi_output):
+            openapi_exit = cli.main(["schema", "openapi", "--strict"])
+        openapi = json.loads(openapi_output.getvalue())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(openapi_exit, 0)
+        self.assertFalse(schema["additionalProperties"])
+        self.assertFalse(schema["properties"]["usage"]["additionalProperties"])
+        self.assertFalse(openapi["components"]["schemas"]["capability-output"]["additionalProperties"])
+
     def test_contract_validate_accepts_provider_usage_and_rejects_invalid_token_counts(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -496,6 +513,34 @@ class OpenSourceP1Tests(unittest.TestCase):
         self.assertIn('PATH="$PWD/.venv/bin:$PATH" attestflow install-smoke --offline', text)
         self.assertIn('PIPX_BIN_DIR="$(python -m pipx environment --value PIPX_BIN_DIR)"', text)
         self.assertIn('PATH="$PIPX_BIN_DIR:$PATH" attestflow install-smoke --offline', text)
+
+    def test_ci_runs_full_repository_verification_gates_on_unix_without_recursive_root_verify(self) -> None:
+        harness = load_data(ROOT / "harness.yml")
+        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+        self.assertEqual(harness["commands"]["bdd"], "python -m unittest tests.bdd.test_attestflow_dogfood_behavior")
+        self.assertEqual(harness["commands"]["unit"], "python -m unittest tests.unit.test_attestflow_dogfood")
+        self.assertEqual(workflow.count("if: runner.os != 'Windows'"), 2)
+        self.assertIn("python -m unittest discover -s tests/unit", workflow)
+        self.assertIn("python -m unittest discover -s tests/bdd", workflow)
+        self.assertIn("python -m compileall -q attestflow examples tests", workflow)
+        self.assertIn("attestflow install-smoke --offline --check-template-mirror", workflow)
+
+    def test_runtime_payloads_are_not_repository_source_files(self) -> None:
+        stale_runtime_files = [
+            "harness/autopilot-runs/2026-05-31T07-08-24Z-autopilot/ledger.jsonl",
+            "harness/autopilot-runs/2026-05-31T07-08-24Z-autopilot/metadata.json",
+            "harness/autopilot-runs/2026-05-31T07-16-00Z-autopilot/ledger.jsonl",
+            "harness/autopilot-runs/2026-05-31T07-16-00Z-autopilot/metadata.json",
+            "harness/tasks/done/TASK-0001.json",
+            "harness/tasks/done/TASK-0002.json",
+        ]
+        gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+
+        self.assertTrue(all(not (ROOT / path).exists() for path in stale_runtime_files))
+        self.assertIn("harness/autopilot-runs/*", gitignore)
+        self.assertIn("harness/tasks/*/*", gitignore)
+        self.assertIn("harness/requirement-runs/", gitignore)
 
     def test_package_data_explicitly_includes_dot_github_template(self) -> None:
         pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")

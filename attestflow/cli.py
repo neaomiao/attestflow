@@ -227,7 +227,7 @@ def cmd_schema_migrate(args: argparse.Namespace) -> int:
 
 def cmd_schema_export(args: argparse.Namespace) -> int:
     try:
-        schema = json_schema_for(args.type)
+        schema = json_schema_for(args.type, strict=bool(args.strict))
     except ValueError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
@@ -239,7 +239,7 @@ def cmd_schema_export(args: argparse.Namespace) -> int:
 
 
 def cmd_schema_openapi(args: argparse.Namespace) -> int:
-    document = openapi_document()
+    document = openapi_document(strict=bool(args.strict))
     if args.json:
         print(json.dumps(document, ensure_ascii=False, indent=2))
     else:
@@ -2555,6 +2555,9 @@ def cmd_graphify_sync(args: argparse.Namespace) -> int:
     if result.get("merged"):
         merged = result["merged"]
         print(f"merged graph: {merged['path']} ({merged['nodes']} nodes, {merged['edges']} edges)")
+    quality = result.get("quality") or {}
+    for warning in quality.get("warnings", []):
+        print(f"warning: {warning}")
     return 0
 
 
@@ -2705,9 +2708,11 @@ def build_parser() -> argparse.ArgumentParser:
     schema_export = schema_subparsers.add_parser("export")
     schema_export.add_argument("--type", required=True, choices=sorted(SCHEMA_TYPES))
     schema_export.add_argument("--json", action="store_true")
+    schema_export.add_argument("--strict", action="store_true")
     schema_export.set_defaults(func=cmd_schema_export)
     schema_openapi = schema_subparsers.add_parser("openapi")
     schema_openapi.add_argument("--json", action="store_true")
+    schema_openapi.add_argument("--strict", action="store_true")
     schema_openapi.set_defaults(func=cmd_schema_openapi)
 
     plugin = subparsers.add_parser("plugin")

@@ -46,6 +46,7 @@ def sync_graphify_outputs(
             }
         )
     merged = _write_merged_graph(root, copied) if merge else None
+    quality = _index_quality(copied, merged)
     index = {
         "schema_version": 1,
         "status": "synced",
@@ -53,6 +54,7 @@ def sync_graphify_outputs(
         "output_root": _relative(root, output_root),
         "scopes": copied,
         "merged": merged,
+        "quality": quality,
     }
     dump_data(index, output_root / "index.json")
     return index
@@ -187,11 +189,18 @@ def _write_merged_graph(root: Path, scopes: list[dict[str, Any]]) -> dict[str, A
     dump_data(merged_graph, merged_dir / "graph.json")
     _write_merged_report(merged_dir, merged_graph, scopes)
     _write_merged_html(merged_dir, merged_graph)
+    quality = _graph_quality(
+        nodes=len(merged_nodes),
+        edges=len(merged_edges),
+        hyperedges=len(merged_hyperedges),
+        label="merged graph",
+    )
     return {
         "path": _relative(root, merged_dir / "graph.json"),
         "nodes": len(merged_nodes),
         "edges": len(merged_edges),
         "hyperedges": len(merged_hyperedges),
+        "quality": quality,
     }
 
 
@@ -241,6 +250,30 @@ def _graph_summary(path: Path) -> dict[str, int]:
         "edges": len(graph.get("edges", [])),
         "hyperedges": len(graph.get("hyperedges", [])),
     }
+
+
+def _index_quality(scopes: list[dict[str, Any]], merged: dict[str, Any] | None) -> dict[str, Any]:
+    if merged:
+        return dict(merged["quality"])
+    nodes = 0
+    edges = 0
+    hyperedges = 0
+    for scope in scopes:
+        graph = scope.get("graph") or {}
+        nodes += int(graph.get("nodes", 0) or 0)
+        edges += int(graph.get("edges", 0) or 0)
+        hyperedges += int(graph.get("hyperedges", 0) or 0)
+    return _graph_quality(nodes=nodes, edges=edges, hyperedges=hyperedges, label="graphify sync")
+
+
+def _graph_quality(*, nodes: int, edges: int, hyperedges: int, label: str) -> dict[str, Any]:
+    warnings: list[str] = []
+    if nodes == 0:
+        return {"status": "empty", "warnings": [f"{label} has no nodes"]}
+    if edges + hyperedges == 0:
+        warnings.append(f"{label} has nodes but no edges or hyperedges")
+        return {"status": "weak", "warnings": warnings}
+    return {"status": "usable", "warnings": []}
 
 
 def _namespaced(scope_slug: str, node_id: str) -> str:
