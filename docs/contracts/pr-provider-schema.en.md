@@ -32,11 +32,11 @@ PR provider output must include:
 }
 ```
 
-`status` can be `open`, `draft`, `merged`, `closed`, `skipped`, `blocked`, or `failed`.
+`status` can be `merged`, `open`, `draft`, `blocked`, `failed`, `skipped`, or `unknown`.
 
 ## Autopilot Rules
 
-Autopilot can call `pr ensure` during the accepted stage. It only calls `pr merge` when `integrations.pr_provider.auto_merge: true` is explicitly configured and CI evidence has passed. `merged` and `skipped` allow close; `open`, `draft`, or `blocked` pause or block.
+Autopilot can call `pr ensure` during the accepted stage. It only calls `pr merge` when `integrations.pr_provider.auto_merge: true` is explicitly configured and CI evidence has passed. `merged` and `skipped` allow close; `unknown` pauses for resume; `open`, `draft`, or `blocked` block until the external system changes or a human decides.
 
 ## Evidence
 

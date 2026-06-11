@@ -49,6 +49,8 @@ Provider input 可能已经被 token economy 层压缩：当 `token_economy` 预
 
 Attestflow 使用 argv 模式执行 provider command，不通过 shell 展开管道、重定向或 `;`。stdout/stderr 会写入证据日志，并对常见 token、secret、password、API key 和 bearer token 做 redaction。失败会写入 `failure.json`，`type` 取值为 `auth_missing`、`rate_limited`、`context_too_large`、`invalid_output`、`tool_denied`、`approval_required`、`output_too_large`、`timeout`、`network` 或 `failed`，并附带 `automatic_action` 和 `recovery_strategy`。
 
+本地 verification commands，包括 `commands.bdd`、`commands.unit`、`commands.lint`、`commands.typecheck`、`commands.secret_scan` 和 `commands.project_verify`，也遵守同一条 argv 执行边界。它们不会通过 shell 运行，默认 `security.verification_commands.timeout_seconds: 600`，用 `security.verification_commands.max_output_bytes` 限制日志大小，并在写入 run log 前对常见 secret 做 redaction。
+
 安全边界配置：
 
 ```yaml

@@ -35,7 +35,7 @@ CI provider output must include:
 }
 ```
 
-`status` is one of `passed`, `failed`, `running`, `queued`, `unknown`, or `blocked`.
+`status` is one of `passed`, `failed`, `running`, `queued`, `cancelled`, `skipped`, `blocked`, or `unknown`.
 
 ## GitHub Actions Preset
 

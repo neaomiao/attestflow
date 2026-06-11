@@ -3,16 +3,20 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
+from .contract_statuses import (
+    BLACKBOARD_EVENT_TYPES,
+    BLACKBOARD_MESSAGE_TYPES,
+    CI_STATUSES,
+    GIT_STATUSES,
+    PR_STATUSES,
+    RELEASE_STATUSES,
+    SESSION_STATUSES,
+    TASK_CAPABILITY_STATUSES,
+)
 from .governance import PROVIDER_CONTRACT_VERSION
 from .io import load_data
 
 
-TASK_CAPABILITY_STATUSES = ("passed", "failed", "blocked")
-SESSION_STATUSES = {"launch": {"launched", "blocked"}, "resume": {"resumed", "blocked"}}
-CI_STATUSES = {"passed", "failed", "running", "queued", "cancelled", "skipped", "blocked", "unknown"}
-GIT_STATUSES = {"published", "skipped", "blocked", "failed", "unknown"}
-PR_STATUSES = {"merged", "open", "draft", "blocked", "failed", "skipped", "unknown"}
-RELEASE_STATUSES = {"released", "skipped", "running", "queued", "blocked", "failed", "unknown"}
 REVIEW_FINDING_SEVERITIES = {"blocker", "major", "minor", "info"}
 USAGE_TOKEN_FIELDS = (
     "input_tokens",
@@ -260,6 +264,29 @@ def validate_release_output(output: dict[str, Any], label: str = "release-output
     return errors
 
 
+def validate_blackboard_event(output: dict[str, Any], label: str = "blackboard-event") -> list[str]:
+    errors: list[str] = []
+    _require_schema_version(output, label, errors)
+    for key in ("event_id", "event_type", "message_id", "thread_id", "from_role", "message_type", "body", "status", "created_at"):
+        if not str(output.get(key, "")).strip():
+            errors.append(_field_error(label, key, "must be non-empty"))
+    if errors:
+        return errors
+    if output.get("event_type") not in BLACKBOARD_EVENT_TYPES:
+        errors.append(_field_error(label, "event_type", f"must be one of: {', '.join(sorted(BLACKBOARD_EVENT_TYPES))}"))
+    if output.get("message_type") not in BLACKBOARD_MESSAGE_TYPES:
+        errors.append(_field_error(label, "message_type", f"must be one of: {', '.join(sorted(BLACKBOARD_MESSAGE_TYPES))}"))
+    event_type = str(output.get("event_type"))
+    expected_status = {"post": "open", "resolve": "resolved", "supersede": "superseded"}.get(event_type)
+    if expected_status and output.get("status") != expected_status:
+        errors.append(_field_error(label, "status", f"must be {expected_status!r} for {event_type} events"))
+    if "requires_response" in output and not isinstance(output.get("requires_response"), bool):
+        errors.append(_field_error(label, "requires_response", "must be a boolean when present"))
+    if "evidence_refs" in output and not _string_list(output.get("evidence_refs")):
+        errors.append(_field_error(label, "evidence_refs", "must be a list of strings when present"))
+    return errors
+
+
 def validate_task_contract(output: dict[str, Any], label: str = "task") -> list[str]:
     from .tasks import validate_task
 
@@ -384,5 +411,7 @@ CONTRACT_TYPES: dict[str, Callable[[dict[str, Any]], list[str]]] = {
     "git-output": validate_git_output,
     "pr-output": validate_pr_output,
     "release-output": validate_release_output,
+    "blackboard-event": validate_blackboard_event,
+    "agent-message": validate_blackboard_event,
     "task": validate_task_contract,
 }

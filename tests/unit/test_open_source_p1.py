@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import redirect_stderr, redirect_stdout
 import io
+import json
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -11,6 +12,7 @@ import unittest
 import attestflow.cli as cli
 from attestflow.cli import cmd_init
 from attestflow.io import dump_data, load_data
+from attestflow.template_inventory import relative_template_files
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -85,6 +87,30 @@ class OpenSourceP1Tests(unittest.TestCase):
                 "ci-output": {"schema_version": 1, "status": "passed", "summary": "CI passed", "checks": []},
                 "pr-output": {"schema_version": 1, "status": "open", "summary": "PR open", "checks": []},
                 "release-output": {"schema_version": 1, "status": "released", "summary": "released", "artifacts": []},
+                "blackboard-event": {
+                    "schema_version": 1,
+                    "event_id": "EVT-0001",
+                    "event_type": "post",
+                    "message_id": "MSG-0001",
+                    "thread_id": "THREAD-0001",
+                    "from_role": "reviewer",
+                    "message_type": "finding",
+                    "body": "Missing boundary.",
+                    "status": "open",
+                    "created_at": "2026-06-11T00:00:00+00:00",
+                },
+                "agent-message": {
+                    "schema_version": 1,
+                    "event_id": "EVT-0001",
+                    "event_type": "post",
+                    "message_id": "MSG-0001",
+                    "thread_id": "THREAD-0001",
+                    "from_role": "reviewer",
+                    "message_type": "finding",
+                    "body": "Missing boundary.",
+                    "status": "open",
+                    "created_at": "2026-06-11T00:00:00+00:00",
+                },
             }
             for contract_type, payload in fixtures.items():
                 path = root / f"{contract_type}.json"
@@ -95,6 +121,26 @@ class OpenSourceP1Tests(unittest.TestCase):
                         exit_code = cli.main(["contract", "validate", contract_type, str(path)])
                     self.assertEqual(exit_code, 0)
                     self.assertIn(f"contract {contract_type} valid", output.getvalue())
+
+    def test_schema_export_includes_status_enums_and_blackboard_contract(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output):
+            pr_exit = cli.main(["schema", "export", "--type", "pr-output"])
+        pr_schema = json.loads(output.getvalue())
+
+        blackboard_output = io.StringIO()
+        with redirect_stdout(blackboard_output):
+            blackboard_exit = cli.main(["schema", "export", "--type", "blackboard-event"])
+        blackboard_schema = json.loads(blackboard_output.getvalue())
+
+        self.assertEqual(pr_exit, 0)
+        self.assertEqual(blackboard_exit, 0)
+        self.assertEqual(
+            pr_schema["properties"]["status"]["enum"],
+            ["blocked", "draft", "failed", "merged", "open", "skipped", "unknown"],
+        )
+        self.assertIn("event_type", blackboard_schema["properties"])
+        self.assertEqual(blackboard_schema["properties"]["status"]["enum"], ["open", "resolved", "superseded"])
 
     def test_contract_validate_accepts_provider_usage_and_rejects_invalid_token_counts(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -408,6 +454,17 @@ class OpenSourceP1Tests(unittest.TestCase):
         self.assertIn("install smoke passed", text)
         self.assertIn("offline", text)
         self.assertIn("template mirror", text)
+
+    def test_template_mirror_inventory_ignores_local_analysis_artifacts(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "base").mkdir(parents=True)
+            (root / "base" / "harness.yml").write_text("project: {}\n", encoding="utf-8")
+            (root / "graphify-out").mkdir()
+            (root / "graphify-out" / "GRAPH_REPORT.md").write_text("# local report\n", encoding="utf-8")
+            (root / ".graphify_detect.json").write_text("{}\n", encoding="utf-8")
+
+            self.assertEqual(relative_template_files(root), {Path("base/harness.yml")})
 
     def test_install_smoke_cli_fails_when_console_script_is_not_on_path(self) -> None:
         original_path = os.environ.get("PATH")

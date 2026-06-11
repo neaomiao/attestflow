@@ -29,6 +29,7 @@ def create_draft_spec(
     title: str,
     source_text: str,
     source_evidence: str | Path,
+    open_questions: list[str] | None = None,
 ) -> DraftSpec:
     specs_root = _specs_root(root, config)
     spec_id = _next_spec_id(specs_root)
@@ -41,6 +42,7 @@ def create_draft_spec(
             title=title,
             source_text=source_text,
             source_evidence=source_evidence,
+            open_questions=open_questions or ["Confirm approval owner."],
         ),
         encoding="utf-8",
     )
@@ -59,6 +61,32 @@ def spec_has_unresolved_questions(spec_path: Path) -> bool:
     if not normalized:
         return False
     return _normalize_empty_marker(normalized) not in {"none", "无"}
+
+
+def spec_open_questions(spec_path: Path) -> list[str]:
+    content = spec_path.read_text(encoding="utf-8")
+    section = _anchored_section_body(content, OPEN_QUESTIONS_START, OPEN_QUESTIONS_END)
+    if section is None:
+        section = _section_body(content, OPEN_QUESTIONS_HEADING)
+    if section is None:
+        return []
+    normalized = section.strip()
+    if not normalized or _normalize_empty_marker(normalized) in {"none", "无"}:
+        return []
+    return [_strip_list_marker(line.strip()) for line in normalized.splitlines() if line.strip()]
+
+
+def resolve_spec_open_questions(spec_path: Path, answers: list[tuple[str, str]]) -> None:
+    if not answers:
+        return
+    content = spec_path.read_text(encoding="utf-8")
+    clarification_section = _render_clarifications(answers)
+    content = _replace_anchored_open_questions(content, "- None\n")
+    if "## Clarifications\n" in content:
+        content = content.rstrip() + "\n\n" + clarification_section
+    else:
+        content = content.replace("## Open Questions\n", clarification_section + "\n## Open Questions\n", 1)
+    spec_path.write_text(content, encoding="utf-8")
 
 
 def approve_spec(spec_path: Path, *, approved_by: str) -> None:
@@ -130,7 +158,14 @@ def _next_spec_id(specs_root: Path) -> str:
     return f"SPEC-{max_seen + 1:04d}"
 
 
-def _render_spec(*, spec_id: str, title: str, source_text: str, source_evidence: str | Path) -> str:
+def _render_spec(
+    *,
+    spec_id: str,
+    title: str,
+    source_text: str,
+    source_evidence: str | Path,
+    open_questions: list[str],
+) -> str:
     safe_title = _escape_control_markers(title.strip() or spec_id)
     safe_source_evidence = _escape_control_markers(str(source_evidence))
     summary = _escape_control_markers(source_text.strip() or "None")
@@ -157,12 +192,38 @@ def _render_spec(*, spec_id: str, title: str, source_text: str, source_evidence:
         "\n"
         "## Open Questions\n"
         f"{OPEN_QUESTIONS_START}\n"
-        "- Confirm approval owner.\n"
+        f"{_render_open_questions(open_questions)}"
         f"{OPEN_QUESTIONS_END}\n"
         "\n"
         "## Source Summary\n"
         f"{_fenced_block(summary)}\n"
     )
+
+
+def _render_open_questions(open_questions: list[str]) -> str:
+    lines = [question.strip() for question in open_questions if question.strip()]
+    if not lines:
+        return "- None\n"
+    return "".join(f"- {line}\n" for line in lines)
+
+
+def _render_clarifications(answers: list[tuple[str, str]]) -> str:
+    lines = ["## Clarifications"]
+    for question, answer in answers:
+        lines.append(f"- Q: {_escape_control_markers(question.strip())}")
+        lines.append(f"  A: {_escape_control_markers(answer.strip())}")
+    return "\n".join(lines) + "\n"
+
+
+def _replace_anchored_open_questions(content: str, replacement: str) -> str:
+    start = content.rfind(OPEN_QUESTIONS_START)
+    if start < 0:
+        return content
+    body_start = start + len(OPEN_QUESTIONS_START)
+    end = content.find(OPEN_QUESTIONS_END, body_start)
+    if end < 0:
+        return content
+    return content[:body_start] + "\n" + replacement + content[end:]
 
 
 def _anchored_section_body(content: str, start_marker: str, end_marker: str) -> str | None:

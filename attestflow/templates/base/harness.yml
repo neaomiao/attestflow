@@ -45,6 +45,9 @@ security:
       blocked_env: []
       blocked_env_prefixes: []
       network: provider-owned
+  verification_commands:
+    timeout_seconds: 600
+    max_output_bytes: 1048576
   network:
     mode: provider-owned
   filesystem:

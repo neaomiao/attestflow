@@ -4,6 +4,14 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from .contract_statuses import (
+    CI_STATUSES,
+    GIT_STATUSES,
+    PR_STATUSES,
+    RELEASE_STATUSES,
+    SESSION_STATUSES,
+    TASK_CAPABILITY_STATUSES,
+)
 from .config import DEFAULT_CONFIG
 from .io import dump_data, load_data
 from . import __version__
@@ -21,6 +29,8 @@ SCHEMA_TYPES = (
     "git-output",
     "pr-output",
     "release-output",
+    "blackboard-event",
+    "agent-message",
     "task",
 )
 
@@ -110,9 +120,10 @@ def json_schema_for(schema_type: str) -> dict[str, Any]:
     if schema_type != "task":
         schema["properties"]["contract_version"] = {"const": PROVIDER_CONTRACT_VERSION}
         schema["properties"]["usage"] = _usage_schema()
-    if schema_type in {"capability-output", "session-launch-output", "session-resume-output", "ci-output", "git-output", "pr-output", "release-output"}:
+    status_enum = _schema_status_enum(schema_type)
+    if status_enum is not None:
         schema["required"].extend(["status", "summary"])
-        schema["properties"]["status"] = {"type": "string"}
+        schema["properties"]["status"] = {"type": "string", "enum": status_enum}
         schema["properties"]["summary"] = {"type": "string", "minLength": 1}
     if schema_type == "planner-output":
         schema["required"].append("tasks")
@@ -129,7 +140,51 @@ def json_schema_for(schema_type: str) -> dict[str, Any]:
                 "source": {"type": "object"},
             }
         )
+    if schema_type in {"blackboard-event", "agent-message"}:
+        schema["required"].extend(
+            ["event_id", "event_type", "message_id", "thread_id", "from_role", "message_type", "body", "status", "created_at"]
+        )
+        schema["properties"].update(
+            {
+                "event_id": {"type": "string", "pattern": "^EVT-[0-9]+$"},
+                "event_type": {"type": "string", "enum": ["post", "resolve", "supersede"]},
+                "message_id": {"type": "string", "pattern": "^MSG-[0-9]+$"},
+                "thread_id": {"type": "string", "pattern": "^THREAD-[0-9]+$"},
+                "task_id": {"type": ["string", "null"], "pattern": "^TASK-[0-9]+$"},
+                "run_id": {"type": ["string", "null"]},
+                "from_role": {"type": "string", "minLength": 1},
+                "to_role": {"type": ["string", "null"]},
+                "message_type": {
+                    "type": "string",
+                    "enum": ["answer", "blocker", "decision", "finding", "handoff", "note", "question", "status"],
+                },
+                "body": {"type": "string", "minLength": 1},
+                "status": {"type": "string", "enum": ["open", "resolved", "superseded"]},
+                "requires_response": {"type": "boolean"},
+                "reply_to": {"type": ["string", "null"], "pattern": "^MSG-[0-9]+$"},
+                "evidence_refs": {"type": "array", "items": {"type": "string"}},
+                "created_at": {"type": "string"},
+            }
+        )
     return schema
+
+
+def _schema_status_enum(schema_type: str) -> list[str] | None:
+    if schema_type == "capability-output":
+        return sorted(TASK_CAPABILITY_STATUSES)
+    if schema_type == "session-launch-output":
+        return sorted(SESSION_STATUSES["launch"])
+    if schema_type == "session-resume-output":
+        return sorted(SESSION_STATUSES["resume"])
+    if schema_type == "ci-output":
+        return sorted(CI_STATUSES)
+    if schema_type == "git-output":
+        return sorted(GIT_STATUSES)
+    if schema_type == "pr-output":
+        return sorted(PR_STATUSES)
+    if schema_type == "release-output":
+        return sorted(RELEASE_STATUSES)
+    return None
 
 
 def _usage_schema() -> dict[str, Any]:

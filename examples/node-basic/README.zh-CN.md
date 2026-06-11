@@ -8,7 +8,9 @@
 
 ```bash
 PYTHONPATH=../.. python -m attestflow doctor
-PYTHONPATH=../.. python -m attestflow autopilot --run --goal "Add greeting support" --loop --max-cycles 12 --max-steps 1
+PYTHONPATH=../.. python -m attestflow go "Add greeting support"
+# 回答输出的 Open Questions，或手动编辑 harness/specs/SPEC-0001/spec.md，直到 Open Questions 为 None。
+PYTHONPATH=../.. python -m attestflow go --from-spec harness/specs/SPEC-0001/spec.md --approve --loop --max-cycles 12 --max-steps 1
 PYTHONPATH=../.. python -m attestflow tasks
 ```
 
